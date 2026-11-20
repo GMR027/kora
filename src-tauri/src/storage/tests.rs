@@ -1,8 +1,8 @@
 use crate::storage::AssetKind;
 use crate::storage::model::{
     AnnotationKind, AudiobookStatus, BookFormat, NewAchievement, NewAnnotation, NewAudiobook,
-    NewBook, NewCategory, NewDiaryEntry, NewExtract, NewNote, NewReadingProgress, NewShare,
-    NewVoice, ResourceType, SyncState,
+    NewBook, NewCategory, NewDiaryEntry, NewExtract, NewNote, NewReaderSettings,
+    NewReadingProgress, NewShare, NewVoice, ResourceType, SyncState,
 };
 use crate::storage::test_support::TestStorage;
 
@@ -237,6 +237,9 @@ async fn annotations_extracts_and_notes_crud() {
             book_id: book.id.clone(),
             kind: AnnotationKind::Highlight,
             locator: "epubcfi(/6/4)".to_string(),
+            chapter_index: Some(0),
+            offset_start: Some(3),
+            offset_end: Some(8),
             text: Some("texto".to_string()),
             note: None,
             color: Some("#ffcc00".to_string()),
@@ -245,6 +248,10 @@ async fn annotations_extracts_and_notes_crud() {
         })
         .await
         .expect("anotación");
+
+    assert_eq!(annotation.chapter_index, Some(0));
+    assert_eq!(annotation.offset_start, Some(3));
+    assert_eq!(annotation.offset_end, Some(8));
 
     let mut updated = annotation.clone();
     updated.note = Some("nota".to_string());
@@ -377,6 +384,82 @@ async fn annotations_extracts_and_notes_crud() {
             .get(ResourceType::Note, &note.id)
             .await
             .expect("propietario")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn reader_settings_are_saved_per_book_and_cascade() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("ajustes"), "Ajustes"))
+        .await
+        .expect("libro");
+
+    assert!(
+        test.storage
+            .reader_settings
+            .get(&book.id)
+            .await
+            .expect("leer ajustes")
+            .is_none()
+    );
+
+    let saved = test
+        .storage
+        .reader_settings
+        .save(NewReaderSettings {
+            book_id: book.id.clone(),
+            font_size: 22.0,
+            line_height: 1.9,
+            margin: 48,
+            font_family: "sans".to_string(),
+            theme: "sepia".to_string(),
+            texture: "paper".to_string(),
+            mode: "paged".to_string(),
+            zoom: 1.2,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("guardar ajustes");
+
+    assert_eq!(saved.font_size, 22.0);
+    assert_eq!(saved.theme, "sepia");
+    assert_eq!(saved.mode, "paged");
+
+    let updated = test
+        .storage
+        .reader_settings
+        .save(NewReaderSettings {
+            book_id: book.id.clone(),
+            font_size: 16.0,
+            line_height: 1.5,
+            margin: 20,
+            font_family: "mono".to_string(),
+            theme: "dark".to_string(),
+            texture: "grid".to_string(),
+            mode: "scroll".to_string(),
+            zoom: 0.8,
+            owner_account_id: owner,
+            origin_share_id: None,
+        })
+        .await
+        .expect("actualizar ajustes");
+
+    assert_eq!(updated.font_size, 16.0);
+    assert_eq!(updated.font_family, "mono");
+
+    test.storage.books.delete(&book.id).await.expect("borrar");
+    assert!(
+        test.storage
+            .reader_settings
+            .get(&book.id)
+            .await
+            .expect("leer ajustes")
             .is_none()
     );
 }

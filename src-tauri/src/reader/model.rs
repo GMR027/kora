@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::storage::ReaderSettings;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentFormat {
@@ -48,7 +50,35 @@ pub struct Document {
     pub format: DocumentFormat,
     pub title: String,
     pub author: Option<String>,
+    pub language: Option<String>,
+    pub publisher: Option<String>,
+    pub description: Option<String>,
     pub sections: Vec<Section>,
+}
+
+/// Estado completo que el frontend necesita al abrir un libro.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderSession {
+    pub book_id: String,
+    pub document: Document,
+    pub locator: Locator,
+    pub cover_path: Option<String>,
+    pub progress: f64,
+    pub settings: ReaderSettings,
+}
+
+/// Un capítulo ya saneado y listo para inyectar con `{@html}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterContent {
+    pub book_id: String,
+    pub index: usize,
+    pub title: String,
+    pub html: String,
+    pub char_count: usize,
+    pub has_previous: bool,
+    pub has_next: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -69,12 +99,4 @@ pub struct PageBitmap {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReaderSession {
-    pub book_id: String,
-    pub document: Document,
-    pub locator: Locator,
 }

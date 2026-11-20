@@ -4,10 +4,10 @@ Lector de EPUB/PDF local-first con síntesis de voz, clonación de voz y
 sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 **Svelte 5**, con objetivos Linux y Android.
 
-> **Estado: fase 2 — almacenamiento local-first.** La biblioteca ya importa
-> EPUB/PDF, los guarda por SHA-256, permite sustituir portadas, borrar libros
-> con papelera y clasificarlos con categorías. Lector, TTS y sync siguen
-> devolviendo `not_implemented`.
+> **Estado: fase 3 — lector EPUB.** La biblioteca importa EPUB/PDF por SHA-256
+> y el lector abre EPUB con capítulos saneados, temas, texturas, tipografía
+> adaptable, modo paginado opcional, progreso por libro y capítulo, y
+> anotaciones superpuestas no destructivas. PDF, TTS y sync siguen pendientes.
 
 ### Verificación de esta fase
 
@@ -17,15 +17,17 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 | `pnpm check` (svelte-check) | ✅ 0 errores, 0 warnings |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ |
-| `cargo test --workspace` | ✅ 20 tests |
+| `cargo test --workspace` | ✅ 25 tests |
 | `tauri android init --ci` | ✅ `src-tauri/gen/android` generado |
 | `tauri android build --apk` | ⚠️ no ejecutado: el NDK oficial es x86_64 y este host es aarch64 |
 
 El lado Rust se compiló en un contenedor rootless `fedora:42` con
 `webkit2gtk4.1-devel` y compañía, porque el host no tiene los headers de
 desarrollo. Los tests cubren migraciones y checksums, CRUD por entidad,
-cascadas, identidad local, assets SHA-256, papelera y el flujo de importación
-con sustitución de portada.
+cascadas, identidad local, assets SHA-256, papelera, el flujo de importación
+con sustitución de portada, el parser EPUB con un fixture real (metadatos,
+índice, portada, imágenes y `<script>` malicioso), el saneado del HTML y los
+ajustes del lector.
 
 ## Stack
 
@@ -37,7 +39,7 @@ con sustitución de portada.
 | Base de datos | SQLite embebido (`sqlx` 0.8, feature `sqlite` con `libsqlite3-sys` bundled) |
 | Hash de contenido | `sha2` + `hex` (SHA-256 en streaming) |
 | Sync | mDNS (`mdns-sd`), QUIC (`quinn` + `rustls`), CRDT (`yrs`) |
-| EPUB / PDF | `epub` / `lopdf` (render detrás de trait) |
+| EPUB / PDF | `rbook` (EPUB) + `ammonia`/`scraper` (saneado) / `lopdf` (PDF) |
 | Logs | `tracing` + `tracing-appender` |
 
 **¿Por qué Svelte 5?** El compilador genera JavaScript pequeño y sin virtual
@@ -116,6 +118,7 @@ migraciones corren dentro de una transacción por versión.
 | `0002_sharing.sql` | `shares`, `share_keys` |
 | `0003_sync.sql` | `sync_state`, `resource_owners`, `audit_log` |
 | `0004_content.sql` | `books`, `reading_progress`, `categories`, `book_categories`, `annotations`, `extracts`, `notes`, `voices`, `audiobooks`, `diary_entries`, `achievements`, `settings` |
+| `0005_reader.sql` | Posiciones por capítulo en `annotations` y tabla `reader_settings` por libro |
 
 Todas las tablas de contenido llevan `owner_account_id` (FK a `accounts`) y
 `origin_share_id` (FK opcional a `shares`). `foreign_keys=ON` se activa en cada
@@ -137,8 +140,12 @@ conexión del pool y `audit_log` es append-only.
 | `library_replace_cover` | Guarda una portada nueva y limpia la anterior |
 | `library_assign_category` | Asocia un libro a una categoría |
 | `category_list` / `category_create` | Lista y crea categorías de la cuenta local |
-| `reader_open` | `not_implemented` (fase 3) |
-| `reader_update_progress` | `not_implemented` (fase 3) |
+| `reader_open` | Inspecciona el EPUB, completa metadatos/portada y devuelve sesión, progreso y ajustes |
+| `reader_get_chapter` | Devuelve un capítulo saneado con imágenes incrustadas |
+| `reader_update_progress` | Guarda capítulo, offset y porcentaje del libro |
+| `reader_add_annotation` / `reader_update_annotation` / `reader_delete_annotation` | Anotaciones por `book_id` + capítulo + offsets |
+| `reader_list_annotations` | Anotaciones del libro ordenadas por posición |
+| `reader_get_settings` / `reader_save_settings` | Ajustes tipográficos y de tema por libro |
 | `tts_engines` | Lista de motores registrados (vacía) |
 | `tts_voices` | Lista vacía (fase 4) |
 | `tts_synthesize` | `not_implemented` (fase 4) |
@@ -288,9 +295,33 @@ Opciones reales:
 El resto del proyecto (frontend, Rust de escritorio y `cargo check`) sí se
 compila de forma nativa en aarch64.
 
+## Lector EPUB
+
+El lector no inyecta el CSS del EPUB: extrae el `<body>` de cada capítulo, lo
+sanea con `ammonia` (sin scripts, estilos ni manejadores de eventos) y
+reescribe las imágenes locales como `data:` URIs con un límite de tamaño para
+no saturar el WebView. Las anotaciones viven en una capa absoluta sobre el
+texto, calculada con `Range.getClientRects()`, y nunca modifican el HTML
+original.
+
+- **Tipografía:** tamaño, interlineado, márgenes, zoom y familia
+  (`serif`/`sans`/`mono`) por libro.
+- **Apariencia:** temas claro, oscuro y sepia, con texturas lisa, papel, lino
+  y cuadrícula dibujadas por CSS.
+- **Navegación:** desplazamiento con inercia o modo paginado por columnas;
+  flechas, `PageUp`/`PageDown` y botones de capítulo.
+- **Progreso:** porcentaje por capítulo y por libro, guardado tras cada cambio
+  con un pequeño debounce.
+- **Anotaciones:** resaltado, subrayado, tachado y marcador, con nota y color;
+  los offsets son unidades UTF-16 sobre el texto visible del capítulo.
+
+Los ajustes y el progreso se guardan en SQLite (`reader_settings` y
+`reading_progress`); las anotaciones usan `book_id`, `chapter_index`,
+`offset_start` y `offset_end`.
+
 ## Próximas fases
 
-1. Lector: EPUB (capítulos + render) y PDF (texto + render), con progreso real.
+1. PDF: texto + render detrás del mismo lector, con progreso real.
 2. TTS: motores locales/remotos y reproducción.
 3. Perfiles y clonación de voz.
 4. Sync: identidad, pairing, mDNS, QUIC y CRDT.

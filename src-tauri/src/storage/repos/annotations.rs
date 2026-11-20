@@ -26,14 +26,17 @@ impl AnnotationRepo {
 
         sqlx::query(
             "INSERT INTO annotations
-                (id, book_id, kind, locator, text, note, color,
-                 created_at, updated_at, owner_account_id, origin_share_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (id, book_id, kind, locator, chapter_index, offset_start, offset_end,
+                 text, note, color, created_at, updated_at, owner_account_id, origin_share_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.book_id)
         .bind(new.kind)
         .bind(&new.locator)
+        .bind(new.chapter_index)
+        .bind(new.offset_start)
+        .bind(new.offset_end)
         .bind(&new.text)
         .bind(&new.note)
         .bind(&new.color)
@@ -69,7 +72,8 @@ impl AnnotationRepo {
 
     pub async fn list_by_book(&self, book_id: &str) -> Result<Vec<Annotation>> {
         Ok(sqlx::query_as::<_, Annotation>(
-            "SELECT * FROM annotations WHERE book_id = ? ORDER BY created_at",
+            "SELECT * FROM annotations WHERE book_id = ?
+             ORDER BY chapter_index, offset_start, created_at",
         )
         .bind(book_id)
         .fetch_all(&self.pool)
@@ -79,11 +83,15 @@ impl AnnotationRepo {
     pub async fn update(&self, annotation: &Annotation) -> Result<()> {
         let result = sqlx::query(
             "UPDATE annotations SET
-                kind = ?, locator = ?, text = ?, note = ?, color = ?, updated_at = ?
+                kind = ?, locator = ?, chapter_index = ?, offset_start = ?, offset_end = ?,
+                text = ?, note = ?, color = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(annotation.kind)
         .bind(&annotation.locator)
+        .bind(annotation.chapter_index)
+        .bind(annotation.offset_start)
+        .bind(annotation.offset_end)
         .bind(&annotation.text)
         .bind(&annotation.note)
         .bind(&annotation.color)

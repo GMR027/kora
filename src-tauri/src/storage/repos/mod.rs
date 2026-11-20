@@ -3,6 +3,7 @@ pub mod annotations;
 pub mod books;
 pub mod categories;
 pub mod diary;
+pub mod reader_settings;
 pub mod settings;
 pub mod sharing;
 pub mod sync;

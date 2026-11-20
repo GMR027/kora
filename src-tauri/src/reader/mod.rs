@@ -2,10 +2,12 @@ pub mod epub;
 pub mod model;
 pub mod pdf;
 pub mod renderer;
+pub mod sanitize;
 
-pub use epub::EpubParser;
+pub use epub::{CoverImage, EpubInspection, EpubParser};
 pub use model::{
-    Document, DocumentFormat, Locator, PageBitmap, ReaderSession, Section, TextRange, Viewport,
+    ChapterContent, Document, DocumentFormat, Locator, PageBitmap, ReaderSession, Section,
+    TextRange, Viewport,
 };
 pub use pdf::PdfParser;
 pub use renderer::{PageRenderer, PdfiumRenderer, WebViewRenderer};
@@ -14,7 +16,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::error::{KoraError, Result};
+use crate::error::Result;
 
 #[async_trait]
 pub trait DocumentParser: Send + Sync {
@@ -25,7 +27,8 @@ pub trait TextExtractor: Send + Sync {
     fn extract(&self, document: &Document, range: &TextRange) -> Result<String>;
 }
 
-/// Fachada que elige el parser según la extensión del archivo.
+/// Fachada que elige el parser según la extensión del archivo. El EPUB se
+/// inspecciona y se lee capítulo a capítulo; el PDF sigue pendiente.
 pub struct ReaderService {
     epub: EpubParser,
     pdf: PdfParser,
@@ -39,32 +42,16 @@ impl ReaderService {
         }
     }
 
-    pub async fn open(&self, book_id: &str, path: &Path) -> Result<ReaderSession> {
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .ok_or_else(|| KoraError::InvalidInput("el archivo no tiene extensión".into()))?;
+    pub fn inspect_epub(&self, path: &Path) -> Result<EpubInspection> {
+        self.epub.inspect(path)
+    }
 
-        let format = DocumentFormat::from_extension(extension).ok_or_else(|| {
-            KoraError::InvalidInput(format!("formato no soportado: .{extension}"))
-        })?;
+    pub fn epub_chapter(&self, path: &Path, index: usize) -> Result<ChapterContent> {
+        self.epub.chapter(path, index)
+    }
 
-        let document = match format {
-            DocumentFormat::Epub => self.epub.open(path).await?,
-            DocumentFormat::Pdf => self.pdf.open(path).await?,
-        };
-
-        let locator = document
-            .sections
-            .first()
-            .map(|section| section.locator)
-            .unwrap_or(Locator::START);
-
-        Ok(ReaderSession {
-            book_id: book_id.to_string(),
-            document,
-            locator,
-        })
+    pub fn pdf(&self) -> &PdfParser {
+        &self.pdf
     }
 }
 

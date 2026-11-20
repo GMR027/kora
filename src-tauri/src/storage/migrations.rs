@@ -34,9 +34,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "0004_content",
         sql: include_str!("migrations/0004_content.sql"),
     },
+    Migration {
+        version: 5,
+        name: "0005_reader",
+        sql: include_str!("migrations/0005_reader.sql"),
+    },
 ];
 
-pub const LATEST_VERSION: i64 = 4;
+pub const LATEST_VERSION: i64 = 5;
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {
     sqlx::query(

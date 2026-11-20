@@ -1,14 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AccountStatus,
+  Annotation,
   AppInfo,
   BookSummary,
   Category,
+  ChapterContent,
   EngineInfo,
   FeaturesStatus,
-  Locator,
+  NewAnnotation,
   PeerInfo,
   ReaderSession,
+  ReaderSettings,
+  ReaderSettingsInput,
   StorageLayout,
   SyncStatus,
   SynthesisRequest,
@@ -49,8 +53,36 @@ export const categoryCreate = (name: string, color: string | null = null) =>
 export const readerOpen = (bookId: string) =>
   invoke<ReaderSession>("reader_open", { bookId });
 
-export const readerUpdateProgress = (bookId: string, locator: Locator) =>
-  invoke<void>("reader_update_progress", { bookId, locator });
+export const readerGetChapter = (bookId: string, index: number) =>
+  invoke<ChapterContent>("reader_get_chapter", { bookId, index });
+
+export const readerUpdateProgress = (
+  bookId: string,
+  chapter: number,
+  offset: number,
+  percent: number,
+) => invoke<void>("reader_update_progress", { bookId, chapter, offset, percent });
+
+export const readerAddAnnotation = (annotation: NewAnnotation) =>
+  invoke<Annotation>("reader_add_annotation", { ...annotation });
+
+export const readerUpdateAnnotation = (
+  annotationId: string,
+  color: string | null,
+  note: string | null,
+) => invoke<Annotation>("reader_update_annotation", { annotationId, color, note });
+
+export const readerListAnnotations = (bookId: string) =>
+  invoke<Annotation[]>("reader_list_annotations", { bookId });
+
+export const readerDeleteAnnotation = (annotationId: string) =>
+  invoke<void>("reader_delete_annotation", { annotationId });
+
+export const readerGetSettings = (bookId: string) =>
+  invoke<ReaderSettings>("reader_get_settings", { bookId });
+
+export const readerSaveSettings = (bookId: string, settings: ReaderSettingsInput) =>
+  invoke<ReaderSettings>("reader_save_settings", { bookId, settings });
 
 // --- TTS --------------------------------------------------------------------
 

@@ -59,13 +59,90 @@ export interface Document {
   format: BookFormat;
   title: string;
   author: string | null;
+  language: string | null;
+  publisher: string | null;
+  description: string | null;
   sections: Section[];
+}
+
+export type ReaderFontFamily = "serif" | "sans" | "mono";
+export type ReaderTheme = "light" | "dark" | "sepia";
+export type ReaderTexture = "none" | "paper" | "linen" | "grid";
+export type ReaderMode = "scroll" | "paged";
+
+export interface ReaderSettings {
+  bookId: string;
+  fontSize: number;
+  lineHeight: number;
+  margin: number;
+  fontFamily: ReaderFontFamily;
+  theme: ReaderTheme;
+  texture: ReaderTexture;
+  mode: ReaderMode;
+  zoom: number;
+  updatedAt: string;
+  ownerAccountId: string;
+  originShareId: string | null;
+}
+
+export interface ReaderSettingsInput {
+  fontSize: number;
+  lineHeight: number;
+  margin: number;
+  fontFamily: ReaderFontFamily;
+  theme: ReaderTheme;
+  texture: ReaderTexture;
+  mode: ReaderMode;
+  zoom: number;
 }
 
 export interface ReaderSession {
   bookId: string;
   document: Document;
   locator: Locator;
+  coverPath: string | null;
+  progress: number;
+  settings: ReaderSettings;
+}
+
+export interface ChapterContent {
+  bookId: string;
+  index: number;
+  title: string;
+  html: string;
+  charCount: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+}
+
+export type AnnotationKind = "highlight" | "underline" | "bookmark" | "strike";
+
+export interface Annotation {
+  id: string;
+  bookId: string;
+  kind: AnnotationKind;
+  locator: string;
+  chapterIndex: number | null;
+  offsetStart: number | null;
+  offsetEnd: number | null;
+  text: string | null;
+  note: string | null;
+  color: string | null;
+  createdAt: string;
+  updatedAt: string;
+  ownerAccountId: string;
+  originShareId: string | null;
+}
+
+export interface NewAnnotation {
+  bookId: string;
+  chapterIndex: number;
+  offsetStart: number;
+  offsetEnd: number;
+  kind: AnnotationKind;
+  color: string | null;
+  text: string | null;
+  note: string | null;
 }
 
 export interface EngineInfo {

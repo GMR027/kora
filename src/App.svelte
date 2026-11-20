@@ -17,6 +17,12 @@
   let tab = $state<Tab>("library");
   let info = $state<AppInfo | null>(null);
   let error = $state<string | null>(null);
+  let readerBookId = $state<string | null>(null);
+
+  function openReader(id: string) {
+    readerBookId = id;
+    tab = "reader";
+  }
 
   onMount(async () => {
     try {
@@ -56,9 +62,9 @@
 
   <main>
     {#if tab === "library"}
-      <Library />
+      <Library onRead={openReader} />
     {:else if tab === "reader"}
-      <Reader />
+      <Reader bookId={readerBookId} />
     {:else}
       <Settings />
     {/if}

@@ -6,8 +6,8 @@ pub mod sync;
 pub use content::{
     Achievement, Annotation, AnnotationKind, Audiobook, AudiobookStatus, Book, BookFormat,
     BookListRow, BookSummary, Category, DiaryEntry, Extract, NewAchievement, NewAnnotation,
-    NewAudiobook, NewBook, NewCategory, NewDiaryEntry, NewExtract, NewNote, NewReadingProgress,
-    NewVoice, Note, ReadingProgress, Voice,
+    NewAudiobook, NewBook, NewCategory, NewDiaryEntry, NewExtract, NewNote, NewReaderSettings,
+    NewReadingProgress, NewVoice, Note, ReaderSettings, ReadingProgress, Voice,
 };
 pub use identity::{
     Account, ConnectionKey, ConnectionKeyKind, Device, LocalIdentity, NewAccount, NewConnectionKey,

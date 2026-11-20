@@ -14,6 +14,8 @@
   } from "../lib/api";
   import type { BookSummary, Category } from "../lib/types";
 
+  let { onRead }: { onRead?: (bookId: string) => void } = $props();
+
   let books = $state<BookSummary[]>([]);
   let categories = $state<Category[]>([]);
   let loading = $state(true);
@@ -262,6 +264,14 @@
             </p>
 
             <div class="book-actions">
+              <button
+                class="primary small"
+                onclick={() => onRead?.(book.id)}
+                disabled={book.format !== "epub" || busy === book.id}
+                title={book.format === "epub" ? "Abrir en el lector" : "Los PDF llegarán en la fase 4"}
+              >
+                Leer
+              </button>
               <button
                 class="ghost small"
                 onclick={() => {

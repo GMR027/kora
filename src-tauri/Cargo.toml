@@ -22,15 +22,18 @@ tauri-build = { version = "2.7", features = [] }
 [dependencies]
 tauri = { version = "2.12", features = ["protocol-asset"] }
 
+ammonia.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 chrono.workspace = true
-epub.workspace = true
 lopdf.workspace = true
 mdns-sd.workspace = true
 quinn.workspace = true
 rcgen.workspace = true
+rbook.workspace = true
 rustls.workspace = true
+scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -46,6 +49,7 @@ yrs.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [features]
 default = []

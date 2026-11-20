@@ -18,6 +18,7 @@ pub use repos::annotations::{AnnotationRepo, ExtractRepo, NoteRepo};
 pub use repos::books::{BookRepo, ReadingProgressRepo};
 pub use repos::categories::{BookCategoryRepo, CategoryRepo};
 pub use repos::diary::{AchievementRepo, DiaryRepo};
+pub use repos::reader_settings::ReaderSettingsRepo;
 pub use repos::settings::SettingsRepo;
 pub use repos::sharing::{ShareKeyRepo, ShareRepo};
 pub use repos::sync::{AuditLogRepo, ResourceOwnerRepo, SyncStateRepo};
@@ -54,6 +55,7 @@ pub struct Storage {
     pub diary: DiaryRepo,
     pub achievements: AchievementRepo,
     pub settings: SettingsRepo,
+    pub reader_settings: ReaderSettingsRepo,
 }
 
 impl Storage {
@@ -89,6 +91,7 @@ impl Storage {
             diary: DiaryRepo::new(pool.clone()),
             achievements: AchievementRepo::new(pool.clone()),
             settings: SettingsRepo::new(pool.clone()),
+            reader_settings: ReaderSettingsRepo::new(pool.clone()),
             pool,
             layout,
         }

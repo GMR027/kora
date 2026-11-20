@@ -155,6 +155,9 @@ pub struct Annotation {
     pub book_id: String,
     pub kind: AnnotationKind,
     pub locator: String,
+    pub chapter_index: Option<i64>,
+    pub offset_start: Option<i64>,
+    pub offset_end: Option<i64>,
     pub text: Option<String>,
     pub note: Option<String>,
     pub color: Option<String>,
@@ -170,9 +173,65 @@ pub struct NewAnnotation {
     pub book_id: String,
     pub kind: AnnotationKind,
     pub locator: String,
+    pub chapter_index: Option<i64>,
+    pub offset_start: Option<i64>,
+    pub offset_end: Option<i64>,
     pub text: Option<String>,
     pub note: Option<String>,
     pub color: Option<String>,
+    pub owner_account_id: String,
+    pub origin_share_id: Option<String>,
+}
+
+/// Ajustes tipográficos del lector, persistidos por libro.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ReaderSettings {
+    pub book_id: String,
+    pub font_size: f64,
+    pub line_height: f64,
+    pub margin: i64,
+    pub font_family: String,
+    pub theme: String,
+    pub texture: String,
+    pub mode: String,
+    pub zoom: f64,
+    pub updated_at: DateTime<Utc>,
+    pub owner_account_id: String,
+    pub origin_share_id: Option<String>,
+}
+
+impl ReaderSettings {
+    pub fn defaults(book_id: String, owner_account_id: String) -> Self {
+        Self {
+            book_id,
+            font_size: 18.0,
+            line_height: 1.7,
+            margin: 32,
+            font_family: "serif".to_string(),
+            theme: "light".to_string(),
+            texture: "none".to_string(),
+            mode: "scroll".to_string(),
+            zoom: 1.0,
+            updated_at: Utc::now(),
+            owner_account_id,
+            origin_share_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewReaderSettings {
+    pub book_id: String,
+    pub font_size: f64,
+    pub line_height: f64,
+    pub margin: i64,
+    pub font_family: String,
+    pub theme: String,
+    pub texture: String,
+    pub mode: String,
+    pub zoom: f64,
     pub owner_account_id: String,
     pub origin_share_id: Option<String>,
 }
