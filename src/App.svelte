@@ -107,17 +107,31 @@
     };
     window.addEventListener("unhandledrejection", onRejection);
 
+    const onAccountChanged = (event: Event) => {
+      account = (event as CustomEvent<AccountView>).detail;
+    };
+    window.addEventListener("kora:account-changed", onAccountChanged);
+
     return () => {
       unlisten?.();
       unlistenConversion?.();
       unlistenConversionError?.();
       window.removeEventListener("unhandledrejection", onRejection);
+      window.removeEventListener("kora:account-changed", onAccountChanged);
     };
   });
 
   async function refreshAppearance() {
     try {
       appearanceState = await loadAppearance();
+    } catch (cause) {
+      notifyError(cause);
+    }
+  }
+
+  async function refreshAccount() {
+    try {
+      account = await getAccount();
     } catch (cause) {
       notifyError(cause);
     }
@@ -153,6 +167,7 @@
     onChanged={changedAppearance}
     onDone={() => {
       void refreshAppearance();
+      void refreshAccount();
       tab = "library";
     }}
   />

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { listen } from "@tauri-apps/api/event";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
   import {
@@ -89,7 +90,7 @@
     profile = null,
   }: {
     onNavigate?: (tab: AppTab) => void;
-    profile?: { displayName: string; username: string } | null;
+    profile?: { displayName: string; username: string; avatarPath?: string | null } | null;
   } = $props();
 
   let tab = $state<SettingsTab>("appearance");
@@ -698,7 +699,11 @@
   {#if profile}
     <button class="mobile-account-card" onclick={() => onNavigate?.("account")}>
       <span class="mobile-account-avatar" aria-hidden="true">
-        {profile.displayName.trim().slice(0, 1).toUpperCase()}
+        {#if profile.avatarPath}
+          <img src={convertFileSrc(profile.avatarPath)} alt="" />
+        {:else}
+          {(profile.displayName || profile.username).trim().slice(0, 1).toUpperCase()}
+        {/if}
       </span>
       <span class="mobile-account-copy">
         <strong>{profile.displayName}</strong>
@@ -2684,12 +2689,19 @@
       flex: 0 0 auto;
       width: 40px;
       height: 40px;
+      overflow: hidden;
       border-radius: 50%;
       background: linear-gradient(145deg, var(--accent-2), var(--accent-3));
       color: #fff;
       font-family: var(--font-display);
       font-size: 1rem;
       font-weight: 600;
+    }
+
+    .mobile-account-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
     .mobile-account-copy {

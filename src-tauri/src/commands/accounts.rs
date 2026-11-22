@@ -59,6 +59,19 @@ pub async fn update_display_name(
 }
 
 #[tauri::command]
+pub async fn update_account_avatar(
+    state: State<'_, AppState>,
+    image: String,
+) -> Result<AccountView> {
+    state.accounts.update_avatar(&image).await
+}
+
+#[tauri::command]
+pub async fn remove_account_avatar(state: State<'_, AppState>) -> Result<AccountView> {
+    state.accounts.remove_avatar().await
+}
+
+#[tauri::command]
 pub async fn get_connection_key(
     state: State<'_, AppState>,
     pin: String,

@@ -30,8 +30,9 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 > **clasificación asistida** de libros y audiolibros con sugerencias de
 > categoría, la **conversión PDF→EPUB** con reubicación de anotaciones, la
 > **papelera con restauración**, las **copias de seguridad** y la optimización
-> de consultas de la biblioteca. El escritorio se empaqueta como
-> `.deb`/`rpm`/AppImage; el APK núcleo se valida en CI.
+> de consultas de la biblioteca. La cuenta local permite editar el nombre y
+> subir una foto de perfil que se recorta en círculo. El escritorio se
+> empaqueta como `.deb`/`rpm`/AppImage; el APK núcleo se valida en CI.
 
 ### Verificación de esta fase
 
@@ -41,10 +42,11 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 | `pnpm check` (svelte-check) | ✅ 0 errores, 0 warnings |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ |
-| `cargo test --workspace` | ✅ 203 unitarios + 5 M4B + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
+| `cargo test --workspace` | ✅ 207 unitarios + 5 M4B + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
 | Temas y texturas | ✅ 4 temas integrados + temas por cuenta, 10 texturas y contraste |
 | i18n | ✅ español/inglés tipado con paridad de claves |
 | Accesibilidad | ✅ 48dp, foco visible, skip link, ARIA y reduced-motion |
+| Foto de perfil | ✅ subida local, recorte circular, asset SHA-256 y borrado |
 | Linux `.deb` | ✅ paquete generado y documentado |
 | Android APK núcleo | ✅ workflow x86_64 y build local x86_64; en aarch64 no es nativo |
 | APK debug universal | ✅ compilado localmente para las cuatro ABI |
@@ -164,6 +166,7 @@ Todo se resuelve con `tauri::path::BaseDirectory::AppLocalData`:
 db/app.sqlite            SQLite en modo WAL (+ -wal / -shm)
 assets/books/            contenido de libros, <sha256>.<epub|pdf>
 assets/covers/           portadas, <sha256>.<jpg|png|webp>
+assets/avatars/          fotos de perfil, <sha256>.<jpg|png|webp>
 assets/voices/           perfiles clonados: <voice_id>/embedding.bin, reference.opus, reference.wav, reference.txt, profile.json
 assets/voices/models/    modelos de clonación: encoder.onnx(+.data), decoder.onnx, backbone Q4
 assets/notes_audio/      audio de notas
@@ -217,6 +220,7 @@ migraciones corren dentro de una transacción por versión.
 | `0022_audio_only_books.sql` | `books.audio_only` para audiolibros importados sin transcripción |
 | `0023_classification.sql` | Origen/confianza de categorías, alias, sugerencias y estado de clasificación |
 | `0024_trash_retry.sql` | Papelera lógica (`books.deleted_at`) y ajustes de narración para reintentos |
+| `0025_account_avatar.sql` | `avatar_hash`/`avatar_ext` de la foto de perfil local |
 
 Todas las tablas de contenido llevan `owner_account_id` (FK a `accounts`) y
 `origin_share_id` (FK opcional a `shares`). `foreign_keys=ON` se activa en cada
@@ -330,6 +334,7 @@ conexión del pool y `audit_log` es append-only.
 | `join_mirror` / `leave_mirror` / `get_mirror_status` | Seguidor y estado del espejo |
 | `account_status` | Cuenta y dispositivo locales (se crean al arrancar) |
 | `create_account` / `get_account` / `update_display_name` | Crean, consultan y editan la cuenta local |
+| `update_account_avatar` / `remove_account_avatar` | Guardan o quitan la foto de perfil local |
 | `get_connection_key` / `change_pin` | Clave de conexión y re-cifrado con PIN nuevo |
 | `recover_account_pin` | Restablece el PIN regenerando la identidad de la cuenta |
 | `delete_account` | Borra cuenta, biblioteca, notas, audiolibros y voces clonadas |
@@ -789,6 +794,15 @@ usuario, el nombre visible y un **PIN Argon2id** (`m=64 MB`, `t=3`), y genera
 un par **Ed25519** de cuenta. La clave privada y la parte secreta de la clave
 de conexión se guardan cifradas en SQLite con una clave derivada del PIN.
 
+### Nombre y foto
+
+El nombre visible se edita desde **Cuenta** y se propaga a la barra superior y
+a la tarjeta lateral. La foto se sube desde el propio avatar: el frontend la
+recorta en cuadrado, la reduce a 512×512 y la envía como data URL. El backend
+valida el formato (PNG, JPG o WebP), la guarda deduplicada por SHA-256 en
+`assets/avatars/` y actualiza `accounts.avatar_hash`/`avatar_ext`. La imagen se
+muestra siempre en un círculo y se incluye en las copias de seguridad.
+
 ### Clave de conexión
 
 Formato `usuario-XXXX-XXXX` (base32 Crockford). El QR usa:
@@ -921,8 +935,8 @@ nuevo sin tocar el PDF.
 `library_delete` mueve el libro a una papelera lógica (`books.deleted_at`), sin
 borrar sus notas ni assets; `library_restore` lo recupera y reimportar el mismo
 archivo también lo restaura. `storage_usage` desglosa el espacio y
-`backup_library` genera un ZIP con la base de datos, libros, portadas,
-audiolibros, voces, notas de voz y capas OCR (los modelos descargables quedan
+`backup_library` genera un ZIP con la base de datos, libros, portadas, fotos de
+perfil, audiolibros, voces, notas de voz y capas OCR (los modelos descargables quedan
 fuera). `restore_library` valida el ZIP y prepara la restauración para el
 siguiente arranque; `purge_storage` vacía papelera o temporales.
 

@@ -41,7 +41,7 @@
     version: string;
     immersive?: boolean;
     reading?: boolean;
-    account?: { displayName: string; username: string } | null;
+    account?: { displayName: string; username: string; avatarPath?: string | null } | null;
     children: Snippet;
   } = $props();
 
@@ -51,8 +51,12 @@
   let playerBusy = $state(false);
   let shelfTab = $state<AppTab>("library");
   let stackReturnTab = $state<AppTab>("library");
-  let profileInitial = $derived(
-    account?.displayName?.trim().slice(0, 1).toUpperCase() ?? "K",
+  let profileName = $derived(
+    account?.displayName?.trim() || account?.username?.trim() || "",
+  );
+  let profileInitial = $derived(profileName.slice(0, 1).toUpperCase());
+  let avatarUrl = $derived(
+    account?.avatarPath ? convertFileSrc(account.avatarPath) : null,
   );
 
   const desktopItems: { id: AppTab; icon: IconName }[] = [
@@ -229,9 +233,17 @@
 
     <div class="sidebar-foot">
       <button class="profile-card" onclick={() => go("account")}>
-        <span class="profile-avatar" aria-hidden="true">{profileInitial}</span>
+        <span class="profile-avatar" aria-hidden="true">
+          {#if avatarUrl}
+            <img src={avatarUrl} alt="" />
+          {:else if profileInitial}
+            {profileInitial}
+          {:else}
+            <Icon name="account" size={18} />
+          {/if}
+        </span>
         <span class="profile-copy">
-          <strong>{account?.displayName ?? "Kora"}</strong>
+          <strong>{account?.displayName ?? $t("nav.account")}</strong>
           <span>
             <i aria-hidden="true"></i>
             {account ? `@${account.username}` : $t("app.localFirst")}
@@ -374,8 +386,24 @@
         >
           <Icon name="sync" size={19} />
         </button>
-        <button class="topbar-avatar" onclick={() => go("account")} aria-label={$t("nav.account")}>
-          {profileInitial}
+        <button
+          class="topbar-account"
+          onclick={() => go("account")}
+          aria-label={account ? `${$t("nav.account")}: ${account.displayName}` : $t("nav.account")}
+          title={account ? `${account.displayName} · @${account.username}` : $t("nav.account")}
+        >
+          <span class="topbar-avatar" aria-hidden="true">
+            {#if avatarUrl}
+              <img src={avatarUrl} alt="" />
+            {:else if profileInitial}
+              {profileInitial}
+            {:else}
+              <Icon name="account" size={17} />
+            {/if}
+          </span>
+          <span class="topbar-account-name">
+            {profileName || $t("nav.account")}
+          </span>
         </button>
       </div>
     </header>
@@ -684,6 +712,7 @@
     flex: 0 0 auto;
     width: 34px;
     height: 34px;
+    overflow: hidden;
     border-radius: 50%;
     background: linear-gradient(145deg, var(--accent-2), var(--accent-3));
     color: #fff;
@@ -691,6 +720,14 @@
     font-size: 1rem;
     font-weight: 600;
     box-shadow: 0 4px 10px -5px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+
+  .profile-avatar img,
+  .topbar-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
 
   .profile-copy {
@@ -1033,6 +1070,7 @@
     width: 34px;
     min-width: 34px;
     height: 34px;
+    overflow: hidden;
     margin-left: 0.2rem;
     padding: 0;
     border: 2px solid var(--surface);
@@ -1043,6 +1081,32 @@
     font-size: 0.95rem;
     font-weight: 600;
     box-shadow: var(--shadow-sm);
+  }
+
+  .topbar-account {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 38px;
+    padding: 0 0.45rem 0 0.15rem;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+  }
+
+  .topbar-account:hover {
+    background: var(--surface-3);
+  }
+
+  .topbar-account-name {
+    max-width: 140px;
+    overflow: hidden;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   main {
@@ -1082,6 +1146,10 @@
     }
 
     .streak-chip span {
+      display: none;
+    }
+
+    .topbar-account-name {
       display: none;
     }
   }

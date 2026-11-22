@@ -1,5 +1,6 @@
 <script lang="ts">
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { save } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
   import Icon from "../lib/components/Icon.svelte";
@@ -21,6 +22,7 @@
     listReceivedShares,
     listShares,
     removeReceivedShare,
+    removeAccountAvatar,
     revokeDevice,
     revokeShare,
     recoverAccountPin,
@@ -28,6 +30,7 @@
     rotateConnectionKey,
     startPairing,
     stopPairing,
+    updateAccountAvatar,
     updateDisplayName,
   } from "../lib/api";
   import type {
@@ -75,6 +78,8 @@
   let deletePin = $state("");
   let editingProfile = $state(false);
   let profileName = $state("");
+  let avatarInput: HTMLInputElement | undefined = $state();
+  let avatarBusy = $state(false);
   let exportingNotes = $state(false);
 
   let joinPin = $state("");
@@ -196,10 +201,102 @@
       account = await updateDisplayName(profileName);
       editingProfile = false;
       notice = translate("account.profileSaved");
+      publishAccount(account);
     } catch (cause) {
       error = errorMessage(cause);
     } finally {
       busy = null;
+    }
+  }
+
+  function publishAccount(next: AccountView | null) {
+    if (next) {
+      window.dispatchEvent(
+        new CustomEvent<AccountView>("kora:account-changed", { detail: next }),
+      );
+    }
+  }
+
+  function chooseAvatar() {
+    avatarInput?.click();
+  }
+
+  async function changeAvatar(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      error = translate("account.avatarInvalid");
+      return;
+    }
+    avatarBusy = true;
+    error = null;
+    try {
+      const image = await resizeAvatar(file);
+      account = await updateAccountAvatar(image);
+      notice = translate("account.avatarSaved");
+      publishAccount(account);
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      avatarBusy = false;
+    }
+  }
+
+  function resizeAvatar(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const side = Math.min(image.width, image.height);
+          const canvas = document.createElement("canvas");
+          canvas.width = 512;
+          canvas.height = 512;
+          const context = canvas.getContext("2d");
+          if (!context) {
+            reject(new Error(translate("account.avatarInvalid")));
+            return;
+          }
+          context.drawImage(
+            image,
+            (image.width - side) / 2,
+            (image.height - side) / 2,
+            side,
+            side,
+            0,
+            0,
+            512,
+            512,
+          );
+          resolve(canvas.toDataURL("image/jpeg", 0.88));
+        } catch (cause) {
+          reject(cause);
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error(translate("account.avatarInvalid")));
+      };
+      image.src = objectUrl;
+    });
+  }
+
+  async function clearAvatar() {
+    if (!account?.avatarPath) return;
+    avatarBusy = true;
+    error = null;
+    try {
+      account = await removeAccountAvatar();
+      notice = translate("account.avatarRemoved");
+      publishAccount(account);
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      avatarBusy = false;
     }
   }
 
@@ -551,9 +648,30 @@
     {#if activeTab === "account"}
       <section class="panel profile-panel">
         <div class="profile-hero">
-          <span class="avatar" aria-hidden="true">
-            {account.displayName.slice(0, 1).toUpperCase()}
-          </span>
+          <input
+            class="avatar-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            bind:this={avatarInput}
+            onchange={changeAvatar}
+          />
+          <button
+            class="avatar avatar-button"
+            type="button"
+            onclick={chooseAvatar}
+            disabled={avatarBusy}
+            aria-label={$t("account.avatarChange")}
+            title={$t("account.avatarChange")}
+          >
+            {#if account.avatarPath}
+              <img src={convertFileSrc(account.avatarPath)} alt="" />
+            {:else}
+              {(account.displayName || account.username).slice(0, 1).toUpperCase()}
+            {/if}
+            <span class="avatar-camera" aria-hidden="true">
+              <Icon name="upload" size={14} />
+            </span>
+          </button>
           <div class="profile-titles">
             {#if editingProfile}
               <div class="profile-edit">
@@ -581,15 +699,27 @@
               <span aria-hidden="true">·</span>
               {$t("account.localAccount")}
             </p>
+            <small class="avatar-help">{$t("account.avatarHelp")}</small>
           </div>
-          {#if !editingProfile}
-            <button class="ghost small profile-edit-button" onclick={() => {
-              profileName = account?.displayName ?? "";
-              editingProfile = true;
-            }}>
-              <Icon name="edit" size={14} /> {$t("account.editProfile")}
-            </button>
-          {/if}
+          <div class="profile-actions">
+            {#if !editingProfile}
+              <button class="ghost small profile-edit-button" onclick={() => {
+                profileName = account?.displayName ?? "";
+                editingProfile = true;
+              }}>
+                <Icon name="edit" size={14} /> {$t("account.editProfile")}
+              </button>
+            {/if}
+            {#if account.avatarPath}
+              <button
+                class="ghost small"
+                onclick={clearAvatar}
+                disabled={avatarBusy}
+              >
+                <Icon name="trash" size={14} /> {$t("account.avatarRemove")}
+              </button>
+            {/if}
+          </div>
           <span class="badge">{$t("account.localAccount")}</span>
         </div>
         <p class="hint">
@@ -1107,13 +1237,15 @@
   }
 
   .avatar {
+    position: relative;
     display: grid;
     place-items: center;
     flex: 0 0 auto;
     width: 84px;
     height: 84px;
+    overflow: hidden;
     border: 3px solid var(--surface);
-    border-radius: 24px;
+    border-radius: 50%;
     background: linear-gradient(145deg, var(--accent), var(--accent-2));
     color: var(--accent-contrast);
     font-family: var(--font-display);
@@ -1122,6 +1254,54 @@
     box-shadow:
       0 12px 26px -16px color-mix(in srgb, var(--accent) 70%, transparent),
       inset 0 1px 0 color-mix(in srgb, #fff 20%, transparent);
+  }
+
+  .avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .avatar-button {
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .avatar-button:disabled {
+    cursor: wait;
+    opacity: 0.7;
+  }
+
+  .avatar-input {
+    display: none;
+  }
+
+  .avatar-camera {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 2px solid var(--surface);
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--accent);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .avatar-help {
+    color: var(--muted);
+    font-size: 0.68rem;
+  }
+
+  .profile-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.35rem;
+    margin-left: auto;
   }
 
   .profile-titles {
@@ -1412,6 +1592,6 @@
   }
 
   .profile-edit-button {
-    margin-left: auto;
+    margin-left: 0;
   }
 </style>

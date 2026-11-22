@@ -48,7 +48,7 @@ impl AccountRepo {
             "SELECT id, display_name, email, is_local, username, pin_hash, public_key,
              account_key_ciphertext, account_key_nonce, connection_key_hash,
              connection_key_ciphertext, connection_key_nonce,
-             connection_key_rotated_at, created_at, updated_at FROM accounts WHERE id = ?",
+             connection_key_rotated_at, avatar_hash, avatar_ext, created_at, updated_at FROM accounts WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -60,7 +60,7 @@ impl AccountRepo {
             "SELECT id, display_name, email, is_local, username, pin_hash, public_key,
              account_key_ciphertext, account_key_nonce, connection_key_hash,
              connection_key_ciphertext, connection_key_nonce,
-             connection_key_rotated_at, created_at, updated_at FROM accounts ORDER BY created_at",
+             connection_key_rotated_at, avatar_hash, avatar_ext, created_at, updated_at FROM accounts ORDER BY created_at",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -72,19 +72,30 @@ impl AccountRepo {
                 "SELECT id, display_name, email, is_local, username, pin_hash, public_key,
              account_key_ciphertext, account_key_nonce, connection_key_hash,
              connection_key_ciphertext, connection_key_nonce,
-             connection_key_rotated_at, created_at, updated_at FROM accounts WHERE is_local = 1 LIMIT 1",
+             connection_key_rotated_at, avatar_hash, avatar_ext, created_at, updated_at FROM accounts WHERE is_local = 1 LIMIT 1",
             )
                 .fetch_optional(&self.pool)
                 .await?,
         )
     }
 
+    pub async fn count_by_avatar_hash(&self, hash: &str) -> Result<i64> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM accounts WHERE avatar_hash = ?")
+            .bind(hash)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count.0)
+    }
+
     pub async fn update(&self, account: &Account) -> Result<()> {
         let result = sqlx::query(
-            "UPDATE accounts SET display_name = ?, email = ?, updated_at = ? WHERE id = ?",
+            "UPDATE accounts SET display_name = ?, email = ?, avatar_hash = ?, avatar_ext = ?,
+             updated_at = ? WHERE id = ?",
         )
         .bind(&account.display_name)
         .bind(&account.email)
+        .bind(&account.avatar_hash)
+        .bind(&account.avatar_ext)
         .bind(now())
         .bind(&account.id)
         .execute(&self.pool)

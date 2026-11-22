@@ -135,7 +135,10 @@
     busy = true;
     error = null;
     try {
-      await createAccount(username.trim(), displayName.trim(), pin);
+      const created = await createAccount(username.trim(), displayName.trim(), pin);
+      window.dispatchEvent(
+        new CustomEvent("kora:account-changed", { detail: created.account }),
+      );
       notifySuccess($t("account.create"), $t("account.createHelp"));
       step = 2;
     } catch (cause) {

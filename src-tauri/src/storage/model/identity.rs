@@ -23,6 +23,8 @@ pub struct Account {
     #[serde(skip)]
     pub connection_key_nonce: Option<String>,
     pub connection_key_rotated_at: Option<DateTime<Utc>>,
+    pub avatar_hash: Option<String>,
+    pub avatar_ext: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

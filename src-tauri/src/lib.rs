@@ -271,6 +271,8 @@ pub fn run() {
             commands::accounts::create_account,
             commands::accounts::get_account,
             commands::accounts::update_display_name,
+            commands::accounts::update_account_avatar,
+            commands::accounts::remove_account_avatar,
             commands::accounts::get_connection_key,
             commands::accounts::rotate_connection_key,
             commands::accounts::change_pin,

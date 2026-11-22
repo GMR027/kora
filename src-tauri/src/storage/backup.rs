@@ -20,6 +20,7 @@ const BACKUP_ASSET_DIRS: &[&str] = &[
     "audiobooks",
     "generated_books",
     "ocr",
+    "avatars",
 ];
 
 #[derive(Debug, Clone, Serialize)]

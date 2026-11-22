@@ -135,8 +135,9 @@ fn usage(layout: &crate::storage::StorageLayout) -> Result<StorageUsage> {
         + dir_size(&layout.assets.join("covers"))
         + dir_size(&layout.assets.join("generated_books"));
     let audiobooks = dir_size(&layout.assets.join("audiobooks"));
-    let voices =
-        dir_size(&layout.assets.join("voices")) + dir_size(&layout.assets.join("notes_audio"));
+    let voices = dir_size(&layout.assets.join("voices"))
+        + dir_size(&layout.assets.join("notes_audio"))
+        + dir_size(&layout.assets.join("avatars"));
     let models = dir_size(&layout.assets.join("models")) + dir_size(&layout.assets.join("whisper"));
     let trash = dir_size(&layout.trash);
     let logs = dir_size(&layout.logs);

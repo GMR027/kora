@@ -67,6 +67,55 @@ async fn creates_local_identity_only_once() {
 }
 
 #[tokio::test]
+async fn account_avatar_fields_round_trip() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let mut account = test
+        .storage
+        .accounts
+        .get(&identity.account.id)
+        .await
+        .expect("cuenta")
+        .expect("cuenta local");
+    assert!(account.avatar_hash.is_none());
+
+    let avatar_hash = "a".repeat(64);
+    account.avatar_hash = Some(avatar_hash.clone());
+    account.avatar_ext = Some("png".to_string());
+    test.storage
+        .accounts
+        .update(&account)
+        .await
+        .expect("guardar avatar");
+
+    let stored = test
+        .storage
+        .accounts
+        .get(&identity.account.id)
+        .await
+        .expect("leer cuenta")
+        .expect("cuenta local");
+    assert_eq!(stored.avatar_hash.as_deref(), Some(avatar_hash.as_str()));
+    assert_eq!(stored.avatar_ext.as_deref(), Some("png"));
+
+    account.avatar_hash = None;
+    account.avatar_ext = None;
+    test.storage
+        .accounts
+        .update(&account)
+        .await
+        .expect("quitar avatar");
+    let cleared = test
+        .storage
+        .accounts
+        .get(&identity.account.id)
+        .await
+        .expect("leer cuenta")
+        .expect("cuenta local");
+    assert!(cleared.avatar_hash.is_none());
+    assert!(cleared.avatar_ext.is_none());
+}
+
+#[tokio::test]
 async fn creates_reads_and_deletes_books() {
     let (test, identity) = TestStorage::with_identity().await;
     let owner = identity.account.id.clone();

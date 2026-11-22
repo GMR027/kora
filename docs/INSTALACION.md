@@ -49,7 +49,7 @@ Los datos viven en `~/.local/share/dev.kora.reader/`:
 
 ```text
 db/app.sqlite
-assets/books, covers, voices, audiobooks, generated_books, ocr, tts, whisper
+assets/books, covers, avatars, voices, audiobooks, generated_books, ocr, tts, whisper
 assets/models/embeddings
 exports/
 logs/

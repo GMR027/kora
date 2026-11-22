@@ -134,9 +134,14 @@ const MIGRATIONS: &[Migration] = &[
         name: "0024_trash_retry",
         sql: include_str!("migrations/0024_trash_retry.sql"),
     },
+    Migration {
+        version: 25,
+        name: "0025_account_avatar",
+        sql: include_str!("migrations/0025_account_avatar.sql"),
+    },
 ];
 
-pub const LATEST_VERSION: i64 = 24;
+pub const LATEST_VERSION: i64 = 25;
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {
     sqlx::query(

@@ -473,6 +473,12 @@ export const getAccount = () => invoke<AccountView | null>("get_account");
 export const updateDisplayName = (displayName: string) =>
   invoke<AccountView>("update_display_name", { displayName });
 
+export const updateAccountAvatar = (image: string) =>
+  invoke<AccountView>("update_account_avatar", { image });
+
+export const removeAccountAvatar = () =>
+  invoke<AccountView>("remove_account_avatar");
+
 export const getConnectionKey = (pin: string) =>
   invoke<ConnectionKeyView>("get_connection_key", { pin });
 

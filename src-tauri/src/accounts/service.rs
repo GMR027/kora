@@ -2,10 +2,12 @@ use chrono::{DateTime, Duration, Utc};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 
+use base64::Engine;
+
 use crate::error::{KoraError, Result};
 use crate::storage::{
-    Account, AudiobookStatus, NewAuditEntry, NewShare, ResourceType, Share, SharePermission,
-    ShareScopeType, Storage,
+    Account, AssetKind, AssetRef, AudiobookStatus, NewAuditEntry, NewShare, ResourceType, Share,
+    SharePermission, ShareScopeType, Storage,
 };
 use crate::sync::identity::{DeviceIdentity, sync_group_id};
 
@@ -21,6 +23,7 @@ pub struct AccountView {
     pub has_pin: bool,
     pub connection_key_available: bool,
     pub connection_key_rotated_at: Option<DateTime<Utc>>,
+    pub avatar_path: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -86,6 +89,7 @@ impl AccountService {
         let Some(username) = account.username.clone() else {
             return Ok(None);
         };
+        let avatar_path = self.avatar_path(&account);
         Ok(Some(AccountView {
             id: account.id,
             username,
@@ -94,8 +98,25 @@ impl AccountService {
             has_pin: account.pin_hash.is_some(),
             connection_key_available: account.connection_key_ciphertext.is_some(),
             connection_key_rotated_at: account.connection_key_rotated_at,
+            avatar_path,
             created_at: account.created_at,
         }))
+    }
+
+    fn avatar_path(&self, account: &Account) -> Option<String> {
+        let hash = account.avatar_hash.as_deref()?;
+        let extension = account.avatar_ext.as_deref()?;
+        let reference = AssetRef {
+            kind: AssetKind::Avatar,
+            hash: hash.to_string(),
+            extension: extension.to_string(),
+        };
+        self.storage
+            .assets
+            .path(&reference)
+            .ok()
+            .filter(|path| path.is_file())
+            .map(|path| path.display().to_string())
     }
 
     pub async fn update_display_name(&self, display_name: &str) -> Result<AccountView> {
@@ -112,6 +133,68 @@ impl AccountService {
         self.get_account()
             .await?
             .ok_or_else(|| KoraError::Internal("cuenta local no encontrada".into()))
+    }
+
+    /// Guarda una foto de perfil circular ya recortada por el frontend.
+    /// Acepta una data URL o base64 puro con PNG, JPEG o WebP.
+    pub async fn update_avatar(&self, image: &str) -> Result<AccountView> {
+        let data = decode_avatar(image)?;
+        if data.len() > 6 * 1024 * 1024 {
+            return Err(KoraError::InvalidInput(
+                "la foto de perfil no puede superar 6 MB".into(),
+            ));
+        }
+        let extension = avatar_extension(&data)
+            .ok_or_else(|| KoraError::InvalidInput("la foto debe ser PNG, JPG o WebP".into()))?;
+
+        let asset = self
+            .storage
+            .assets
+            .put_bytes(AssetKind::Avatar, &data, extension)?;
+        let mut account = self.local_account().await?;
+        let previous = account.avatar_hash.take().zip(account.avatar_ext.take());
+        account.avatar_hash = Some(asset.hash.clone());
+        account.avatar_ext = Some(asset.extension.clone());
+        self.storage.accounts.update(&account).await?;
+        if let Some((hash, extension)) = previous
+            && hash != asset.hash
+        {
+            self.delete_avatar_asset(&hash, &extension).await;
+        }
+        self.audit("account.avatar", None, None).await?;
+        self.get_account()
+            .await?
+            .ok_or_else(|| KoraError::Internal("cuenta local no encontrada".into()))
+    }
+
+    pub async fn remove_avatar(&self) -> Result<AccountView> {
+        let mut account = self.local_account().await?;
+        let previous = account.avatar_hash.take().zip(account.avatar_ext.take());
+        if let Some((hash, extension)) = previous {
+            self.storage.accounts.update(&account).await?;
+            self.delete_avatar_asset(&hash, &extension).await;
+            self.audit("account.avatar.remove", None, None).await?;
+        }
+        self.get_account()
+            .await?
+            .ok_or_else(|| KoraError::Internal("cuenta local no encontrada".into()))
+    }
+
+    async fn delete_avatar_asset(&self, hash: &str, extension: &str) {
+        if self
+            .storage
+            .asset_is_referenced(AssetKind::Avatar, hash)
+            .await
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let reference = AssetRef {
+            kind: AssetKind::Avatar,
+            hash: hash.to_string(),
+            extension: extension.to_string(),
+        };
+        let _ = self.storage.assets.remove(&reference);
     }
 
     pub async fn create_account(
@@ -707,6 +790,32 @@ impl AccountService {
     }
 }
 
+fn decode_avatar(image: &str) -> Result<Vec<u8>> {
+    let payload = image
+        .split_once(',')
+        .map(|(_, data)| data)
+        .unwrap_or(image)
+        .trim();
+    if payload.is_empty() {
+        return Err(KoraError::InvalidInput("la foto está vacía".into()));
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|_| KoraError::InvalidInput("la foto no es un base64 válido".into()))
+}
+
+fn avatar_extension(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        Some("png")
+    } else if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
 fn validate_pin(pin: &str) -> Result<()> {
     if (4..=12).contains(&pin.chars().count())
         && pin.chars().all(|character| character.is_ascii_digit())
@@ -716,5 +825,63 @@ fn validate_pin(pin: &str) -> Result<()> {
         Err(KoraError::InvalidInput(
             "el PIN debe tener entre 4 y 12 dígitos".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine;
+
+    use super::{AccountService, avatar_extension, decode_avatar};
+    use crate::storage::test_support::TestStorage;
+    use crate::sync::identity::DeviceIdentity;
+
+    #[test]
+    fn decodes_data_urls_and_raw_base64() {
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let encoded = "iVBORw0KGgo=";
+        assert_eq!(decode_avatar(encoded).expect("base64"), png);
+        assert_eq!(
+            decode_avatar(&format!("data:image/png;base64,{encoded}")).expect("data url"),
+            png
+        );
+    }
+
+    #[test]
+    fn detects_supported_avatar_formats() {
+        assert_eq!(
+            avatar_extension(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
+            Some("png")
+        );
+        assert_eq!(avatar_extension(&[0xFF, 0xD8, 0xFF, 0x00]), Some("jpg"));
+        assert_eq!(avatar_extension(b"RIFF\0\0\0\0WEBPVP8 "), Some("webp"));
+        assert_eq!(avatar_extension(b"no es una imagen"), None);
+    }
+
+    #[tokio::test]
+    async fn stores_and_removes_avatar() {
+        let (test, identity) = TestStorage::with_identity().await;
+        let device =
+            DeviceIdentity::load_or_create(&test.storage, &identity, test.storage.layout())
+                .await
+                .expect("dispositivo");
+        let service = AccountService::new(test.storage.clone(), device);
+        service
+            .create_account("edgar", "Edgar", "1234")
+            .await
+            .expect("cuenta");
+
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
+        let encoded = base64::engine::general_purpose::STANDARD.encode(png);
+        let view = service
+            .update_avatar(&format!("data:image/png;base64,{encoded}"))
+            .await
+            .expect("avatar");
+        let path = view.avatar_path.expect("ruta de avatar");
+        assert!(std::path::Path::new(&path).is_file());
+
+        let cleared = service.remove_avatar().await.expect("quitar avatar");
+        assert!(cleared.avatar_path.is_none());
+        assert!(!std::path::Path::new(&path).is_file());
     }
 }

@@ -1267,6 +1267,7 @@ export interface AccountView {
   hasPin: boolean;
   connectionKeyAvailable: boolean;
   connectionKeyRotatedAt: string | null;
+  avatarPath: string | null;
   createdAt: string;
 }
 

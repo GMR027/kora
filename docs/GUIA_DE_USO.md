@@ -193,6 +193,11 @@ Cada cambio de pantalla tiene una transición suave y respeta
 ## Cuenta
 
 - Crea la cuenta local con PIN (Argon2id).
+- Edita el **nombre visible**. El cambio se refleja en la barra superior y en
+  la tarjeta de perfil lateral.
+- Pulsa la foto de perfil para subir una imagen PNG, JPG o WebP. Kora la
+  recorta en cuadrado, la guarda en `assets/avatars/` y la muestra en círculo.
+  **Quitar foto** vuelve a las iniciales del nombre.
 - Muestra/rota la clave de conexión y su QR.
 - Cambia el PIN.
 - **¿Olvidaste tu PIN?** permite restablecerlo sin el anterior. Se regenera la
@@ -269,8 +274,8 @@ Cada cambio de pantalla tiene una transición suave y respeta
   habían movido a la carpeta `trash/` (por ejemplo, tras borrar un libro desde
   **Biblioteca → Papelera**).
 - **Crear copia de seguridad** genera un ZIP con la base de datos, libros,
-  portadas, audiolibros, voces y notas. Los modelos de IA descargables no se
-  incluyen.
+  portadas, fotos de perfil, audiolibros, voces y notas. Los modelos de IA
+  descargables no se incluyen.
 - **Restaurar copia** valida el ZIP y prepara la restauración; se aplica al
   cerrar y volver a abrir Kora. La base anterior se conserva como
   `app.sqlite.before-restore-*` en la carpeta `db/`.

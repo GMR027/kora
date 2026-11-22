@@ -209,6 +209,7 @@ impl Storage {
                     + self.audiobooks.count_by_manifest_hash(hash).await?
             }
             AssetKind::GeneratedBook => 0,
+            AssetKind::Avatar => self.accounts.count_by_avatar_hash(hash).await?,
         };
 
         Ok(count > 0)

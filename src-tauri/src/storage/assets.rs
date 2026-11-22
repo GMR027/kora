@@ -19,6 +19,7 @@ pub enum AssetKind {
     NoteAudio,
     Audiobook,
     GeneratedBook,
+    Avatar,
 }
 
 impl AssetKind {
@@ -30,6 +31,7 @@ impl AssetKind {
             Self::NoteAudio => "notes_audio",
             Self::Audiobook => "audiobooks",
             Self::GeneratedBook => "generated_books",
+            Self::Avatar => "avatars",
         }
     }
 }

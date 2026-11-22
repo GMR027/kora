@@ -18,6 +18,7 @@ pub const ASSET_DIRECTORIES: &[&str] = &[
     "ocr",
     "tts",
     "whisper",
+    "avatars",
 ];
 
 /// Árbol de datos privados de Kora.
