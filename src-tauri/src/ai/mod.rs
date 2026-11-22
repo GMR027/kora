@@ -588,8 +588,10 @@ mod tests {
     fn validates_config() {
         let config = AiConfig::default();
         assert!(config.validate().is_ok());
-        let mut invalid = AiConfig::default();
-        invalid.provider = "openai".to_string();
+        let invalid = AiConfig {
+            provider: "openai".to_string(),
+            ..Default::default()
+        };
         assert!(invalid.validate().is_err());
     }
 }

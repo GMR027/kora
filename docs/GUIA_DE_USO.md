@@ -29,6 +29,13 @@ Cada cambio de pantalla tiene una transición suave y respeta
 - **Gestionar categorías** permite crear, renombrar, recolorear y borrar
   categorías. Desde las opciones de un libro puedes añadirlo o quitarlo de una
   categoría.
+- **Detectar categorías** analiza metadatos, similitud e IA local y deja las
+  propuestas en la bandeja de **Sugerencias**. Nada se asigna hasta que aceptas
+  la sugerencia; puedes aceptar todas, descartarlas o crear la categoría.
+- En el menú de un PDF, **Convertir PDF a EPUB** abre un asistente con vista
+  previa del texto, modo de capítulos y la opción de reemplazar el PDF o crear
+  un EPUB nuevo. Si reemplazas, se conservan progreso, categorías, anotaciones
+  y audiolibros.
 - **Editar metadatos** permite corregir título, autor, idioma, editorial y
   descripción. Los metadatos del EPUB/PDF se leen al importar y al abrir.
 - **Papelera** guarda los libros borrados con sus notas, marcadores, progreso y
@@ -91,6 +98,12 @@ Cada cambio de pantalla tiene una transición suave y respeta
   **Escuchar** para reproducir solo ese extracto de la página.
 - Si hay PDFium/Tesseract disponibles, el OCR y el auto-índice añaden texto
   buscable.
+- **Convertir a EPUB** genera un EPUB reflowable con portada, capítulos e
+  índice. Puedes elegir la detección de capítulos (automática, índice del PDF,
+  encabezados o bloques de páginas) y reemplazar el PDF conservando el mismo
+  libro, o crear una copia nueva. Las anotaciones, notas, extractos y
+  reacciones se reubican por texto; el progreso se ajusta a los capítulos
+  nuevos. Las imágenes, tablas y fórmulas no se conservan.
 
 ## Audiolibros
 
@@ -221,6 +234,25 @@ Cada cambio de pantalla tiene una transición suave y respeta
 
 - Textura por defecto para el lector.
 - Acceso rápido al lector para ajustar tipografía por libro.
+
+### IA local
+
+- Elige proveedor (**Automático**, **Ollama** o **llama.cpp**) y la URL del
+  servidor. Kora comprueba la conexión y lista los modelos de chat disponibles.
+- Ajusta modelo, temperatura y máximo de tokens.
+- Todo se ejecuta en tu equipo o en la red local: no hay cuentas, cuotas ni
+  envío de libros a Internet. Guía en `docs/local-ai.md`.
+
+### Organización automática
+
+- Activa o desactiva las sugerencias de categoría y el análisis al importar.
+- Permite usar la IA local, proponer categorías nuevas y ajustar los umbrales
+  de similitud e IA.
+- **Clasificar libros sin categoría** y **Reanalizar toda la biblioteca**
+  lanzan el trabajo en segundo plano.
+- **Añadir categorías base que falten** instala el catálogo inicial y sus alias.
+- Las propuestas se revisan en **Biblioteca → Sugerencias**; nada se asigna sin
+  confirmación.
 
 ### Bienestar
 

@@ -4,7 +4,7 @@ Lector de EPUB/PDF local-first con síntesis de voz, clonación de voz y
 sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 **Svelte 5**, con objetivos Linux y Android.
 
-> **Estado: fase 12 — interfaz final, temas y pulido.** La biblioteca
+> **Estado: fase 12 + utilidades de biblioteca.** La biblioteca
 > importa EPUB/PDF por SHA-256. El lector abre EPUB con capítulos saneados y PDF
 > con `pdf.js`, incluyendo progreso por página, selección, OCR local para PDFs
 > escaneados y auto-índice. El motor TTS añade lectura por frases con resaltado
@@ -23,8 +23,15 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 > voz, reproductor con velocidad/capítulos/sincronización con texto/karaoke,
 > multivot por personaje y marcadores de voz «Kora, marca esto», favoritos de
 > audiolibros, shares de M4B y mini-reproductor persistente en la barra
-> superior, accesibilidad 48dp, i18n español/inglés y empaquetado Linux + APK
-> núcleo por CI.
+> superior, accesibilidad 48dp, i18n español/inglés y empaquetado Linux +
+> validación del APK núcleo por CI.
+>
+> Sobre esa base se añadieron la **IA local** (Ollama/llama.cpp), la
+> **clasificación asistida** de libros y audiolibros con sugerencias de
+> categoría, la **conversión PDF→EPUB** con reubicación de anotaciones, la
+> **papelera con restauración**, las **copias de seguridad** y la optimización
+> de consultas de la biblioteca. El escritorio se empaqueta como
+> `.deb`/`rpm`/AppImage; el APK núcleo se valida en CI.
 
 ### Verificación de esta fase
 
@@ -34,13 +41,21 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 | `pnpm check` (svelte-check) | ✅ 0 errores, 0 warnings |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ |
-| `cargo test --workspace` | ✅ 110 tests unitarios + 4 PDF/OCR + 2 TTS + 2 M4B + 1 clonación real |
+| `cargo test --workspace` | ✅ 203 unitarios + 5 M4B + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
 | Temas y texturas | ✅ 4 temas integrados + temas por cuenta, 10 texturas y contraste |
 | i18n | ✅ español/inglés tipado con paridad de claves |
 | Accesibilidad | ✅ 48dp, foco visible, skip link, ARIA y reduced-motion |
 | Linux `.deb` | ✅ paquete generado y documentado |
-| Android APK núcleo | ✅ workflow x86_64; no ejecutable en este host aarch64 |
+| Android APK núcleo | ✅ workflow x86_64 y build local x86_64; en aarch64 no es nativo |
+| APK debug universal | ✅ compilado localmente para las cuatro ABI |
+| APK release firmado | ✅ 98 MB, firma V2 verificada con la llave de Kora |
 | Búsqueda semántica | ✅ chunking UTF-16, coseno y ranking con proveedor determinista |
+| IA local | ✅ Ollama/llama.cpp, configuración y detección de modelos |
+| Clasificación automática | ✅ reglas, metadatos, embeddings, IA y sugerencias |
+| Conversión PDF→EPUB | ✅ capítulos, OCR, reubicación de anotaciones y portada |
+| Papelera y copias | ✅ restauración, ZIP verificado y purga |
+| CI de escritorio | ✅ workflow Linux añadido; mismas comprobaciones ejecutadas localmente |
+| Arranque de escritorio | ✅ `pnpm tauri dev` inicia la app y la base SQLite |
 | Diario y logros | ✅ agregación mensual, rachas, 22 logros y Pomodoro con entrada automática |
 | Sync por dispositivo | ✅ filtro por peer aplicado al manifiesto |
 | Exportación del diario | ✅ EPUB mensual/anual; audiolibro opcional por el pipeline M4B |
@@ -54,7 +69,7 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 | Cuenta y SPAKE2 | ✅ PIN Argon2id, clave Ed25519, SAS manual y firma cruzada de dispositivos |
 | Shares | ✅ copia, solo lectura, caducidad, `max_uses` y revocación |
 | `tauri android init --ci` | ✅ `src-tauri/gen/android` generado |
-| `tauri android build --apk` | ✅ workflow x86_64 en `.github/workflows/android.yml`; ⚠️ no ejecutable en este host aarch64 |
+| `tauri android build --apk` | ✅ workflow x86_64 en `.github/workflows/android.yml`, builds debug y release firmado locales; el host aarch64 no lo compila de forma nativa |
 
 El lado Rust se compiló en un contenedor rootless `fedora:42` con
 `webkit2gtk4.1-devel`, `tesseract-devel`, `leptonica-devel`, `clang-devel`,
@@ -68,7 +83,10 @@ portadas PNG, UUIDv7, borrado suave, notas ricas, notas de voz Opus,
 emparejamiento SAS, QUIC/TLS, CRDT, diff por hash, filtros de colecciones por
 peer, handoff, espejo, PIN Argon2id, SPAKE2, QR, shares, chunking semántico,
 ranking por coseno, diario automático, heatmap, 22 logros, Pomodoro,
-exportación EPUB y el pipeline real de clonación.
+exportación EPUB, el pipeline real de clonación, IA local, clasificación
+asistida, conversión PDF→EPUB, papelera y copias de seguridad. El workflow
+`.github/workflows/linux.yml` reproduce las comprobaciones de escritorio en
+Ubuntu 24.04.
 
 ## Stack
 
@@ -115,6 +133,8 @@ Kora/
 │  │  ├─ tts/                   # Motores, perfiles y sinks de audio
 │  │  ├─ sync/                  # mDNS, QUIC y CRDT
 │  │  ├─ accounts/              # Identidad, pairing y sharing
+│  │  ├─ ai/                    # Cliente local Ollama/llama.cpp
+│  │  ├─ classify/              # Reglas, embeddings e IA para categorías
 │  │  ├─ features/              # OCR, embeddings, diario, logros
 │  │  ├─ commands/              # Comandos #[tauri::command]
 │  │  ├─ state.rs               # AppState compartido
@@ -194,6 +214,9 @@ migraciones corren dentro de una transacción por versión.
 | `0019_audiobook_cast.sql` | Reparto de voces en la cola |
 | `0020_voice_marks.sql` | Marcadores de voz en `voice_notes` |
 | `0021_audiobook_favorites.sql` | `audiobook_favorites` y `received_shares.resource_type` |
+| `0022_audio_only_books.sql` | `books.audio_only` para audiolibros importados sin transcripción |
+| `0023_classification.sql` | Origen/confianza de categorías, alias, sugerencias y estado de clasificación |
+| `0024_trash_retry.sql` | Papelera lógica (`books.deleted_at`) y ajustes de narración para reintentos |
 
 Todas las tablas de contenido llevan `owner_account_id` (FK a `accounts`) y
 `origin_share_id` (FK opcional a `shares`). `foreign_keys=ON` se activa en cada
@@ -210,11 +233,26 @@ conexión del pool y `audit_log` es append-only.
 | `app_info` | Devuelve nombre, versión, plataforma y rutas |
 | `storage_layout` | Rutas privadas ya creadas |
 | `library_list` | Lista libros con portada y progreso |
+| `library_overview` | Libro en curso y contador para la barra superior |
 | `library_import` | Copia un EPUB/PDF por SHA-256 y crea el libro |
-| `library_delete` | Borra el libro, cascadas y mueve assets huérfanos a `trash/` |
+| `library_update` | Corrige título, autor, idioma, editorial y descripción |
+| `library_delete` | Mueve el libro a la papelera lógica conservando notas y assets |
+| `library_trash` / `library_restore` / `library_purge_book` / `library_empty_trash` | Papelera, restauración y borrado definitivo |
+| `library_ensure_cover` | Genera una portada si el libro no tiene |
+| `library_set_favorite` / `library_assign_category` / `library_unassign_category` | Favoritos y categorías |
 | `library_replace_cover` | Guarda una portada nueva y limpia la anterior |
-| `library_assign_category` | Asocia un libro a una categoría |
-| `category_list` / `category_create` | Lista y crea categorías de la cuenta local |
+| `category_list` / `category_create` / `category_update` / `category_delete` | CRUD de categorías de la cuenta local |
+| `storage_usage` / `backup_library` / `restore_library` / `purge_storage` | Espacio, copia ZIP, restauración y limpieza de papelera/temporales |
+| `classification_get_config` / `classification_save_config` / `classification_status` | Configuración y estado de la clasificación asistida |
+| `library_classify` / `library_classify_pending` | Clasifican un libro o la biblioteca pendiente |
+| `category_suggestions` / `category_suggestion_list_pending` | Sugerencias pendientes por libro o globales |
+| `category_suggestion_accept` / `category_suggestion_dismiss` / `category_suggestion_accept_all` | Aceptan, descartan o aplican todas las sugerencias |
+| `category_seed_apply` | Crea el catálogo base de categorías y alias |
+| `pdf_conversion_preview` | Analiza un PDF, capítulos, OCR y datos que se conservarán |
+| `convert_pdf_to_epub` | Convierte el PDF a EPUB y reubica anotaciones y progreso |
+| `pdf_conversion_status` | Progreso de la conversión activa |
+| `ai_get_config` / `ai_save_config` / `ai_status` / `ai_chat` | IA local con Ollama o llama.cpp |
+| `reader_get_defaults` / `reader_apply_to_all` | Tipografía base global aplicada a la biblioteca |
 | `reader_open` | Inspecciona EPUB/PDF, completa metadatos/portada y devuelve sesión, progreso y ajustes |
 | `reader_get_chapter` | Devuelve un capítulo saneado con imágenes incrustadas (EPUB) |
 | `reader_update_progress` | Guarda capítulo/página, offset y porcentaje del libro |
@@ -223,9 +261,11 @@ conexión del pool y `audit_log` es append-only.
 | `add_marker` / `update_marker` | Marcadores de color superpuestos con UUIDv7 |
 | `add_note` / `update_note` | Notas ricas con Delta JSON de Quill en `notes.content_json` |
 | `start_voice_note_recording` / `add_voice_note` / `cancel_voice_note_recording` | Graban con `cpal` y guardan Ogg/Opus en `assets/notes_audio/<id>.opus` |
-| `add_extract` / `search_extracts` | Extractos con cita y búsqueda por texto, nota o cita |
-| `add_reaction` / `reaction_map` | Reacciones rápidas y heatmap por capítulo/página |
-| `list_annotations` / `delete_annotation` | Listan por tipo y aplican borrado suave |
+| `add_extract` / `search_extracts` / `update_extract` | Extractos con cita, búsqueda y edición |
+| `add_reaction` / `update_reaction` / `reaction_map` | Reacciones, edición y heatmap por capítulo/página |
+| `list_annotations` / `list_library_annotations` / `delete_annotation` | Listan por tipo/libro y aplican borrado suave |
+| `update_voice_note` | Edita texto, transcripción y cita sin perder el audio |
+| `export_notes` | Exporta subrayados, notas, extractos y notas de voz a Markdown/JSON |
 | `reader_get_settings` / `reader_save_settings` | Ajustes tipográficos y de tema por libro |
 | `reader_pdf_bytes` | Bytes del PDF por IPC (plan B si `asset:` no está disponible) |
 | `get_ocr_page` | Capa de texto por página: OCR guardado o texto nativo de PDFium |
@@ -256,6 +296,7 @@ conexión del pool y `audit_log` es append-only.
 | `list_all_extracts` / `reader_delete_extract` | Extractos para Tejido y borrado |
 | `generate_audiobook` | Genera un M4B con estilo de narración, velocidad base y reparto de voces |
 | `enqueue_audiobook` / `audiobook_queue_status` | Cola persistente de generación con progreso, reparto y elementos pendientes |
+| `retry_audiobook` / `move_queued_audiobook` | Reintenta una generación fallida y reordena la cola |
 | `audiobook_characters` | Detecta personajes del alcance para el multivot |
 | `pause_audiobook_generation` / `resume_audiobook_generation` / `cancel_audiobook_generation` | Control de la generación activa |
 | `remove_queued_audiobook` / `clear_audiobook_queue` | Gestión de la cola |
@@ -271,6 +312,9 @@ conexión del pool y `audit_log` es append-only.
 | `set_audiobook_speed` / `audiobook_chapters` | Velocidad y capítulos con anclas al texto |
 | `stop_audiobook` / `get_audiobook_progress` | Detención y progreso persistido |
 | `import_external_audiobook` | Copia, transcribe con Whisper y crea un libro |
+| `import_audio_audiobook` / `reanalyze_audiobook_chapters` / `update_audiobook_chapters` / `transcribe_audiobook_later` | Importación de audio, capítulos y transcripción diferida |
+| `audiobook_locator` / `audiobook_capabilities` | Posición de texto actual y capacidades del dispositivo |
+| `export_audiobook` | Copia el M4B al destino elegido |
 | `weave_extracts` | Crea EPUB + portada + audiolibro desde extractos |
 | `start_sync` / `stop_sync` | Arrancan o detienen listener QUIC, mDNS pasivo y cola |
 | `get_sync_status` / `get_peers` | Estado, cambios pendientes y peers descubiertos/emparejados |
@@ -280,11 +324,15 @@ conexión del pool y `audit_log` es append-only.
 | `start_share` / `stop_share` | Anuncio mDNS `purpose=share` para shares, handoff y espejo |
 | `get_sync_collections` / `set_sync_categories` / `list_sync_devices` | Filtro selectivo por categorías y por dispositivo emparejado |
 | `set_sync_collections` | Alias de compatibilidad para el dispositivo local |
+| `sync_status` / `sync_peers` / `sync_start` | Alias de compatibilidad de estado, peers y arranque |
+| `list_audit_log` / `export_audit_log` | Registro de actividad y exportación JSON |
 | `start_mirror` / `stop_mirror` | Host de lectura en espejo |
 | `join_mirror` / `leave_mirror` / `get_mirror_status` | Seguidor y estado del espejo |
 | `account_status` | Cuenta y dispositivo locales (se crean al arrancar) |
-| `create_account` / `get_account` | Crean y consultan la cuenta local |
-| `change_pin` | Re-cifra los secretos con un PIN nuevo |
+| `create_account` / `get_account` / `update_display_name` | Crean, consultan y editan la cuenta local |
+| `get_connection_key` / `change_pin` | Clave de conexión y re-cifrado con PIN nuevo |
+| `recover_account_pin` | Restablece el PIN regenerando la identidad de la cuenta |
+| `delete_account` | Borra cuenta, biblioteca, notas, audiolibros y voces clonadas |
 | `rotate_connection_key` | Rota la clave de conexión sin romper dispositivos ya emparejados |
 | `start_pairing` / `confirm_sas` | SPAKE2 + SAS manual y firma cruzada |
 | `create_share` / `list_shares` / `revoke_share` | Shares con alcance, permiso, caducidad y usos |
@@ -298,6 +346,7 @@ conexión del pool y `audit_log` es append-only.
 | `search_semantic` | Búsqueda semántica local con snippet, sección y score |
 | `session_start` / `session_end` | Abren y cierran sesiones de lectura/escucha; generan diario automático |
 | `get_diary` | Días del mes con totales y nivel de heatmap |
+| `diary_create` / `diary_update` / `diary_delete` | Entradas manuales del diario |
 | `get_achievements` | Catálogo de logros con progreso y desbloqueos |
 | `start_pomodoro` / `stop_pomodoro` / `get_pomodoro` | Foco/descanso configurable; el foco completado va al diario |
 | `export_diary` | EPUB mensual/anual y audiolibro M4B opcional en `exports/` |
@@ -305,7 +354,9 @@ conexión del pool y `audit_log` es append-only.
 Los errores llegan al frontend como `{ code, message }`. Los códigos nuevos de
 esta fase son `conflict` y `unsupported`.
 
-## Desarrollo en Linux (Fedora)
+## Desarrollo en Linux
+
+### Fedora
 
 Dependencias del sistema:
 
@@ -320,6 +371,24 @@ sudo dnf install -y \
   espeak-ng espeak-ng-devel
 ```
 
+### Ubuntu, Debian y Zorin
+
+```bash
+sudo apt update
+sudo apt install -y \
+  build-essential pkg-config cmake git clang libclang-dev \
+  libwebkit2gtk-4.1-dev libsoup-3.0-dev libgtk-3-dev \
+  libssl-dev librsvg2-dev patchelf \
+  libasound2-dev \
+  tesseract-ocr libtesseract-dev libleptonica-dev \
+  tesseract-ocr-spa tesseract-ocr-eng \
+  espeak-ng libespeak-ng-dev ffmpeg
+```
+
+En Ubuntu 24.04 y derivados (Zorin 18) el paquete `libwebkit2gtk-4.1-dev`
+arrastra `libjavascriptcoregtk-4.1-dev`. Si vas a generar AppImage en ARM64
+necesitarás `linuxdeploy` para esa arquitectura; en x86_64 lo descarga Tauri.
+
 `piper-rs` compila eSpeak-ng y usa `bindgen`, por eso hacen falta `clang-devel`,
 `cmake` y `git`. El árbol incluye `src-tauri/vendor/piper-rs` (MIT) para alinear
 su dependencia de ONNX Runtime rc.15 con `fastembed`; ambos comparten un único
@@ -333,8 +402,8 @@ El motor de clonación vive en el binario auxiliar `kora-neutts`
 whisper.cpp en el mismo proceso (sus símbolos `ggml_*` chocan):
 
 ```bash
-cargo build -p kora-neutts
-cargo build --release -p kora-neutts
+pnpm build:helper            # debug + copia a src-tauri/binaries
+pnpm build:helper:release    # release + copia a src-tauri/binaries
 ```
 
 La app lo busca junto a su ejecutable, en `KORA_NEUTTS_HELPER`, en
@@ -350,7 +419,7 @@ pnpm build:linux
 `opus-devel` solo lo necesita el helper para escribir `reference.opus`.
 
 Para el texto nativo, las coordenadas y el OCR, Kora usa PDFium en tiempo de
-ejecución. Fedora no lo empaqueta; descarga un build de
+ejecución. Fedora y Ubuntu no lo empaquetan; descarga un build de
 [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries) y apunta
 `KORA_PDFIUM_PATH` al archivo o a su carpeta:
 
@@ -382,6 +451,7 @@ Comprobaciones:
 ```bash
 pnpm build            # tsc + vite build
 pnpm check            # svelte-check
+pnpm build:helper     # kora-neutts + copia para externalBin
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
@@ -458,7 +528,10 @@ pnpm android:build:release             # APK release (firmado si hay keystore)
 ```
 
 El APK queda en
-`src-tauri/gen/android/app/build/outputs/apk/universal/release/`.
+`src-tauri/gen/android/app/build/outputs/apk/universal/release/`. El build de
+debug (`pnpm tauri android build --apk --debug`) queda en
+`.../apk/universal/debug/` e incluye las cuatro ABI y símbolos, por lo que pesa
+bastante más.
 
 ### Firma de release
 
@@ -805,6 +878,54 @@ depender de `sqlite-vec` ni de una extensión nativa de SQLite.
   reutiliza `audiobooks::engine::synthesize_sections` para un M4B con la voz
   elegida.
 
+## IA local, clasificación y conversión
+
+### IA local (Ollama y llama.cpp)
+
+Kora no envía libros ni notas a servicios en la nube. El módulo `ai` habla con
+un servidor **Ollama** (`http://127.0.0.1:11434`) o compatible con OpenAI
+(`llama.cpp`, por ejemplo `http://127.0.0.1:8080`). La configuración se guarda
+en `settings` (`ai.config`) y se edita en **Ajustes → IA local**; el lector
+ofrece resumen de escena, términos clave, personajes, consultas de términos y
+chat sobre el capítulo actual. Los modelos no se descargan desde Kora: se usan
+los que el usuario tenga en Ollama o llama.cpp. En Android se prioriza
+`llama.cpp` y se permite HTTP local en producción. Guía completa en
+[`docs/local-ai.md`](docs/local-ai.md).
+
+### Clasificación asistida
+
+`classify/` combina reglas locales, metadatos, embeddings y, si está
+disponible, la IA local para proponer categorías. El catálogo base se crea con
+`category_seed_apply` y las sugerencias viven en `category_suggestions`; el
+usuario puede aceptarlas, descartarlas o aplicarlas todas. Las asignaciones
+aceptadas usan `book_categories` con `source`, `confidence` y `locked`, así que
+las hechas a mano no se pisan y siguen el flujo normal de sincronización. La
+clasificación se puede activar al importar y se controla desde **Biblioteca**,
+**Ajustes → Organización automática** y el modal de sugerencias.
+
+### Conversión PDF→EPUB
+
+La conversión analiza el PDF con `pdf_conversion_preview` y genera un EPUB con
+texto, capítulos y portada. Usa PDFium/OCR cuando están disponibles y, si no,
+acepta las páginas extraídas por `pdf.js` desde el visor. Los capítulos se
+pueden dividir por el índice nativo, por heurística de encabezados o por bloques
+de páginas. Al reemplazar el PDF original se conserva el mismo `book_id`, y las
+anotaciones, extractos, notas, notas de voz y reacciones se reubican por texto;
+el progreso se ajusta al nuevo número de capítulos. La operación revoca los
+shares activos del PDF si su contenido cambia, reindexa el libro y avisa de que
+las imágenes, tablas y fórmulas no se conservan. También se puede crear un EPUB
+nuevo sin tocar el PDF.
+
+### Papelera, copias y mantenimiento
+
+`library_delete` mueve el libro a una papelera lógica (`books.deleted_at`), sin
+borrar sus notas ni assets; `library_restore` lo recupera y reimportar el mismo
+archivo también lo restaura. `storage_usage` desglosa el espacio y
+`backup_library` genera un ZIP con la base de datos, libros, portadas,
+audiolibros, voces, notas de voz y capas OCR (los modelos descargables quedan
+fuera). `restore_library` valida el ZIP y prepara la restauración para el
+siguiente arranque; `purge_storage` vacía papelera o temporales.
+
 ## Sincronización LAN
 
 El módulo `sync` implementa descubrimiento, emparejamiento, transporte y
@@ -1057,6 +1178,12 @@ variables `KORA_FFMPEG` y `KORA_FFPROBE`. En Fedora:
 sudo dnf install ffmpeg
 ```
 
+En Ubuntu/Debian/Zorin:
+
+```bash
+sudo apt install ffmpeg
+```
+
 La transcripción inversa necesita el modelo Whisper Base descargado desde
 Ajustes → Modo ensayo.
 
@@ -1068,6 +1195,10 @@ Ajustes → Modo ensayo.
   audiolibros, sync, cuenta, diario, ajustes y accesibilidad.
 - [`docs/COMPILACION.md`](docs/COMPILACION.md): builds Linux/Android, i18n,
   hooks de librerías nativas y solución de problemas.
+- [`docs/local-ai.md`](docs/local-ai.md): conexión con Ollama y llama.cpp sin
+  nube.
+- [`docs/lumina-adaptation.md`](docs/lumina-adaptation.md): migración visual y
+  funcional, y pendientes de diseño.
 
 ## Próximas fases
 
@@ -1079,10 +1210,11 @@ Ajustes → Modo ensayo.
 3. Lector de QR con cámara móvil, compartir perfiles de voz y propagación
    automática de revocaciones.
 4. Sincronización de audiolibros M4B y perfiles `.koravoice`.
-5. Extracción de metadatos y portadas embebidas al importar; selector de
-   archivos nativo en Android.
-6. Empaquetar el binario auxiliar de clonación y ffmpeg en
-   `deb`/`rpm`/AppImage.
+5. Selector de archivos nativo en Android (los metadatos y las portadas
+   embebidas ya se extraen al importar en escritorio).
+6. Empaquetar `ffmpeg`/`ffprobe` en `deb`/`rpm`/AppImage; el binario auxiliar
+   `kora-neutts` ya se incluye mediante `externalBin` en
+   `tauri.linux.conf.json`.
 
 ## Licencia
 

@@ -1120,9 +1120,11 @@ mod tests {
             seeded.len()
         );
 
-        let mut config = ClassificationConfig::default();
-        config.use_ai = false;
-        config.embedding_threshold = 0.0;
+        let config = ClassificationConfig {
+            use_ai: false,
+            embedding_threshold: 0.0,
+            ..Default::default()
+        };
         service.save_config(config).await.expect("configuración");
 
         let book = test

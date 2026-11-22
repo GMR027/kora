@@ -369,7 +369,7 @@ fn candidate_blocks(silences: &[(i64, i64)], tones: &[i64], duration_ms: i64) ->
         .filter(|(begin, end)| end - begin >= 1_500)
         .map(|(begin, end)| (((begin + end) / 2), end - begin))
         .collect();
-    silence_candidates.sort_by(|left, right| right.1.cmp(&left.1));
+    silence_candidates.sort_by_key(|left| std::cmp::Reverse(left.1));
     silence_candidates.truncate(MAX_BLOCKS);
     boundaries.extend(silence_candidates.into_iter().map(|(middle, _)| middle));
 
@@ -386,7 +386,7 @@ fn candidate_blocks(silences: &[(i64, i64)], tones: &[i64], duration_ms: i64) ->
         if is_edge || far_enough {
             kept.push(boundary);
         }
-        if kept.len() >= MAX_BLOCKS + 1 {
+        if kept.len() > MAX_BLOCKS {
             break;
         }
     }

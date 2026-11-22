@@ -376,8 +376,10 @@ where
         samples.clear();
         samples.extend(
             pending[..usable]
-                .chunks_exact(2)
-                .map(|pair| i16::from_le_bytes([pair[0], pair[1]])),
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| i16::from_le_bytes(*pair)),
         );
         on_samples(&samples);
         let _ = pending.drain(..usable);

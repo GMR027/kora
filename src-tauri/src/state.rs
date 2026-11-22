@@ -104,6 +104,8 @@ impl AppState {
         let voice_profiles = Arc::new(VoiceProfileService::new(storage.clone(), layout.clone()));
         let ai = AiService::new(storage.clone())?;
 
+        // En escritorio se registra además NeuTTS; en Android no hay mutación.
+        #[allow(unused_mut)]
         let mut tts = TtsService::with_platform(app, layout.assets.join("tts"));
 
         #[cfg(not(target_os = "android"))]

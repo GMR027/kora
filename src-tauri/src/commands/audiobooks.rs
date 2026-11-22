@@ -3,24 +3,31 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+#[cfg(not(target_os = "android"))]
+use tauri::Emitter;
+use tauri::{AppHandle, State};
 
 use crate::audiobooks::engine::audio_path;
 use crate::audiobooks::{
-    ActiveGenerationStatus, AudioImportOptions, AudioTreatment, AudioWaveform,
-    AudiobookProgressEvent, AudiobookScope, CastInput, CastMember, ChapterKaraoke, ChapterSource,
-    DEFAULT_WAVEFORM_BUCKETS, KaraokePrecision, MAX_WAVEFORM_BUCKETS, MIN_WAVEFORM_BUCKETS,
-    ManifestChapter, NarrationSettings, PlaybackSnapshot, emit_progress, generate, import,
-    import_audio as import_audio_only, lines_from_text, m4b, marker_anchor, queue, read_manifest,
-    reanalyze_audio_chapters, regenerate, resolve_sections, transcribe_existing,
+    ActiveGenerationStatus, AudioImportOptions, AudioTreatment, AudioWaveform, AudiobookScope,
+    CastInput, CastMember, ChapterKaraoke, ChapterSource, KaraokePrecision, ManifestChapter,
+    NarrationSettings, PlaybackSnapshot, lines_from_text, m4b, marker_anchor, queue, read_manifest,
+    resolve_sections,
+};
+#[cfg(not(target_os = "android"))]
+use crate::audiobooks::{
+    AudiobookProgressEvent, DEFAULT_WAVEFORM_BUCKETS, MAX_WAVEFORM_BUCKETS, MIN_WAVEFORM_BUCKETS,
+    emit_progress, generate, import, import_audio as import_audio_only, reanalyze_audio_chapters,
+    regenerate, transcribe_existing,
 };
 use crate::commands::reader::owned_book;
 use crate::error::{KoraError, Result};
 use crate::reader::SourceText;
 use crate::state::AppState;
+#[cfg(not(target_os = "android"))]
+use crate::storage::NewAudiobookQueueItem;
 use crate::storage::{
     AssetKind, AssetRef, Audiobook, AudiobookOrigin, AudiobookProgress, AudiobookStatus, Book,
-    NewAudiobookQueueItem,
 };
 use crate::tts::practice;
 use crate::tts::{CharacterInfo, DIALOGUE, ExpressiveSettings, NARRATOR, build_from_text};
@@ -784,6 +791,7 @@ pub async fn transcribe_audiobook_later(
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn emit_task_error(
     app: &AppHandle,
     audiobook_id: Option<&str>,

@@ -215,7 +215,7 @@ fn silence_candidates(silences: &[(i64, i64)]) -> Vec<i64> {
         .filter(|(begin, end)| end - begin >= MIN_SILENCE_MS)
         .map(|(begin, end)| ((begin + end) / 2, end - begin))
         .collect();
-    candidates.sort_by(|left, right| right.1.cmp(&left.1));
+    candidates.sort_by_key(|left| std::cmp::Reverse(left.1));
     candidates.truncate(MAX_CHAPTERS);
     let mut boundaries: Vec<i64> = candidates.into_iter().map(|(middle, _)| middle).collect();
     boundaries.sort_unstable();

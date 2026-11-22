@@ -3,11 +3,15 @@ use tauri::{AppHandle, State};
 #[cfg(not(target_os = "android"))]
 use tauri::{Emitter, Manager};
 
+#[cfg(not(target_os = "android"))]
 use crate::audiobooks::{
     AudiobookScope, marker_anchor, match_voice_command, quote_offsets, read_manifest,
     resolve_sections,
 };
-use crate::commands::annotations::{VoiceNoteView, unlock_achievements, voice_note_view};
+#[cfg(not(target_os = "android"))]
+use crate::commands::annotations::unlock_achievements;
+use crate::commands::annotations::{VoiceNoteView, voice_note_view};
+#[cfg(not(target_os = "android"))]
 use crate::commands::reader::owned_book;
 use crate::error::{KoraError, Result};
 use crate::state::AppState;
@@ -16,6 +20,7 @@ use crate::storage::{AudiobookStatus, NewVoiceNote, ResourceType};
 use crate::tts::practice::{self, model_path};
 
 const PHRASE_KEY: &str = "audiobook.voice_marker.phrase";
+#[cfg(not(target_os = "android"))]
 const DEFAULT_LANGUAGE: &str = "es";
 
 #[derive(Debug, Clone, Serialize)]

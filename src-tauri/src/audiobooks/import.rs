@@ -823,6 +823,7 @@ async fn detect_chapters(
     Ok(detection)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn transcribe_all(
     app: &AppHandle,
     source: &Path,

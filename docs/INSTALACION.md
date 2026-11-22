@@ -7,15 +7,16 @@
 El artefacto se genera en:
 
 ```text
-target/release/bundle/deb/Kora_0.1.0_arm64.deb
+target/release/bundle/deb/Kora_0.1.0_<arch>.deb
 ```
 
-Instálalo con:
+El sufijo depende de la arquitectura del host (`amd64` en x86_64, `arm64` en
+aarch64). Instálalo con:
 
 ```bash
-sudo apt install ./Kora_0.1.0_arm64.deb
+sudo apt install ./Kora_0.1.0_amd64.deb
 # o en Fedora/derivados con dpkg instalado:
-sudo dpkg -i Kora_0.1.0_arm64.deb
+sudo dpkg -i Kora_0.1.0_amd64.deb
 ```
 
 Si tu distribución prefiere RPM, Tauri también puede generar `rpm`; el
@@ -60,9 +61,20 @@ completa o exporta tus libros y el diario.
 
 ## Android (APK núcleo)
 
-El APK de esta fase se construye en CI con
-`.github/workflows/android.yml`. El artefacto se descarga desde la ejecución
-del workflow como `kora-android-core-apk`.
+El APK de esta fase se compila con `.github/workflows/android.yml`, que solo
+**valida** que la compilación Android siga funcionando; no publica artefactos en
+GitHub. Para obtener un APK, compílalo en una máquina x86_64 con el SDK/NDK
+instalados:
+
+```bash
+pnpm android:build           # APK release (sin firmar si no hay keystore)
+pnpm android:build:release   # APK release firmado si existe keystore.properties
+```
+
+El resultado queda en
+`src-tauri/gen/android/app/build/outputs/apk/`. La firma de release se
+configura en `src-tauri/gen/android/keystore.properties` (ver
+`docs/COMPILACION.md`); sin ese archivo el APK se genera sin firmar.
 
 Incluye:
 

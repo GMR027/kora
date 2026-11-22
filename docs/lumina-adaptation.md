@@ -100,16 +100,15 @@ La migración ya no es solo cromática: se trasladó la estructura editorial de 
 Estas piezas aparecen en los prototipos de Lumina y todavía no se han implementado, o requieren un trabajo nativo que no se simula:
 
 1. **llama.cpp embebido en el APK de Android**: hoy Kora se conecta a `llama-server` local; embeberlo exige compilar por ABI y empaquetar el modelo GGUF.
-2. **Descarga y gestión de modelos desde la app**: hoy se descargan con Ollama/llama.cpp.
+2. **Descarga y gestión de modelos del asistente desde la app**: las voces, Whisper y los embeddings ya se descargan desde Kora, pero los modelos de chat se siguen gestionando con Ollama/llama.cpp.
 3. **Panel de detalles enriquecido**: tamaño de archivo, última sincronización, voz de lectura y recuento de notas/subrayados.
 4. **Estadísticas globales de lectura**: tiempo leído, racha, audiolibros totales y tiempo restante estimado.
-5. **Reproductor mini persistente** en la barra superior con controles de audio reales.
-6. **Perfiles de lectura guardados por nombre** (la base global y los ajustes por libro ya existen).
-7. **Vista semanal/anual del Diario**: el calendario sigue siendo mensual; la exportación anual ya existe.
-8. **Plan PRO / membresía, pagos y facturas**: Kora es local-first y no implementa cobros.
-9. **Sincronización en la nube**: Kora usa P2P local; no se añade una nube de pago.
-11. **Control explícito del spread**: hoy la hoja doble es automática según el ancho; falta un ajuste para forzarla o desactivarla.
-12. **Efectos de estantería 3D** más elaborados; se añadió lomo, brillo y sombra.
-13. **Mover la biblioteca a un SSD externo** desde la interfaz; es una operación de riesgo que requiere migración y reinicio.
-14. **Buscar actualizaciones**: no hay servidor de actualizaciones configurado.
-15. **Grabación de muestra de voz en Android**: por ahora solo está disponible la importación de archivo.
+5. **Perfiles de lectura guardados por nombre** (la base global y los ajustes por libro ya existen).
+6. **Vista semanal/anual del Diario**: el calendario sigue siendo mensual; la exportación anual ya existe.
+7. **Plan PRO / membresía, pagos y facturas**: Kora es local-first y no implementa cobros.
+8. **Sincronización en la nube**: Kora usa P2P local; no se añade una nube de pago.
+9. **Control explícito del spread**: hoy la hoja doble es automática según el ancho; falta un ajuste para forzarla o desactivarla.
+10. **Efectos de estantería 3D** más elaborados; se añadió lomo, brillo y sombra.
+11. **Mover la biblioteca a un SSD externo** desde la interfaz; es una operación de riesgo que requiere migración y reinicio.
+12. **Buscar actualizaciones**: no hay servidor de actualizaciones configurado.
+13. **Grabación de muestra de voz en Android**: por ahora solo está disponible la importación de archivo.

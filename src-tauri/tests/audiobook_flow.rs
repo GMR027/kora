@@ -46,7 +46,7 @@ const DEFAULT_ASSETS: &str = "/home/edgar/.local/share/dev.kora.reader/assets";
 const DEFAULT_BOOK: &str = "/home/edgar/.local/share/dev.kora.reader/assets/books/daa008f8905a7ba3ae4de4533563aa77b20641eb26b45dffc1d1cf6581e92ca3.epub";
 const DEFAULT_AUDIO_SOURCE: &str = "/home/edgar/Descargas/El arte de la guerra.mp3";
 
-type TestApp = tauri::App<tauri::test::MockRuntime>;
+type TestApp = tauri::App<tauri::Wry>;
 
 struct Harness {
     app: TestApp,
@@ -76,7 +76,7 @@ fn harness() -> Harness {
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
     context.config_mut().app.app_directories_override =
         Some(AppDirectoriesOverride::Root(root.clone()));
-    let app = tauri::test::mock_builder()
+    let app = tauri::Builder::default()
         .build(context)
         .expect("app de prueba");
     let state = AppState::new(app.handle()).expect("estado de la app");
@@ -530,7 +530,7 @@ async fn run_imported_tools(h: &Harness) {
     let line = karaoke
         .lines
         .iter()
-        .find(|line| line.words.as_ref().is_some_and(|words| !words.is_empty()))
+        .find(|line| !line.words.is_empty())
         .unwrap_or(&karaoke.lines[0]);
     let position = karaoke.start_ms + line.start_ms + 100;
     let locator = audiobooks::audiobook_locator(app.state(), imported.id.clone(), position)
@@ -577,7 +577,6 @@ async fn run_imported_tools(h: &Harness) {
         std::fs::File::open(&path).expect("abrir audio"),
     ))
     .expect("decodificar importado");
-    use rodio::Source;
     assert!(decoder.take(48_000).count() > 10_000);
 
     let session = reader::reader_open(

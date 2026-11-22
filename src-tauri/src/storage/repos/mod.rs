@@ -23,7 +23,7 @@ use crate::storage::model::ResourceType;
 
 /// Identificadores ordenables por tiempo (UUIDv7). La fase 9 los usará como
 /// claves estables de CRDT; los registros antiguos conservan su UUIDv4.
-pub(crate) fn new_id() -> String {
+pub fn new_id() -> String {
     Uuid::now_v7().to_string()
 }
 

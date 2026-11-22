@@ -56,6 +56,7 @@ impl TtsService {
     }
 
     /// Servicio de escritorio con Piper y sus voces en `assets/tts`.
+    #[cfg(not(target_os = "android"))]
     pub fn with_piper(root: PathBuf) -> Self {
         let mut service = Self::new();
         service.register(Arc::new(PiperEngine::new(root)));

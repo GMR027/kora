@@ -8,8 +8,8 @@
     "dev": "vite",
     "predev": "node scripts/copy-pdfjs.mjs && pnpm build:helper",
     "build": "tsc --noEmit && vite build",
-    "build:helper": "cargo build -p kora-neutts",
-    "build:helper:release": "cargo build --release -p kora-neutts && node scripts/copy-helper.mjs",
+    "build:helper": "cargo build -p kora-neutts && node scripts/copy-helper.mjs",
+    "build:helper:release": "cargo build --release -p kora-neutts && node scripts/copy-helper.mjs --release",
     "prebuild": "node scripts/copy-pdfjs.mjs",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
@@ -17,7 +17,8 @@
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
     "android:build": "tauri android build --apk",
-    "android:build:release": "tauri android build --apk --release",
+    "android:build:release": "tauri android build --apk",
+    "android:build:debug": "tauri android build --apk --debug",
     "build:linux": "pnpm build:helper:release && pnpm tauri build --bundles deb"
   },
   "dependencies": {
