@@ -28,6 +28,9 @@ pub enum KoraError {
     #[error("error de E/S: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("operación cancelada: {0}")]
+    Cancelled(String),
+
     #[error("error interno: {0}")]
     Internal(String),
 }
@@ -43,6 +46,7 @@ impl KoraError {
             Self::Storage(_) => "storage",
             Self::Database(_) => "database",
             Self::Io(_) => "io",
+            Self::Cancelled(_) => "cancelled",
             Self::Internal(_) => "internal",
         }
     }

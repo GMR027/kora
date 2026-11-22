@@ -14,6 +14,15 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Firma de release opcional: si existe src-tauri/gen/android/keystore.properties
+// se usa para firmar el APK. El archivo y el keystore están en .gitignore.
+val keystoreProperties = Properties().apply {
+    val propFile = rootProject.file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     compileSdk = 37
     namespace = "dev.kora.reader"
@@ -24,6 +33,18 @@ android {
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (keystoreProperties.containsKey("storeFile")) {
+            create("release") {
+                storeFile = rootProject.file(
+                    keystoreProperties.getProperty("storeFile")
+                )
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,6 +60,10 @@ android {
             }
         }
         getByName("release") {
+            // La IA local usa Ollama/llama.cpp por HTTP en 127.0.0.1 o en la LAN.
+            // Sin este permiso Android bloquearía el asistente en producción.
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            signingConfig = signingConfigs.findByName("release")
             optimization {
                enable = true
             }

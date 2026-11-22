@@ -21,7 +21,17 @@ tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 tauri = { version = "2.12", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
 
+ab_glyph.workspace = true
+argon2.workspace = true
+chacha20poly1305.workspace = true
+ed25519-dalek.workspace = true
+hkdf.workspace = true
+qrcode.workspace = true
+reqwest.workspace = true
+rand.workspace = true
+spake2.workspace = true
 ammonia.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
@@ -32,24 +42,50 @@ mdns-sd.workspace = true
 quinn.workspace = true
 rcgen.workspace = true
 rbook.workspace = true
+regex.workspace = true
 rustls.workspace = true
 scraper.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
+imageproc.workspace = true
+hound = "3.5"
 sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
+unicode-normalization.workspace = true
 uuid.workspace = true
 yrs.workspace = true
+zip.workspace = true
+
+image = { version = "0.25", default-features = false, features = ["png"] }
+pdfium-render = { version = "0.9.5", default-features = false, features = ["pdfium_latest", "image_latest", "thread_safe"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+cpal = "0.18"
+espeak-rs = { version = "0.2", default-features = false }
+fastembed = { version = "7.7", default-features = false, features = [
+    "ort-download-binaries-rustls-tls",
+    "hf-hub-rustls-tls",
+] }
+leptess = "0.14"
+piper-rs = { path = "vendor/piper-rs" }
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3", "mp4"] }
+ogg = "0.9"
+opus = "0.4"
+ureq = "3"
+whisper-rs = "0.16"
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-tts = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
-zip = { version = "9", default-features = false, features = ["deflate"] }
+tauri = { version = "2.12", features = ["test"] }
 
 [features]
 default = []

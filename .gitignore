@@ -7,6 +7,10 @@
 /node_modules
 /dist
 /dist-ssr
+/public/pdfjs
+
+# Artefactos de empaquetado locales
+/artifacts
 *.local
 .eslintcache
 
@@ -29,3 +33,6 @@
 .DS_Store
 Thumbs.db
 *.log
+
+# Helper nativo generado por `pnpm build:helper:release`
+src-tauri/binaries/

@@ -1,16 +1,20 @@
+pub mod auto_index;
 pub mod epub;
 pub mod model;
+pub mod ocr;
 pub mod pdf;
 pub mod renderer;
 pub mod sanitize;
+pub mod text;
 
 pub use epub::{CoverImage, EpubInspection, EpubParser};
 pub use model::{
-    ChapterContent, Document, DocumentFormat, Locator, PageBitmap, ReaderSession, Section,
-    TextRange, Viewport,
+    ChapterContent, Document, DocumentFormat, Locator, PageTextLayer, PdfSessionInfo,
+    ReaderSession, Section, TextRange, TextWord, Viewport,
 };
 pub use pdf::PdfParser;
 pub use renderer::{PageRenderer, PdfiumRenderer, WebViewRenderer};
+pub use text::{SourceText, extract_text};
 
 use std::path::Path;
 
@@ -28,7 +32,8 @@ pub trait TextExtractor: Send + Sync {
 }
 
 /// Fachada que elige el parser según la extensión del archivo. El EPUB se
-/// inspecciona y se lee capítulo a capítulo; el PDF sigue pendiente.
+/// inspecciona y se lee capítulo a capítulo; el PDF se renderiza con pdf.js y
+/// el texto/OCR se resuelve con PDFium y Tesseract.
 pub struct ReaderService {
     epub: EpubParser,
     pdf: PdfParser,

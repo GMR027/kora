@@ -134,6 +134,39 @@ impl LocalAssetStore {
         Ok(reference)
     }
 
+    /// Adopta un archivo temporal ya verificado (mismo SHA-256) sin volver a
+    /// leerlo ni hashearlo. Se usa para audiolibros grandes recibidos por red.
+    pub fn adopt_file(
+        &self,
+        kind: AssetKind,
+        source: &Path,
+        extension: &str,
+        hash: &str,
+    ) -> Result<AssetRef> {
+        let reference = self.reference(kind, hash.to_string(), extension)?;
+        let path = self.path(&reference)?;
+        if path.is_file() {
+            let _ = fs::remove_file(source);
+            return Ok(reference);
+        }
+
+        let directory = self.directory(kind)?;
+        fs::create_dir_all(&directory)?;
+        match fs::rename(source, &path) {
+            Ok(()) => Ok(reference),
+            Err(rename_error) => {
+                if let Err(copy_error) = fs::copy(source, &path) {
+                    let _ = fs::remove_file(&path);
+                    return Err(KoraError::Internal(format!(
+                        "no se pudo adoptar el asset: {rename_error}; copia: {copy_error}"
+                    )));
+                }
+                let _ = fs::remove_file(source);
+                Ok(reference)
+            }
+        }
+    }
+
     pub fn path(&self, reference: &AssetRef) -> Result<PathBuf> {
         validate_hash(&reference.hash)?;
         let extension = normalize_extension(&reference.extension)?;

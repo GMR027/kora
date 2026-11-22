@@ -44,25 +44,36 @@ impl AccountRepo {
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<Account>> {
-        Ok(
-            sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&self.pool)
-                .await?,
+        Ok(sqlx::query_as::<_, Account>(
+            "SELECT id, display_name, email, is_local, username, pin_hash, public_key,
+             account_key_ciphertext, account_key_nonce, connection_key_hash,
+             connection_key_ciphertext, connection_key_nonce,
+             connection_key_rotated_at, created_at, updated_at FROM accounts WHERE id = ?",
         )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?)
     }
 
     pub async fn list(&self) -> Result<Vec<Account>> {
-        Ok(
-            sqlx::query_as::<_, Account>("SELECT * FROM accounts ORDER BY created_at")
-                .fetch_all(&self.pool)
-                .await?,
+        Ok(sqlx::query_as::<_, Account>(
+            "SELECT id, display_name, email, is_local, username, pin_hash, public_key,
+             account_key_ciphertext, account_key_nonce, connection_key_hash,
+             connection_key_ciphertext, connection_key_nonce,
+             connection_key_rotated_at, created_at, updated_at FROM accounts ORDER BY created_at",
         )
+        .fetch_all(&self.pool)
+        .await?)
     }
 
     pub async fn find_local(&self) -> Result<Option<Account>> {
         Ok(
-            sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE is_local = 1 LIMIT 1")
+            sqlx::query_as::<_, Account>(
+                "SELECT id, display_name, email, is_local, username, pin_hash, public_key,
+             account_key_ciphertext, account_key_nonce, connection_key_hash,
+             connection_key_ciphertext, connection_key_nonce,
+             connection_key_rotated_at, created_at, updated_at FROM accounts WHERE is_local = 1 LIMIT 1",
+            )
                 .fetch_optional(&self.pool)
                 .await?,
         )
@@ -131,7 +142,12 @@ impl DeviceRepo {
 
     pub async fn get(&self, id: &str) -> Result<Option<Device>> {
         Ok(
-            sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+            sqlx::query_as::<_, Device>(
+                "SELECT id, account_id, name, platform, public_key, certificate_fingerprint,
+             trusted, sas_verified_at, last_address, last_port, peer_account_id,
+             peer_username, peer_account_public_key, account_signature,
+             peer_account_signature, revoked_at, last_seen_at, is_local, created_at FROM devices WHERE id = ?",
+            )
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?,
@@ -167,6 +183,111 @@ impl DeviceRepo {
     pub async fn touch(&self, id: &str, at: DateTime<Utc>) -> Result<()> {
         let result = sqlx::query("UPDATE devices SET last_seen_at = ? WHERE id = ?")
             .bind(at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        require_affected(result, &format!("dispositivo {id}"))
+    }
+
+    pub async fn set_identity(&self, id: &str, public_key: &str, fingerprint: &str) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE devices SET public_key = ?, certificate_fingerprint = ?, last_seen_at = ?
+             WHERE id = ?",
+        )
+        .bind(public_key)
+        .bind(fingerprint)
+        .bind(now())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        require_affected(result, &format!("dispositivo {id}"))
+    }
+
+    /// Inserta o actualiza un dispositivo remoto ya emparejado.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_remote(
+        &self,
+        account_id: &str,
+        device_id: &str,
+        name: &str,
+        platform: &str,
+        public_key: Option<&str>,
+        fingerprint: &str,
+        address: Option<&str>,
+        port: Option<i64>,
+    ) -> Result<Device> {
+        let timestamp = now();
+        sqlx::query(
+            "INSERT INTO devices
+                (id, account_id, name, platform, public_key, certificate_fingerprint,
+                 trusted, sas_verified_at, last_address, last_port, last_seen_at, is_local,
+                 created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0, ?)
+             ON CONFLICT (id) DO UPDATE SET
+                name = excluded.name,
+                platform = excluded.platform,
+                public_key = excluded.public_key,
+                certificate_fingerprint = excluded.certificate_fingerprint,
+                trusted = 1,
+                sas_verified_at = excluded.sas_verified_at,
+                last_address = excluded.last_address,
+                last_port = excluded.last_port,
+                last_seen_at = excluded.last_seen_at",
+        )
+        .bind(device_id)
+        .bind(account_id)
+        .bind(name)
+        .bind(platform)
+        .bind(public_key)
+        .bind(fingerprint)
+        .bind(timestamp)
+        .bind(address)
+        .bind(port)
+        .bind(timestamp)
+        .bind(timestamp)
+        .execute(&self.pool)
+        .await?;
+
+        self.get(device_id)
+            .await?
+            .ok_or_else(|| KoraError::Internal("dispositivo remoto no encontrado".into()))
+    }
+
+    pub async fn list_trusted(&self, account_id: &str) -> Result<Vec<Device>> {
+        Ok(sqlx::query_as::<_, Device>(
+            "SELECT * FROM devices
+             WHERE account_id = ? AND trusted = 1 AND is_local = 0
+             ORDER BY last_seen_at DESC, name",
+        )
+        .bind(account_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    pub async fn mark_seen(
+        &self,
+        id: &str,
+        address: Option<&str>,
+        port: Option<i64>,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE devices SET last_seen_at = ?, last_address = coalesce(?, last_address),
+                last_port = coalesce(?, last_port) WHERE id = ?",
+        )
+        .bind(now())
+        .bind(address)
+        .bind(port)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        require_affected(result, &format!("dispositivo {id}"))
+    }
+
+    pub async fn revoke_trust(&self, id: &str) -> Result<()> {
+        let result = sqlx::query("UPDATE devices SET trusted = 0 WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -257,5 +378,162 @@ impl ConnectionKeyRepo {
             .await?;
 
         require_affected(result, &format!("clave de conexión {id}"))
+    }
+}
+
+impl AccountRepo {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn set_account_identity(
+        &self,
+        id: &str,
+        username: &str,
+        pin_hash: &str,
+        public_key: &str,
+        account_key_ciphertext: &str,
+        account_key_nonce: &str,
+        connection_key_hash: &str,
+        connection_key_ciphertext: &str,
+        connection_key_nonce: &str,
+        rotated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE accounts SET
+                username = ?, pin_hash = ?, public_key = ?,
+                account_key_ciphertext = ?, account_key_nonce = ?,
+                connection_key_hash = ?, connection_key_ciphertext = ?, connection_key_nonce = ?,
+                connection_key_rotated_at = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(username)
+        .bind(pin_hash)
+        .bind(public_key)
+        .bind(account_key_ciphertext)
+        .bind(account_key_nonce)
+        .bind(connection_key_hash)
+        .bind(connection_key_ciphertext)
+        .bind(connection_key_nonce)
+        .bind(rotated_at)
+        .bind(now())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        require_affected(result, &format!("cuenta {id}"))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_secrets(
+        &self,
+        id: &str,
+        pin_hash: &str,
+        account_key_ciphertext: &str,
+        account_key_nonce: &str,
+        connection_key_ciphertext: &str,
+        connection_key_nonce: &str,
+        connection_key_hash: &str,
+        rotated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE accounts SET
+                pin_hash = ?, account_key_ciphertext = ?, account_key_nonce = ?,
+                connection_key_ciphertext = ?, connection_key_nonce = ?,
+                connection_key_hash = ?, connection_key_rotated_at = ?, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(pin_hash)
+        .bind(account_key_ciphertext)
+        .bind(account_key_nonce)
+        .bind(connection_key_ciphertext)
+        .bind(connection_key_nonce)
+        .bind(connection_key_hash)
+        .bind(rotated_at)
+        .bind(now())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        require_affected(result, &format!("cuenta {id}"))
+    }
+}
+
+impl DeviceRepo {
+    pub async fn revoke(&self, id: &str) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE devices SET trusted = 0, revoked_at = ?, last_seen_at = ? WHERE id = ?",
+        )
+        .bind(now())
+        .bind(now())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        require_affected(result, &format!("dispositivo {id}"))
+    }
+}
+
+impl DeviceRepo {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_paired(
+        &self,
+        owner_account_id: &str,
+        device_id: &str,
+        name: &str,
+        platform: &str,
+        device_public_key: &str,
+        fingerprint: &str,
+        peer_account_id: &str,
+        peer_username: &str,
+        peer_account_public_key: &str,
+        account_signature: &str,
+        peer_account_signature: &str,
+        address: Option<&str>,
+        port: Option<i64>,
+    ) -> Result<Device> {
+        let timestamp = now();
+        sqlx::query(
+            "INSERT INTO devices
+                (id, account_id, name, platform, public_key, certificate_fingerprint,
+                 trusted, sas_verified_at, last_address, last_port, last_seen_at, is_local,
+                 created_at, peer_account_id, peer_username, peer_account_public_key,
+                 account_signature, peer_account_signature)
+             VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET
+                name = excluded.name,
+                platform = excluded.platform,
+                public_key = excluded.public_key,
+                certificate_fingerprint = excluded.certificate_fingerprint,
+                trusted = 1,
+                sas_verified_at = excluded.sas_verified_at,
+                last_address = excluded.last_address,
+                last_port = excluded.last_port,
+                last_seen_at = excluded.last_seen_at,
+                peer_account_id = excluded.peer_account_id,
+                peer_username = excluded.peer_username,
+                peer_account_public_key = excluded.peer_account_public_key,
+                account_signature = excluded.account_signature,
+                peer_account_signature = excluded.peer_account_signature,
+                revoked_at = NULL",
+        )
+        .bind(device_id)
+        .bind(owner_account_id)
+        .bind(name)
+        .bind(platform)
+        .bind(device_public_key)
+        .bind(fingerprint)
+        .bind(timestamp)
+        .bind(address)
+        .bind(port)
+        .bind(timestamp)
+        .bind(timestamp)
+        .bind(peer_account_id)
+        .bind(peer_username)
+        .bind(peer_account_public_key)
+        .bind(account_signature)
+        .bind(peer_account_signature)
+        .execute(&self.pool)
+        .await?;
+
+        self.get(device_id)
+            .await?
+            .ok_or_else(|| KoraError::Internal("dispositivo emparejado no encontrado".into()))
     }
 }

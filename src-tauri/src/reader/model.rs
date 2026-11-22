@@ -66,6 +66,56 @@ pub struct ReaderSession {
     pub cover_path: Option<String>,
     pub progress: f64,
     pub settings: ReaderSettings,
+    pub pdf: Option<PdfSessionInfo>,
+}
+
+/// Datos específicos de un PDF que el visor necesita además del documento.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PdfSessionInfo {
+    pub page_count: usize,
+    pub scanned: bool,
+    pub has_native_outline: bool,
+    pub source_path: String,
+    pub ocr_status: String,
+    pub ocr_pages_done: usize,
+    pub ocr_pages_total: usize,
+}
+
+/// Una palabra (o fragmento) con su caja en puntos PDF y origen arriba-izquierda.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextWord {
+    pub text: String,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub font_size: f32,
+    pub confidence: Option<f32>,
+}
+
+/// Capa de texto de una página, ya sea extraída del PDF o generada por OCR.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageTextLayer {
+    pub book_id: String,
+    pub page: usize,
+    pub width: f32,
+    pub height: f32,
+    /// `native`, `ocr` o `empty`.
+    pub source: String,
+    pub words: Vec<TextWord>,
+}
+
+impl PageTextLayer {
+    pub fn text(&self) -> String {
+        self.words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// Un capítulo ya saneado y listo para inyectar con `{@html}`.

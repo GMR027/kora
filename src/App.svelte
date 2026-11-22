@@ -1,185 +1,244 @@
 <script lang="ts">
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
+  import { fade, fly } from "svelte/transition";
+  import AppShell from "./lib/components/AppShell.svelte";
+  import Spinner from "./lib/components/Spinner.svelte";
+  import ToastHost from "./lib/components/ToastHost.svelte";
+  import Account from "./views/Account.svelte";
+  import Audiobooks from "./views/Audiobooks.svelte";
+  import Diary from "./views/Diary.svelte";
   import Library from "./views/Library.svelte";
+  import Notes from "./views/Notes.svelte";
+  import Onboarding from "./views/Onboarding.svelte";
   import Reader from "./views/Reader.svelte";
   import Settings from "./views/Settings.svelte";
-  import { appInfo, errorMessage } from "./lib/api";
-  import type { AppInfo } from "./lib/types";
+  import Sync from "./views/Sync.svelte";
+  import Voice from "./views/Voice.svelte";
+  import { appInfo, getAccount, errorMessage } from "./lib/api";
+  import {
+    appearance,
+    loadAppearance,
+    updateAppearance,
+  } from "./lib/appearance";
+  import { t } from "./lib/i18n";
+  import type { AppTab } from "./lib/navigation";
+  import { notifyError, notify } from "./lib/toast";
+  import type {
+    AccountView,
+    Achievement,
+    AppearanceState,
+    AppInfo,
+    Locator,
+  } from "./lib/types";
 
-  type Tab = "library" | "reader" | "settings";
-
-  const tabs: { id: Tab; label: string }[] = [
-    { id: "library", label: "Biblioteca" },
-    { id: "reader", label: "Lector" },
-    { id: "settings", label: "Ajustes" },
-  ];
-
-  let tab = $state<Tab>("library");
+  let tab = $state<AppTab>("library");
   let info = $state<AppInfo | null>(null);
+  let appearanceState = $state<AppearanceState | null>(null);
+  let account = $state<AccountView | null>(null);
+  let ready = $state(false);
   let error = $state<string | null>(null);
   let readerBookId = $state<string | null>(null);
+  let readerLocator = $state<Locator | null>(null);
+  let readerAutoListen = $state(false);
 
-  function openReader(id: string) {
+  function openReader(id: string, locator: Locator | null = null) {
+    readerAutoListen = false;
     readerBookId = id;
+    readerLocator = locator;
     tab = "reader";
   }
 
-  onMount(async () => {
+  function openReaderListen(id: string, section = 0) {
+    readerAutoListen = true;
+    readerBookId = id;
+    readerLocator = section > 0 ? { section, offset: 0 } : null;
+    tab = "reader";
+  }
+
+  async function boot() {
+    ready = false;
+    error = null;
     try {
+      const [currentAppearance, currentAccount] = await Promise.all([
+        loadAppearance(),
+        getAccount(),
+      ]);
+      appearanceState = currentAppearance;
+      account = currentAccount;
       info = await appInfo();
+      ready = true;
+      if (currentAppearance.preferences.locale) {
+        document.documentElement.lang = currentAppearance.preferences.locale;
+      }
     } catch (cause) {
       error = errorMessage(cause);
     }
+  }
+
+  onMount(() => {
+    void boot();
+    let unlisten: UnlistenFn | undefined;
+    void listen<Achievement>("achievement::unlocked", (event) => {
+      notify(
+        "success",
+        $t("toast.achievement", { title: event.payload.title }),
+        event.payload.description,
+      );
+    }).then((stop) => {
+      unlisten = stop;
+    });
+
+    const onRejection = (event: PromiseRejectionEvent) => {
+      notifyError(event.reason);
+    };
+    window.addEventListener("unhandledrejection", onRejection);
+
+    return () => {
+      unlisten?.();
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
   });
+
+  async function refreshAppearance() {
+    try {
+      appearanceState = await loadAppearance();
+    } catch (cause) {
+      notifyError(cause);
+    }
+  }
+
+  function changedAppearance(state: AppearanceState) {
+    appearanceState = state;
+    updateAppearance(state);
+    appearance.set(state);
+  }
+
+  function navigate(next: AppTab) {
+    readerAutoListen = false;
+    tab = next;
+    window.scrollTo(0, 0);
+  }
 </script>
 
-<div class="shell">
-  <header class="topbar">
-    <div class="brand">
-      <span class="mark" aria-hidden="true">K</span>
-      <div>
-        <p class="name">Kora</p>
-        <p class="tagline">Lectura local-first con voz y sincronización LAN</p>
+{#if !ready && !error}
+  <div class="boot">
+    <img class="boot-mark" src="/logo.png" alt="Kora" />
+    <Spinner label={$t("common.loading")} />
+  </div>
+{:else if error && !appearanceState}
+  <div class="boot">
+    <p class="boot-error" role="alert">{error}</p>
+    <button class="primary" onclick={boot}>{$t("common.retry")}</button>
+  </div>
+{:else if appearanceState && !appearanceState.preferences.onboardingDone}
+  <Onboarding
+    initial={appearanceState}
+    {account}
+    onChanged={changedAppearance}
+    onDone={() => {
+      void refreshAppearance();
+      tab = "library";
+    }}
+  />
+{:else if appearanceState}
+  <AppShell
+    tab={tab}
+    onNavigate={navigate}
+    version={info?.version ?? "0.1.0"}
+    reading={tab === "reader"}
+    {account}
+  >
+    {#key tab}
+      <div class="screen" in:fly={{ y: 8, duration: 180 }} out:fade={{ duration: 90 }}>
+        {#if tab === "library"}
+          <Library onRead={openReader} onListen={openReaderListen} onNavigate={navigate} />
+        {:else if tab === "reader"}
+          <Reader
+            bookId={readerBookId}
+            initialLocator={readerLocator}
+            autoListen={readerAutoListen}
+            onExit={() => navigate("library")}
+            onSettings={() => navigate("settings")}
+          />
+        {:else if tab === "audiobooks"}
+          <Audiobooks onRead={openReader} onNavigate={navigate} />
+        {:else if tab === "notes"}
+          <Notes onRead={openReader} onNavigate={navigate} />
+        {:else if tab === "diary"}
+          <Diary onRead={openReader} />
+        {:else if tab === "voice"}
+          <Voice />
+        {:else if tab === "account"}
+          <Account />
+        {:else if tab === "sync"}
+          <Sync onNavigate={navigate} />
+        {:else}
+          <Settings onNavigate={navigate} profile={account} />
+        {/if}
       </div>
-    </div>
+    {/key}
+  </AppShell>
+{/if}
 
-    <nav aria-label="Secciones">
-      {#each tabs as item (item.id)}
-        <button
-          class:active={tab === item.id}
-          aria-current={tab === item.id ? "page" : undefined}
-          onclick={() => (tab = item.id)}
-        >
-          {item.label}
-        </button>
-      {/each}
-    </nav>
-  </header>
-
-  {#if error}
-    <p class="banner" role="alert">{error}</p>
-  {/if}
-
-  <main>
-    {#if tab === "library"}
-      <Library onRead={openReader} />
-    {:else if tab === "reader"}
-      <Reader bookId={readerBookId} />
-    {:else}
-      <Settings />
-    {/if}
-  </main>
-
-  <footer>
-    <span>{info ? `${info.name} ${info.version}` : "Kora"}</span>
-    <span>{info ? `${info.platform}/${info.arch} · ${info.identifier}` : "Tauri 2"}</span>
-  </footer>
-</div>
+<ToastHost />
 
 <style>
-  .shell {
+  .boot {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
-    padding: clamp(1rem, 3vw, 2.25rem);
-    max-width: 1180px;
-    margin: 0 auto;
-  }
-
-  .topbar {
-    display: flex;
-    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
     gap: 1rem;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
+    padding: 1rem;
+    background:
+      radial-gradient(
+        900px 500px at 20% 0%,
+        color-mix(in srgb, var(--accent) 16%, transparent),
+        transparent
+      ),
+      var(--bg);
   }
 
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 0.8rem;
+  .boot-mark {
+    width: 76px;
+    height: 76px;
+    display: block;
+    border-radius: 20px;
+    object-fit: cover;
+    box-shadow:
+      0 20px 44px -22px color-mix(in srgb, var(--gold-deep) 60%, transparent),
+      inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
   }
 
-  .mark {
-    width: 42px;
-    height: 42px;
+  .boot-error {
+    max-width: 48ch;
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--warn);
     border-radius: 12px;
-    display: grid;
-    place-items: center;
-    background: linear-gradient(150deg, var(--accent), var(--accent-2));
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    text-align: center;
+  }
+
+  .screen {
+    min-height: calc(100vh - 8rem);
+  }
+
+  .primary {
+    min-height: 48px;
+    padding: 0.6rem 1rem;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    background: var(--accent);
     color: var(--accent-contrast);
-    font-weight: 700;
-    font-size: 1.2rem;
-  }
-
-  .name {
-    margin: 0;
-    font-size: 1.1rem;
-    font-weight: 700;
-    letter-spacing: 0.01em;
-  }
-
-  .tagline {
-    margin: 0.1rem 0 0;
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-
-  nav {
-    display: flex;
-    gap: 0.25rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 0.25rem;
-  }
-
-  nav button {
-    border: 0;
-    background: transparent;
-    color: var(--muted);
     font: inherit;
-    font-size: 0.88rem;
-    padding: 0.5rem 0.9rem;
-    border-radius: 9px;
     cursor: pointer;
   }
 
-  nav button.active {
-    background: var(--surface-2);
-    color: var(--text);
-    font-weight: 600;
-  }
-
-  nav button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  main {
-    flex: 1;
-  }
-
-  .banner {
-    margin: 0;
-    padding: 0.75rem 0.95rem;
-    border-radius: 12px;
-    border: 1px solid var(--warn);
-    background: color-mix(in srgb, var(--warn) 12%, transparent);
-    font-size: 0.86rem;
-  }
-
-  footer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.5rem;
-    justify-content: space-between;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-    color: var(--muted);
-    font-size: 0.75rem;
+  @media (prefers-reduced-motion: reduce) {
+    .screen {
+      animation: none;
+    }
   }
 </style>

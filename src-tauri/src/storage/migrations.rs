@@ -39,9 +39,104 @@ const MIGRATIONS: &[Migration] = &[
         name: "0005_reader",
         sql: include_str!("migrations/0005_reader.sql"),
     },
+    Migration {
+        version: 6,
+        name: "0006_pdf",
+        sql: include_str!("migrations/0006_pdf.sql"),
+    },
+    Migration {
+        version: 7,
+        name: "0007_tts",
+        sql: include_str!("migrations/0007_tts.sql"),
+    },
+    Migration {
+        version: 8,
+        name: "0008_voice_cloning",
+        sql: include_str!("migrations/0008_voice_cloning.sql"),
+    },
+    Migration {
+        version: 9,
+        name: "0009_audiobooks",
+        sql: include_str!("migrations/0009_audiobooks.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "0010_annotations",
+        sql: include_str!("migrations/0010_annotations.sql"),
+    },
+    Migration {
+        version: 11,
+        name: "0011_sync",
+        sql: include_str!("migrations/0011_sync.sql"),
+    },
+    Migration {
+        version: 12,
+        name: "0012_accounts",
+        sql: include_str!("migrations/0012_accounts.sql"),
+    },
+    Migration {
+        version: 13,
+        name: "0013_features",
+        sql: include_str!("migrations/0013_features.sql"),
+    },
+    Migration {
+        version: 14,
+        name: "0014_appearance",
+        sql: include_str!("migrations/0014_appearance.sql"),
+    },
+    Migration {
+        version: 15,
+        name: "0015_reader_typography",
+        sql: include_str!("migrations/0015_reader_typography.sql"),
+    },
+    Migration {
+        version: 16,
+        name: "0016_favorites",
+        sql: include_str!("migrations/0016_favorites.sql"),
+    },
+    Migration {
+        version: 17,
+        name: "0017_font_face_compat",
+        sql: include_str!("migrations/0017_font_face_compat.sql"),
+    },
+    Migration {
+        version: 18,
+        name: "0018_audiobook_queue",
+        sql: include_str!("migrations/0018_audiobook_queue.sql"),
+    },
+    Migration {
+        version: 19,
+        name: "0019_audiobook_cast",
+        sql: include_str!("migrations/0019_audiobook_cast.sql"),
+    },
+    Migration {
+        version: 20,
+        name: "0020_voice_marks",
+        sql: include_str!("migrations/0020_voice_marks.sql"),
+    },
+    Migration {
+        version: 21,
+        name: "0021_audiobook_favorites",
+        sql: include_str!("migrations/0021_audiobook_favorites.sql"),
+    },
+    Migration {
+        version: 22,
+        name: "0022_audio_only_books",
+        sql: include_str!("migrations/0022_audio_only_books.sql"),
+    },
+    Migration {
+        version: 23,
+        name: "0023_classification",
+        sql: include_str!("migrations/0023_classification.sql"),
+    },
+    Migration {
+        version: 24,
+        name: "0024_trash_retry",
+        sql: include_str!("migrations/0024_trash_retry.sql"),
+    },
 ];
 
-pub const LATEST_VERSION: i64 = 5;
+pub const LATEST_VERSION: i64 = 24;
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {
     sqlx::query(

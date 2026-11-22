@@ -6,16 +6,25 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev": "vite",
+    "predev": "node scripts/copy-pdfjs.mjs && pnpm build:helper",
     "build": "tsc --noEmit && vite build",
+    "build:helper": "cargo build -p kora-neutts",
+    "build:helper:release": "cargo build --release -p kora-neutts && node scripts/copy-helper.mjs",
+    "prebuild": "node scripts/copy-pdfjs.mjs",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri.mjs",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
-    "android:build": "tauri android build --apk"
+    "android:build": "tauri android build --apk",
+    "android:build:release": "tauri android build --apk --release",
+    "build:linux": "pnpm build:helper:release && pnpm tauri build --bundles deb"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.5",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
+    "pdfjs-dist": "^6.5.438",
+    "quill": "^2.0.3",
     "svelte": "^5.58.0"
   },
   "devDependencies": {

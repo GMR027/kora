@@ -8,6 +8,21 @@ pub struct Account {
     pub display_name: String,
     pub email: Option<String>,
     pub is_local: bool,
+    pub username: Option<String>,
+    #[serde(skip)]
+    pub pin_hash: Option<String>,
+    pub public_key: Option<String>,
+    #[serde(skip)]
+    pub account_key_ciphertext: Option<String>,
+    #[serde(skip)]
+    pub account_key_nonce: Option<String>,
+    #[serde(skip)]
+    pub connection_key_hash: Option<String>,
+    #[serde(skip)]
+    pub connection_key_ciphertext: Option<String>,
+    #[serde(skip)]
+    pub connection_key_nonce: Option<String>,
+    pub connection_key_rotated_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -28,6 +43,17 @@ pub struct Device {
     pub name: String,
     pub platform: String,
     pub public_key: Option<String>,
+    pub certificate_fingerprint: Option<String>,
+    pub trusted: bool,
+    pub sas_verified_at: Option<DateTime<Utc>>,
+    pub last_address: Option<String>,
+    pub last_port: Option<i64>,
+    pub peer_account_id: Option<String>,
+    pub peer_username: Option<String>,
+    pub peer_account_public_key: Option<String>,
+    pub account_signature: Option<String>,
+    pub peer_account_signature: Option<String>,
+    pub revoked_at: Option<DateTime<Utc>>,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub is_local: bool,
     pub created_at: DateTime<Utc>,

@@ -1,12 +1,17 @@
 pub mod accounts;
 pub mod annotations;
+pub mod appearance;
 pub mod books;
 pub mod categories;
+pub mod classification;
 pub mod diary;
+pub mod pdf;
 pub mod reader_settings;
+pub mod semantic;
 pub mod settings;
 pub mod sharing;
 pub mod sync;
+pub mod tts;
 pub mod voices;
 
 use chrono::{DateTime, Utc};
@@ -16,8 +21,10 @@ use uuid::Uuid;
 use crate::error::Result;
 use crate::storage::model::ResourceType;
 
+/// Identificadores ordenables por tiempo (UUIDv7). La fase 9 los usará como
+/// claves estables de CRDT; los registros antiguos conservan su UUIDv4.
 pub(crate) fn new_id() -> String {
-    Uuid::new_v4().to_string()
+    Uuid::now_v7().to_string()
 }
 
 pub(crate) fn now() -> DateTime<Utc> {

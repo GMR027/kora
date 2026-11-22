@@ -32,6 +32,8 @@ pub struct EpubInspection {
     pub language: Option<String>,
     pub publisher: Option<String>,
     pub description: Option<String>,
+    /// Materias declaradas en `dc:subject` (BISAC, géneros, palabras clave).
+    pub subjects: Vec<String>,
     pub sections: Vec<Section>,
     pub cover: Option<CoverImage>,
 }
@@ -76,14 +78,23 @@ impl EpubParser {
             .map(|description| description.value().trim().to_string())
             .filter(|description| !description.is_empty());
 
+        let mut subjects: Vec<String> = metadata
+            .tags()
+            .map(|tag| tag.value().trim().to_string())
+            .filter(|subject| !subject.is_empty())
+            .collect();
+        subjects.sort_unstable();
+        subjects.dedup();
+
         Ok(EpubInspection {
             title,
             author,
             language,
             publisher,
             description,
+            subjects,
             sections: sections(&epub),
-            cover: cover(&epub),
+            cover: cover(&epub).or_else(|| first_page_image(&epub)),
         })
     }
 
@@ -247,6 +258,50 @@ fn cover(epub: &Epub) -> Option<CoverImage> {
     Some(CoverImage { bytes, extension })
 }
 
+/// Si el EPUB no declara portada, usa la primera imagen de la primera página
+/// como aproximación visual a esa portada.
+fn first_page_image(epub: &Epub) -> Option<CoverImage> {
+    let spine_entry = epub.spine().get(0)?;
+    let manifest_entry = spine_entry.manifest_entry()?;
+    let rewrite = EpubRewriteOptions::new().rewrite_paths(PathRewrite::root_relative());
+    let xhtml = manifest_entry.read_str_with(&rewrite).ok()?;
+    let body = sanitize::extract_body(&xhtml);
+    let document = Html::parse_fragment(&body);
+    let selector = Selector::parse("img").ok()?;
+
+    for image in document.select(&selector) {
+        let Some(source) = image.value().attr("src") else {
+            continue;
+        };
+        if source.starts_with("data:") {
+            continue;
+        }
+        let Some(extension) = cover_extension(source) else {
+            continue;
+        };
+        let Ok(bytes) = epub.read_resource_bytes(source) else {
+            continue;
+        };
+        if bytes.is_empty() || bytes.len() > MAX_COVER_BYTES {
+            continue;
+        }
+        return Some(CoverImage { bytes, extension });
+    }
+
+    None
+}
+
+fn cover_extension(path: &str) -> Option<&'static str> {
+    let extension = path.rsplit('.').next()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" => Some("jpg"),
+        "png" => Some("png"),
+        "webp" => Some("webp"),
+        "gif" => Some("gif"),
+        _ => None,
+    }
+}
+
 fn collect_images(epub: &Epub, body: &str) -> HashMap<String, String> {
     let document = Html::parse_fragment(body);
     let selector = Selector::parse("img").expect("selector img válido");
@@ -381,6 +436,8 @@ mod tests {
     <dc:language>es</dc:language>
     <dc:publisher>Editorial</dc:publisher>
     <dc:description>Descripción</dc:description>
+    <dc:subject>Ficción</dc:subject>
+    <dc:subject>Ciencia ficción</dc:subject>
     <meta property="dcterms:modified">2020-01-01T00:00:00Z</meta>
   </metadata>
   <manifest>
@@ -458,6 +515,8 @@ mod tests {
         assert_eq!(inspection.author.as_deref(), Some("Autora"));
         assert_eq!(inspection.language.as_deref(), Some("es"));
         assert_eq!(inspection.publisher.as_deref(), Some("Editorial"));
+        assert!(inspection.subjects.contains(&"Ciencia ficción".to_string()));
+        assert!(inspection.subjects.contains(&"Ficción".to_string()));
         assert_eq!(inspection.sections.len(), 2);
         assert_eq!(inspection.sections[0].title.as_deref(), Some("Uno"));
         assert!(inspection.cover.is_some());

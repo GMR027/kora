@@ -15,6 +15,9 @@ pub const ASSET_DIRECTORIES: &[&str] = &[
     "notes_audio",
     "audiobooks",
     "generated_books",
+    "ocr",
+    "tts",
+    "whisper",
 ];
 
 /// Árbol de datos privados de Kora.
@@ -115,6 +118,9 @@ mod tests {
         assert!(layout.assets.join("notes_audio").is_dir());
         assert!(layout.assets.join("audiobooks").is_dir());
         assert!(layout.assets.join("generated_books").is_dir());
+        assert!(layout.assets.join("ocr").is_dir());
+        assert!(layout.assets.join("tts").is_dir());
+        assert!(layout.assets.join("whisper").is_dir());
         assert!(layout.exports.is_dir());
         assert!(layout.trash.is_dir());
         assert!(layout.logs.is_dir());

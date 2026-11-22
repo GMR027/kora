@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
+use crate::commands::reader::{apply_metadata, apply_pdf_metadata, owned_book};
 use crate::error::{KoraError, Result};
+use crate::reader::ReaderService;
 use crate::state::AppState;
 use crate::storage::{
-    AssetKind, AssetRef, Book, BookFormat, BookSummary, Category, NewAuditEntry, NewBook,
-    NewCategory, ResourceType,
+    AssetKind, AssetRef, Book, BookFormat, BookOrigin, BookSummary, Category, NewAuditEntry,
+    NewBook, NewCategory, ResourceType,
 };
 
 #[tauri::command]
@@ -17,6 +19,14 @@ pub async fn library_list(state: State<'_, AppState>) -> Result<Vec<BookSummary>
     let mut books = Vec::with_capacity(rows.len());
     for row in rows {
         let cover_path = cover_path(&state, row.cover_hash.as_deref(), row.cover_ext.as_deref())?;
+        let category_ids = state
+            .storage
+            .book_categories
+            .list_by_book(&row.id)
+            .await?
+            .into_iter()
+            .map(|category| category.id)
+            .collect();
 
         books.push(BookSummary {
             id: row.id,
@@ -26,7 +36,16 @@ pub async fn library_list(state: State<'_, AppState>) -> Result<Vec<BookSummary>
             cover_path,
             size_bytes: row.size_bytes.max(0) as u64,
             added_at: row.added_at,
+            language: row.language,
+            publisher: row.publisher,
+            description: row.description,
+            last_read_at: row.last_read_at,
             progress: row.progress as f32,
+            origin: row.origin,
+            favorite: row.favorite,
+            read_only: row.read_only,
+            received_share_id: row.received_share_id,
+            category_ids,
         });
     }
 
@@ -34,7 +53,11 @@ pub async fn library_list(state: State<'_, AppState>) -> Result<Vec<BookSummary>
 }
 
 #[tauri::command]
-pub async fn library_import(state: State<'_, AppState>, source: String) -> Result<BookSummary> {
+pub async fn library_import(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    source: String,
+) -> Result<BookSummary> {
     let source_path = PathBuf::from(&source);
     let format = detect_book_format(&source_path)?;
 
@@ -54,12 +77,52 @@ pub async fn library_import(state: State<'_, AppState>, source: String) -> Resul
         .assets
         .put_file(AssetKind::Book, &source_path, format.extension())?;
 
-    if let Some(existing) = state
+    let existing = match state
         .storage
         .books
         .find_by_hash(&owner, &asset.hash)
         .await?
     {
+        Some(book) => Some(book),
+        None => {
+            // Reimportar un libro que está en la papelera lo restaura en lugar
+            // de crear un duplicado (el hash de contenido es único por cuenta).
+            match state
+                .storage
+                .books
+                .find_trashed_by_hash(&owner, &asset.hash)
+                .await?
+            {
+                Some(mut book) => {
+                    state.storage.books.set_deleted(&book.id, false).await?;
+                    book.deleted_at = None;
+                    Some(book)
+                }
+                None => None,
+            }
+        }
+    };
+
+    if let Some(mut existing) = existing {
+        if let Err(error) = attach_generated_cover(&state, &mut existing).await {
+            tracing::warn!(%error, book = %existing.id, "no se pudo generar la portada existente");
+        }
+        if existing.format == BookFormat::Pdf
+            && let Err(error) =
+                crate::commands::reader::prepare_pdf(&state, Some(app.clone()), &existing).await
+        {
+            tracing::warn!(%error, book = %existing.id, "no se pudo preparar el PDF existente");
+        }
+        if state.semantic.provider().ready() {
+            let semantic = state.semantic.clone();
+            let handle = app.clone();
+            let indexed_book = existing.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = semantic.index_book(Some(&handle), &indexed_book).await {
+                    tracing::warn!(book = %indexed_book.id, %error, "no se pudo indexar el libro existente");
+                }
+            });
+        }
         return book_summary(&state, &existing).await;
     }
 
@@ -77,7 +140,7 @@ pub async fn library_import(state: State<'_, AppState>, source: String) -> Resul
         .unwrap_or("libro")
         .to_string();
 
-    let book = state
+    let mut book = state
         .storage
         .books
         .create(NewBook {
@@ -93,10 +156,48 @@ pub async fn library_import(state: State<'_, AppState>, source: String) -> Resul
             language: None,
             publisher: None,
             description: None,
+            origin: BookOrigin::Imported,
             owner_account_id: owner.clone(),
             origin_share_id: None,
+            audio_only: false,
         })
         .await?;
+
+    // Los metadatos del EPUB se leen al importar para que la biblioteca no
+    // dependa de abrir el libro una vez. En PDF se reutiliza la inspección de
+    // `prepare_pdf` más abajo.
+    if book.format == BookFormat::Epub {
+        let asset_path = state.storage.assets.path(&AssetRef {
+            kind: AssetKind::Book,
+            hash: book.content_hash.clone(),
+            extension: book.content_ext.clone(),
+        })?;
+        let inspection =
+            tokio::task::spawn_blocking(move || ReaderService::new().inspect_epub(&asset_path))
+                .await;
+        if let Ok(Ok(inspection)) = inspection
+            && apply_metadata(&mut book, &inspection)
+        {
+            state.storage.books.update(&book).await?;
+        }
+    }
+
+    if let Err(error) = attach_generated_cover(&state, &mut book).await {
+        tracing::warn!(%error, book = %book.id, "no se pudo generar la portada");
+    }
+
+    if book.format == BookFormat::Pdf {
+        match crate::commands::reader::prepare_pdf(&state, Some(app.clone()), &book).await {
+            Ok(prepared) => {
+                if apply_pdf_metadata(&mut book, &prepared.inspection) {
+                    state.storage.books.update(&book).await?;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, book = %book.id, "no se pudo preparar el PDF importado");
+            }
+        }
+    }
 
     state
         .storage
@@ -114,19 +215,213 @@ pub async fn library_import(state: State<'_, AppState>, source: String) -> Resul
         })
         .await?;
 
+    for achievement in state
+        .achievements
+        .evaluate(&state.identity.account.id)
+        .await?
+    {
+        let _ = app.emit("achievement::unlocked", achievement);
+    }
+
+    if state.semantic.provider().ready() {
+        let semantic = state.semantic.clone();
+        let handle = app.clone();
+        let indexed_book = book.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = semantic.index_book(Some(&handle), &indexed_book).await {
+                tracing::warn!(book = %indexed_book.id, %error, "no se pudo indexar el libro importado");
+            }
+        });
+    }
+
+    let classification = state.classification.clone();
+    let classification_config = classification.config().await.unwrap_or_default();
+    if classification_config.enabled && classification_config.classify_on_import {
+        let handle = app.clone();
+        let target = book.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = classification
+                .classify_book(Some(&handle), &target, false, false)
+                .await
+            {
+                tracing::warn!(book = %target.id, %error, "no se pudo clasificar el libro importado");
+            }
+        });
+    }
+
+    book_summary(&state, &book).await
+}
+
+/// Mueve un libro a la papelera. El registro y sus anotaciones se conservan,
+/// junto con los assets, para que la restauración sea completa.
+#[tauri::command]
+pub async fn library_delete(state: State<'_, AppState>, book_id: String) -> Result<()> {
+    let book = crate::commands::reader::owned_book(&state, &book_id).await?;
+    state.storage.books.set_deleted(&book.id, true).await?;
+    // Un libro en la papelera no debe seguir compartido con otros equipos.
+    state
+        .storage
+        .shares
+        .revoke_by_resource(ResourceType::Book, &book.id)
+        .await?;
+    state
+        .storage
+        .audit
+        .append(NewAuditEntry {
+            actor_account_id: Some(state.identity.account.id.clone()),
+            action: "book.trash".to_string(),
+            resource_type: Some(ResourceType::Book),
+            resource_id: Some(book.id.clone()),
+            metadata: serde_json::json!({ "title": book.title }).to_string(),
+        })
+        .await?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashedBookSummary {
+    #[serde(flatten)]
+    pub book: BookSummary,
+    pub deleted_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[tauri::command]
+pub async fn library_trash(state: State<'_, AppState>) -> Result<Vec<TrashedBookSummary>> {
+    let owner = state.identity.account.id.clone();
+    let mut trash = Vec::new();
+    for book in state.storage.books.list_trash(&owner).await? {
+        let deleted_at = book.deleted_at.unwrap_or_else(chrono::Utc::now);
+        trash.push(TrashedBookSummary {
+            book: book_summary(&state, &book).await?,
+            deleted_at,
+        });
+    }
+    Ok(trash)
+}
+
+#[tauri::command]
+pub async fn library_restore(state: State<'_, AppState>, book_id: String) -> Result<BookSummary> {
+    let mut book = state
+        .storage
+        .books
+        .get(&book_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound(format!("libro {book_id}")))?;
+    if book.owner_account_id != state.identity.account.id || book.deleted_at.is_none() {
+        return Err(KoraError::NotFound(format!("libro {book_id}")));
+    }
+
+    state.storage.books.set_deleted(&book.id, false).await?;
+    book.deleted_at = None;
+    state
+        .storage
+        .audit
+        .append(NewAuditEntry {
+            actor_account_id: Some(state.identity.account.id.clone()),
+            action: "book.restore".to_string(),
+            resource_type: Some(ResourceType::Book),
+            resource_id: Some(book.id.clone()),
+            metadata: serde_json::json!({ "title": book.title }).to_string(),
+        })
+        .await?;
     book_summary(&state, &book).await
 }
 
 #[tauri::command]
-pub async fn library_delete(state: State<'_, AppState>, book_id: String) -> Result<()> {
+pub async fn library_purge_book(state: State<'_, AppState>, book_id: String) -> Result<()> {
     let book = state
         .storage
         .books
         .get(&book_id)
         .await?
         .ok_or_else(|| KoraError::NotFound(format!("libro {book_id}")))?;
+    if book.owner_account_id != state.identity.account.id || book.deleted_at.is_none() {
+        return Err(KoraError::NotFound(format!("libro {book_id}")));
+    }
+
+    purge_book(&state, book).await
+}
+
+#[tauri::command]
+pub async fn library_empty_trash(state: State<'_, AppState>) -> Result<u64> {
+    let owner = state.identity.account.id.clone();
+    let books = state.storage.books.list_trash(&owner).await?;
+    let mut purged = 0u64;
+    for book in books {
+        purge_book(&state, book).await?;
+        purged += 1;
+    }
+    Ok(purged)
+}
+
+/// Borra definitivamente un libro y mueve sus assets huérfanos a `trash/`.
+async fn purge_book(state: &AppState, book: Book) -> Result<()> {
+    let book_id = book.id.clone();
+    let audiobook_assets = state.storage.audiobooks.list_by_book(&book_id).await?;
+    let voice_notes = state
+        .storage
+        .voice_notes
+        .list_by_book_including_deleted(&book_id)
+        .await?;
 
     state.storage.books.delete(&book_id).await?;
+
+    // Las notas de voz no usan assets con hash: su archivo se deriva del id.
+    for note in &voice_notes {
+        let path = crate::annotations::note_audio_path(state.storage.layout(), &note.id);
+        if path.is_file() {
+            crate::storage::trash::move_to_trash(state.storage.layout(), &path)?;
+        }
+    }
+
+    for audiobook in &audiobook_assets {
+        for (hash, extension) in [
+            (
+                audiobook.audio_hash.as_deref(),
+                audiobook.audio_ext.as_deref(),
+            ),
+            (
+                audiobook.manifest_hash.as_deref(),
+                audiobook.manifest_ext.as_deref(),
+            ),
+        ] {
+            let (Some(hash), Some(extension)) = (hash, extension) else {
+                continue;
+            };
+            let reference = AssetRef {
+                kind: AssetKind::Audiobook,
+                hash: hash.to_string(),
+                extension: extension.to_string(),
+            };
+            if !state
+                .storage
+                .asset_is_referenced(AssetKind::Audiobook, hash)
+                .await?
+                && state.storage.assets.exists(&reference)?
+            {
+                let path = state.storage.assets.path(&reference)?;
+                crate::storage::trash::move_to_trash(state.storage.layout(), &path)?;
+            }
+        }
+    }
+
+    // La capa OCR y las grabaciones de ensayo son específicas del libro y no
+    // son assets con hash.
+    let ocr_dir = state.storage.layout().assets.join("ocr").join(&book_id);
+    if ocr_dir.is_dir() {
+        crate::storage::trash::move_to_trash(state.storage.layout(), &ocr_dir)?;
+    }
+    let practice_dir = state
+        .storage
+        .layout()
+        .assets
+        .join("tts")
+        .join("practice")
+        .join(&book_id);
+    if practice_dir.is_dir() {
+        crate::storage::trash::move_to_trash(state.storage.layout(), &practice_dir)?;
+    }
 
     state
         .storage
@@ -155,6 +450,18 @@ pub async fn library_delete(state: State<'_, AppState>, book_id: String) -> Resu
         crate::storage::trash::move_to_trash(state.storage.layout(), &path)?;
     }
 
+    if book.origin != BookOrigin::Imported {
+        let generated = AssetRef {
+            kind: AssetKind::GeneratedBook,
+            hash: book.content_hash.clone(),
+            extension: book.content_ext.clone(),
+        };
+        if state.storage.assets.exists(&generated)? {
+            let path = state.storage.assets.path(&generated)?;
+            crate::storage::trash::move_to_trash(state.storage.layout(), &path)?;
+        }
+    }
+
     if let (Some(hash), Some(extension)) = (&book.cover_hash, &book.cover_ext) {
         let cover = AssetRef {
             kind: AssetKind::Cover,
@@ -173,6 +480,80 @@ pub async fn library_delete(state: State<'_, AppState>, book_id: String) -> Resu
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn library_ensure_cover(
+    state: State<'_, AppState>,
+    book_id: String,
+) -> Result<BookSummary> {
+    let mut book = state
+        .storage
+        .books
+        .get(&book_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound(format!("libro {book_id}")))?;
+
+    attach_generated_cover(&state, &mut book).await?;
+    book_summary(&state, &book).await
+}
+
+async fn attach_generated_cover(state: &AppState, book: &mut Book) -> Result<()> {
+    if book.cover_hash.is_some() {
+        return Ok(());
+    }
+
+    let reference = AssetRef {
+        kind: AssetKind::Book,
+        hash: book.content_hash.clone(),
+        extension: book.content_ext.clone(),
+    };
+    let path = state.storage.assets.path(&reference)?;
+    let format = book.format;
+    let title = book.title.clone();
+    let author = book.author.clone();
+    let task_path = path.clone();
+
+    let generated = tokio::task::spawn_blocking(move || -> Option<(Vec<u8>, String)> {
+        match format {
+            BookFormat::Pdf => {
+                if let Some((bytes, extension)) = crate::commands::reader::render_cover(&task_path)
+                {
+                    return Some((bytes, extension.to_string()));
+                }
+                fallback_cover(&title, author.as_deref())
+            }
+            BookFormat::Epub => {
+                if let Ok(inspection) = ReaderService::new().inspect_epub(&task_path)
+                    && let Some(cover) = inspection.cover
+                {
+                    return Some((cover.bytes, cover.extension.to_string()));
+                }
+                fallback_cover(&title, author.as_deref())
+            }
+        }
+    })
+    .await
+    .map_err(|error| KoraError::Internal(format!("tarea de portada: {error}")))?;
+
+    let Some((bytes, extension)) = generated else {
+        return Ok(());
+    };
+
+    let asset = state
+        .storage
+        .assets
+        .put_bytes(AssetKind::Cover, &bytes, &extension)?;
+    book.cover_hash = Some(asset.hash);
+    book.cover_ext = Some(asset.extension);
+    state.storage.books.update(book).await?;
+    Ok(())
+}
+
+fn fallback_cover(title: &str, author: Option<&str>) -> Option<(Vec<u8>, String)> {
+    crate::tejido::cover::render_cover_bytes(title, author.unwrap_or("Kora"))
+        .ok()
+        .map(|bytes| (bytes, "png".to_string()))
 }
 
 #[tauri::command]
@@ -304,7 +685,15 @@ pub async fn category_create(
 
     let owner = state.identity.account.id.clone();
 
-    if let Some(existing) = state.storage.categories.find_by_name(&owner, &name).await? {
+    let normalized = crate::classify::normalize::normalize_key(&name);
+    if let Some(existing) = state
+        .storage
+        .categories
+        .list_by_owner(&owner)
+        .await?
+        .into_iter()
+        .find(|category| crate::classify::normalize::normalize_key(&category.name) == normalized)
+    {
         return Ok(existing);
     }
 
@@ -336,6 +725,260 @@ pub async fn category_create(
 }
 
 #[tauri::command]
+pub async fn library_update(
+    state: State<'_, AppState>,
+    book_id: String,
+    title: String,
+    author: Option<String>,
+    description: Option<String>,
+    language: Option<String>,
+    publisher: Option<String>,
+) -> Result<BookSummary> {
+    let mut book = owned_book(&state, &book_id).await?;
+
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(KoraError::InvalidInput(
+            "el título del libro no puede estar vacío".into(),
+        ));
+    }
+    if title.chars().count() > 300 {
+        return Err(KoraError::InvalidInput(
+            "el título no puede superar 300 caracteres".into(),
+        ));
+    }
+
+    let author = clean_optional(author);
+    let description = clean_optional(description);
+    let language = clean_optional(language);
+    let publisher = clean_optional(publisher);
+
+    if author
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 200)
+    {
+        return Err(KoraError::InvalidInput(
+            "el autor no puede superar 200 caracteres".into(),
+        ));
+    }
+    if publisher
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 200)
+    {
+        return Err(KoraError::InvalidInput(
+            "la editorial no puede superar 200 caracteres".into(),
+        ));
+    }
+    if language
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 40)
+    {
+        return Err(KoraError::InvalidInput(
+            "el idioma no puede superar 40 caracteres".into(),
+        ));
+    }
+    if description
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 8_000)
+    {
+        return Err(KoraError::InvalidInput(
+            "la descripción no puede superar 8000 caracteres".into(),
+        ));
+    }
+
+    book.title = title;
+    book.author = author;
+    book.description = description;
+    book.language = language;
+    book.publisher = publisher;
+    state.storage.books.update(&book).await?;
+
+    state
+        .storage
+        .audit
+        .append(NewAuditEntry {
+            actor_account_id: Some(state.identity.account.id.clone()),
+            action: "book.update".to_string(),
+            resource_type: Some(ResourceType::Book),
+            resource_id: Some(book.id.clone()),
+            metadata: serde_json::json!({ "title": book.title }).to_string(),
+        })
+        .await?;
+
+    book_summary(&state, &book).await
+}
+
+fn clean_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+#[tauri::command]
+pub async fn library_unassign_category(
+    state: State<'_, AppState>,
+    book_id: String,
+    category_id: String,
+) -> Result<()> {
+    let owner = state.identity.account.id.clone();
+    let book = state
+        .storage
+        .books
+        .get(&book_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound(format!("libro {book_id}")))?;
+    let category = state
+        .storage
+        .categories
+        .get(&category_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound(format!("categoría {category_id}")))?;
+
+    if book.owner_account_id != owner || category.owner_account_id != owner {
+        return Err(KoraError::NotFound(
+            "libro o categoría de otra cuenta".into(),
+        ));
+    }
+
+    state
+        .storage
+        .book_categories
+        .unassign(&book_id, &category_id)
+        .await?;
+
+    state
+        .storage
+        .audit
+        .append(NewAuditEntry {
+            actor_account_id: Some(owner),
+            action: "book.category_unassign".to_string(),
+            resource_type: Some(ResourceType::Book),
+            resource_id: Some(book_id),
+            metadata: serde_json::json!({ "categoryId": category_id }).to_string(),
+        })
+        .await?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn category_update(
+    state: State<'_, AppState>,
+    category_id: String,
+    name: String,
+    color: Option<String>,
+) -> Result<Category> {
+    let owner = state.identity.account.id.clone();
+    let mut category = state
+        .storage
+        .categories
+        .get(&category_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound(format!("categoría {category_id}")))?;
+
+    if category.owner_account_id != owner {
+        return Err(KoraError::NotFound(format!("categoría {category_id}")));
+    }
+
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(KoraError::InvalidInput(
+            "el nombre de la categoría no puede estar vacío".into(),
+        ));
+    }
+    if name.chars().count() > 60 {
+        return Err(KoraError::InvalidInput(
+            "el nombre de la categoría no puede superar 60 caracteres".into(),
+        ));
+    }
+
+    let normalized = crate::classify::normalize::normalize_key(&name);
+    if state
+        .storage
+        .categories
+        .list_by_owner(&owner)
+        .await?
+        .into_iter()
+        .any(|other| {
+            other.id != category.id
+                && crate::classify::normalize::normalize_key(&other.name) == normalized
+        })
+    {
+        return Err(KoraError::Conflict(
+            "ya existe una categoría con ese nombre".into(),
+        ));
+    }
+
+    let color = color
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    category.name = name;
+    category.color = color;
+    state.storage.categories.update(&category).await?;
+
+    state
+        .storage
+        .audit
+        .append(NewAuditEntry {
+            actor_account_id: Some(owner),
+            action: "category.update".to_string(),
+            resource_type: Some(ResourceType::Category),
+            resource_id: Some(category.id.clone()),
+            metadata: serde_json::json!({ "name": category.name }).to_string(),
+        })
+        .await?;
+
+    Ok(category)
+}
+
+#[tauri::command]
+pub async fn category_delete(state: State<'_, AppState>, category_id: String) -> Result<()> {
+    let owner = state.identity.account.id.clone();
+    let category = state
+        .storage
+        .categories
+        .get(&category_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound(format!("categoría {category_id}")))?;
+
+    if category.owner_account_id != owner {
+        return Err(KoraError::NotFound(format!("categoría {category_id}")));
+    }
+
+    state.storage.categories.delete(&category_id).await?;
+
+    state
+        .storage
+        .audit
+        .append(NewAuditEntry {
+            actor_account_id: Some(owner),
+            action: "category.delete".to_string(),
+            resource_type: Some(ResourceType::Category),
+            resource_id: Some(category_id),
+            metadata: serde_json::json!({ "name": category.name }).to_string(),
+        })
+        .await?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn library_set_favorite(
+    state: State<'_, AppState>,
+    book_id: String,
+    favorite: bool,
+) -> Result<BookSummary> {
+    let book = owned_book(&state, &book_id).await?;
+    state
+        .storage
+        .books
+        .set_favorite(&state.identity.account.id, &book.id, favorite)
+        .await?;
+    book_summary(&state, &book).await
+}
+
+#[tauri::command]
 pub async fn category_list(state: State<'_, AppState>) -> Result<Vec<Category>> {
     state
         .storage
@@ -345,13 +988,12 @@ pub async fn category_list(state: State<'_, AppState>) -> Result<Vec<Category>> 
 }
 
 async fn book_summary(state: &AppState, book: &Book) -> Result<BookSummary> {
-    let progress = state
-        .storage
-        .progress
-        .get(&book.id)
-        .await?
+    let progress = state.storage.progress.get(&book.id).await?;
+    let percent = progress
+        .as_ref()
         .map(|progress| progress.percent as f32)
         .unwrap_or(0.0);
+    let last_read_at = progress.as_ref().map(|progress| progress.updated_at);
 
     Ok(BookSummary {
         id: book.id.clone(),
@@ -361,7 +1003,23 @@ async fn book_summary(state: &AppState, book: &Book) -> Result<BookSummary> {
         cover_path: cover_path(state, book.cover_hash.as_deref(), book.cover_ext.as_deref())?,
         size_bytes: book.size_bytes.max(0) as u64,
         added_at: book.added_at,
-        progress,
+        language: book.language.clone(),
+        publisher: book.publisher.clone(),
+        description: book.description.clone(),
+        last_read_at,
+        progress: percent,
+        origin: book.origin,
+        favorite: state.storage.books.is_favorite(&book.id).await?,
+        read_only: book.read_only,
+        received_share_id: book.received_share_id.clone(),
+        category_ids: state
+            .storage
+            .book_categories
+            .list_by_book(&book.id)
+            .await?
+            .into_iter()
+            .map(|category| category.id)
+            .collect(),
     })
 }
 

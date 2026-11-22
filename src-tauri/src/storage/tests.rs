@@ -1,8 +1,11 @@
 use crate::storage::AssetKind;
 use crate::storage::model::{
-    AnnotationKind, AudiobookStatus, BookFormat, NewAchievement, NewAnnotation, NewAudiobook,
-    NewBook, NewCategory, NewDiaryEntry, NewExtract, NewNote, NewReaderSettings,
-    NewReadingProgress, NewShare, NewVoice, ResourceType, SyncState,
+    AnnotationKind, AudiobookOrigin, AudiobookStatus, BookFormat, BookOrigin, CategoryAssignSource,
+    NewAchievement, NewAnnotation, NewAudiobook, NewBook, NewCategory, NewCategorySuggestion,
+    NewCharacterVoice, NewDiaryEntry, NewExtract, NewNote, NewPracticeAttempt, NewReaction,
+    NewReaderSettings, NewReadingProgress, NewShare, NewTtsPreferences, NewTtsSequence, NewVoice,
+    NewVoiceNote, OffsetUnit, ReactionKind, ResourceType, SuggestionSource, SuggestionStatus,
+    SyncState, VoiceKind,
 };
 use crate::storage::test_support::TestStorage;
 
@@ -20,8 +23,10 @@ fn new_book(owner: &str, hash: &str, title: &str) -> NewBook {
         language: Some("es".to_string()),
         publisher: None,
         description: None,
+        origin: BookOrigin::Imported,
         owner_account_id: owner.to_string(),
         origin_share_id: None,
+        audio_only: false,
     }
 }
 
@@ -122,6 +127,73 @@ async fn creates_reads_and_deletes_books() {
             .is_none()
     );
     assert!(test.storage.books.delete(&book.id).await.is_err());
+}
+
+#[tokio::test]
+async fn book_trash_hides_but_keeps_the_record_restorable() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("papelera"), "En papelera"))
+        .await
+        .expect("crear libro");
+
+    test.storage
+        .books
+        .set_deleted(&book.id, true)
+        .await
+        .expect("mover a papelera");
+
+    assert!(
+        test.storage
+            .books
+            .list_summaries(&owner)
+            .await
+            .expect("listar activos")
+            .is_empty()
+    );
+    assert!(
+        test.storage
+            .books
+            .find_by_hash(&owner, &hash("papelera"))
+            .await
+            .expect("buscar activo")
+            .is_none()
+    );
+    assert!(
+        test.storage
+            .books
+            .find_trashed_by_hash(&owner, &hash("papelera"))
+            .await
+            .expect("buscar papelera")
+            .is_some()
+    );
+    let trash = test
+        .storage
+        .books
+        .list_trash(&owner)
+        .await
+        .expect("listar papelera");
+    assert_eq!(trash.len(), 1);
+    assert_eq!(trash[0].id, book.id);
+    assert!(trash[0].deleted_at.is_some());
+
+    test.storage
+        .books
+        .set_deleted(&book.id, false)
+        .await
+        .expect("restaurar");
+    let restored = test
+        .storage
+        .books
+        .list_summaries(&owner)
+        .await
+        .expect("listar restaurados");
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].id, book.id);
 }
 
 #[tokio::test]
@@ -280,6 +352,10 @@ async fn annotations_extracts_and_notes_crud() {
             locator: "epubcfi(/6/6)".to_string(),
             text: "fragmento".to_string(),
             note: None,
+            chapter_index: Some(1),
+            offset_start: Some(0),
+            offset_end: Some(8),
+            citation: Some("Anotado · capítulo 2".to_string()),
             owner_account_id: owner.clone(),
             origin_share_id: None,
         })
@@ -293,6 +369,11 @@ async fn annotations_extracts_and_notes_crud() {
             book_id: Some(book.id.clone()),
             title: Some("Idea".to_string()),
             body: "cuerpo".to_string(),
+            content_json: Some(r#"{"ops":[{"insert":"cuerpo\n"}]}"#.to_string()),
+            chapter_index: Some(1),
+            offset_start: Some(0),
+            offset_end: Some(8),
+            text: Some("fragmento".to_string()),
             audio_hash: None,
             audio_ext: None,
             owner_account_id: owner.clone(),
@@ -378,13 +459,23 @@ async fn annotations_extracts_and_notes_crud() {
         .delete(&note.id)
         .await
         .expect("borrar nota");
+    // El borrado suave conserva el propietario y la tumba para CRDT.
     assert!(
         test.storage
             .resource_owners
             .get(ResourceType::Note, &note.id)
             .await
             .expect("propietario")
-            .is_none()
+            .is_some()
+    );
+    assert!(
+        test.storage
+            .notes
+            .get_any(&note.id)
+            .await
+            .expect("leer tumba")
+            .expect("tumba")
+            .deleted
     );
 }
 
@@ -417,6 +508,11 @@ async fn reader_settings_are_saved_per_book_and_cascade() {
             line_height: 1.9,
             margin: 48,
             font_family: "sans".to_string(),
+            font_face: "jakarta".to_string(),
+            column_width: 840,
+            text_align: "left".to_string(),
+            paragraph_indent: 0,
+            hyphenate: false,
             theme: "sepia".to_string(),
             texture: "paper".to_string(),
             mode: "paged".to_string(),
@@ -440,6 +536,11 @@ async fn reader_settings_are_saved_per_book_and_cascade() {
             line_height: 1.5,
             margin: 20,
             font_family: "mono".to_string(),
+            font_face: "literata".to_string(),
+            column_width: 680,
+            text_align: "justify".to_string(),
+            paragraph_indent: 1,
+            hyphenate: true,
             theme: "dark".to_string(),
             texture: "grid".to_string(),
             mode: "scroll".to_string(),
@@ -548,6 +649,167 @@ async fn categories_assign_and_filter_books() {
 }
 
 #[tokio::test]
+async fn classification_suggestions_lifecycle_and_manual_lock() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("clasificable"), "Clasificable"))
+        .await
+        .expect("libro");
+    let category = test
+        .storage
+        .categories
+        .create(NewCategory {
+            name: "Ciencia ficción".to_string(),
+            color: None,
+            sort_order: 0,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("categoría");
+
+    let suggestion = test
+        .storage
+        .classification
+        .insert_suggestion(&NewCategorySuggestion::for_category(
+            &book.id,
+            &category.id,
+            0.91,
+            SuggestionSource::Embedding,
+            Some("prueba".to_string()),
+            &owner,
+            None,
+        ))
+        .await
+        .expect("sugerencia");
+    assert_eq!(
+        test.storage
+            .classification
+            .count_pending(&owner)
+            .await
+            .expect("pendientes"),
+        1
+    );
+    assert_eq!(
+        test.storage
+            .classification
+            .list_pending_by_book(&owner, &book.id)
+            .await
+            .expect("vista")
+            .len(),
+        1
+    );
+
+    // Insertar la misma sugerencia pendiente es idempotente.
+    let repeated = test
+        .storage
+        .classification
+        .insert_suggestion(&NewCategorySuggestion::for_category(
+            &book.id,
+            &category.id,
+            0.50,
+            SuggestionSource::Ai,
+            None,
+            &owner,
+            None,
+        ))
+        .await
+        .expect("sugerencia repetida");
+    assert_eq!(repeated.id, suggestion.id);
+
+    // Aceptar una sugerencia no bloquea la asignación: sigue siendo automática.
+    test.storage
+        .book_categories
+        .assign_detailed(
+            &book.id,
+            &category.id,
+            &owner,
+            None,
+            CategoryAssignSource::Embedding,
+            Some(0.91),
+            false,
+        )
+        .await
+        .expect("asignar sugerencia");
+    assert!(
+        !test
+            .storage
+            .book_categories
+            .has_locked_category(&book.id)
+            .await
+            .expect("bloqueo")
+    );
+    test.storage
+        .classification
+        .resolve_suggestion(&suggestion.id, &owner, SuggestionStatus::Accepted)
+        .await
+        .expect("resolver");
+
+    // Una asignación manual marca el libro como bloqueado.
+    test.storage
+        .book_categories
+        .assign(&book.id, &category.id, &owner, None)
+        .await
+        .expect("asignación manual");
+    assert!(
+        test.storage
+            .book_categories
+            .has_locked_category(&book.id)
+            .await
+            .expect("bloqueo manual")
+    );
+
+    // Una sugerencia de categoría nueva se puede repetir tras descartarla.
+    let new_suggestion = test
+        .storage
+        .classification
+        .insert_suggestion(&NewCategorySuggestion::for_new_category(
+            &book.id,
+            "Fantasía épica",
+            "fantasia epica",
+            0.77,
+            SuggestionSource::Ai,
+            None,
+            &owner,
+            None,
+        ))
+        .await
+        .expect("nueva categoría");
+    test.storage
+        .classification
+        .resolve_suggestion(&new_suggestion.id, &owner, SuggestionStatus::Dismissed)
+        .await
+        .expect("descartar");
+    let again = test
+        .storage
+        .classification
+        .insert_suggestion(&NewCategorySuggestion::for_new_category(
+            &book.id,
+            "Fantasía épica",
+            "fantasia epica",
+            0.80,
+            SuggestionSource::Ai,
+            None,
+            &owner,
+            None,
+        ))
+        .await
+        .expect("reinsertar");
+    assert_ne!(again.id, new_suggestion.id);
+    assert_eq!(
+        test.storage
+            .classification
+            .count_pending(&owner)
+            .await
+            .expect("pendientes finales"),
+        1
+    );
+}
+
+#[tokio::test]
 async fn voices_audiobooks_diary_and_achievements() {
     let (test, identity) = TestStorage::with_identity().await;
     let owner = identity.account.id.clone();
@@ -562,6 +824,7 @@ async fn voices_audiobooks_diary_and_achievements() {
         .storage
         .voices
         .create(NewVoice {
+            id: None,
             name: "Narradora".to_string(),
             engine: "piper".to_string(),
             language: "es".to_string(),
@@ -569,6 +832,8 @@ async fn voices_audiobooks_diary_and_achievements() {
             profile_ext: None,
             sample_hash: None,
             sample_ext: None,
+            kind: VoiceKind::System,
+            reference_duration_ms: 0,
             owner_account_id: owner.clone(),
             origin_share_id: None,
         })
@@ -584,7 +849,13 @@ async fn voices_audiobooks_diary_and_achievements() {
             status: AudiobookStatus::Pending,
             manifest_hash: None,
             manifest_ext: None,
+            audio_hash: None,
+            audio_ext: None,
+            scope: None,
+            origin: AudiobookOrigin::Generated,
             duration_ms: None,
+            narration: None,
+            cast: None,
             owner_account_id: owner.clone(),
             origin_share_id: None,
         })
@@ -706,6 +977,13 @@ async fn shares_and_sync_state_are_tracked() {
             owner_account_id: owner.clone(),
             resource_type: ResourceType::Book,
             resource_id: book.id.clone(),
+            scope_type: crate::storage::ShareScopeType::Book,
+            permission: crate::storage::SharePermission::Read,
+            expires_at: None,
+            max_uses: Some(3),
+            share_key_hash: None,
+            share_key_ciphertext: None,
+            share_key_nonce: None,
         })
         .await
         .expect("share");
@@ -759,6 +1037,7 @@ async fn shares_and_sync_state_are_tracked() {
             resource_id: book.id.clone(),
             peer_device_id: "peer-1".to_string(),
             version: 1,
+            hash: None,
             state: SyncState::Pending,
         })
         .await
@@ -871,8 +1150,10 @@ async fn import_flow_stores_assets_and_replaces_cover() {
             language: None,
             publisher: None,
             description: None,
+            origin: BookOrigin::Imported,
             owner_account_id: owner.clone(),
             origin_share_id: None,
+            audio_only: false,
         })
         .await
         .expect("libro");
@@ -918,4 +1199,727 @@ async fn import_flow_stores_assets_and_replaces_cover() {
 
     test.storage.assets.remove(&cover).expect("borrar portada");
     assert!(!test.storage.assets.exists(&cover).expect("existe"));
+}
+
+#[tokio::test]
+async fn pdf_info_ocr_state_and_auto_index_round_trip() {
+    use crate::storage::model::{AutoIndexEntry, OcrStatus, PdfDocumentInfo, PdfOcrState};
+
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+
+    let mut new = new_book(&owner, &hash("pdf"), "Escaneado");
+    new.format = BookFormat::Pdf;
+    new.content_ext = "pdf".to_string();
+    new.original_name = "Escaneado.pdf".to_string();
+    let book = test.storage.books.create(new).await.expect("crear PDF");
+
+    let info = PdfDocumentInfo {
+        book_id: book.id.clone(),
+        page_count: 12,
+        is_scanned: true,
+        has_native_outline: false,
+        inspected_at: chrono::Utc::now(),
+        owner_account_id: owner.clone(),
+        origin_share_id: None,
+    };
+    test.storage.pdf.upsert_info(&info).await.expect("info");
+    let stored = test
+        .storage
+        .pdf
+        .get_info(&book.id)
+        .await
+        .expect("leer info")
+        .expect("info");
+    assert_eq!(stored.page_count, 12);
+    assert!(stored.is_scanned);
+    assert!(!stored.has_native_outline);
+
+    let mut state = PdfOcrState::pending(book.id.clone(), 12, owner.clone());
+    state.status = OcrStatus::Done;
+    state.pages_done = 12;
+    state.language = "spa+eng".to_string();
+    test.storage
+        .pdf
+        .upsert_ocr_state(&state)
+        .await
+        .expect("estado OCR");
+    let stored = test
+        .storage
+        .pdf
+        .get_ocr_state(&book.id)
+        .await
+        .expect("leer estado")
+        .expect("estado");
+    assert_eq!(stored.status, OcrStatus::Done);
+    assert_eq!(stored.pages_done, 12);
+    assert!(stored.progress() >= 0.99);
+
+    let entries = vec![
+        AutoIndexEntry {
+            title: "Capítulo 1".to_string(),
+            page: 0,
+            level: 0,
+        },
+        AutoIndexEntry {
+            title: "1.1 Sección".to_string(),
+            page: 3,
+            level: 1,
+        },
+    ];
+    let index = test
+        .storage
+        .pdf
+        .save_auto_index(&book.id, "ocr", &entries, &owner, None)
+        .await
+        .expect("índice");
+    assert_eq!(index.source, "ocr");
+
+    let stored = test
+        .storage
+        .pdf
+        .get_auto_index(&book.id)
+        .await
+        .expect("leer índice")
+        .expect("índice");
+    assert_eq!(stored.entries, entries);
+
+    test.storage
+        .books
+        .delete(&book.id)
+        .await
+        .expect("borrar libro");
+    assert!(
+        test.storage
+            .pdf
+            .get_info(&book.id)
+            .await
+            .expect("info borrada")
+            .is_none()
+    );
+    assert!(
+        test.storage
+            .pdf
+            .get_auto_index(&book.id)
+            .await
+            .expect("índice borrado")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn tts_sequences_preferences_and_practice_round_trip() {
+    let test = TestStorage::new().await;
+    let identity = test
+        .storage
+        .ensure_local_identity("Biblioteca", "Portátil")
+        .await
+        .expect("identidad");
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("tts"), "TTS"))
+        .await
+        .expect("libro");
+
+    let sequence = test
+        .storage
+        .tts
+        .save_sequence(NewTtsSequence {
+            book_id: book.id.clone(),
+            section: 0,
+            content_hash: "hash-a".to_string(),
+            unit: OffsetUnit::Utf16,
+            sequence: "{\"chunks\":[]}".to_string(),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("secuencia");
+    assert_eq!(sequence.unit, OffsetUnit::Utf16);
+
+    test.storage
+        .tts
+        .save_sequence(NewTtsSequence {
+            book_id: book.id.clone(),
+            section: 0,
+            content_hash: "hash-b".to_string(),
+            unit: OffsetUnit::Utf16,
+            sequence: "{\"chunks\":[]}".to_string(),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("secuencia nueva");
+    assert!(
+        test.storage
+            .tts
+            .get_sequence(&book.id, 0, "hash-a")
+            .await
+            .expect("buscar vieja")
+            .is_none()
+    );
+
+    test.storage
+        .tts
+        .set_character_voice(NewCharacterVoice {
+            book_id: book.id.clone(),
+            character: "Ana".to_string(),
+            voice_id: "es_ES-davefx-medium".to_string(),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("voz de personaje");
+    assert_eq!(
+        test.storage
+            .tts
+            .character_voices(&book.id)
+            .await
+            .expect("voces")
+            .len(),
+        1
+    );
+
+    test.storage
+        .tts
+        .save_preferences(NewTtsPreferences {
+            book_id: book.id.clone(),
+            voice_id: Some("es_ES-davefx-medium".to_string()),
+            rate: 1.2,
+            pitch: 1.0,
+            pause_scale: 0.8,
+            expressive: true,
+            multi_voice: true,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("preferencias");
+    let preferences = test
+        .storage
+        .tts
+        .preferences(&book.id)
+        .await
+        .expect("leer preferencias")
+        .expect("preferencias");
+    assert!((preferences.rate - 1.2).abs() < f64::EPSILON);
+
+    let attempt = test
+        .storage
+        .tts
+        .save_practice_attempt(NewPracticeAttempt {
+            id: uuid::Uuid::new_v4().to_string(),
+            book_id: book.id.clone(),
+            section: 0,
+            offset_start: 0,
+            offset_end: 10,
+            expected: "hola mundo".to_string(),
+            transcript: "hola mundo".to_string(),
+            accuracy: 1.0,
+            diff: "[]".to_string(),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("intento");
+    assert_eq!(
+        test.storage
+            .tts
+            .practice_history(&book.id, 10)
+            .await
+            .expect("historial")
+            .len(),
+        1
+    );
+
+    test.storage
+        .books
+        .delete(&book.id)
+        .await
+        .expect("borrar libro");
+    assert!(
+        test.storage
+            .tts
+            .preferences(&book.id)
+            .await
+            .expect("preferencias borradas")
+            .is_none()
+    );
+    assert!(
+        test.storage
+            .tts
+            .practice_history(&book.id, 10)
+            .await
+            .expect("historial borrado")
+            .is_empty()
+    );
+    assert_eq!(attempt.accuracy, 1.0);
+}
+
+#[tokio::test]
+async fn audiobook_origin_scope_and_progress_round_trip() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("tejido"), "Tejido"))
+        .await
+        .expect("libro");
+
+    let audiobook = test
+        .storage
+        .audiobooks
+        .create(NewAudiobook {
+            book_id: book.id.clone(),
+            voice_id: None,
+            status: AudiobookStatus::Running,
+            manifest_hash: None,
+            manifest_ext: None,
+            audio_hash: Some(hash("audio")),
+            audio_ext: Some("m4b".to_string()),
+            scope: Some(r#"{"kind":"fullBook"}"#.to_string()),
+            origin: AudiobookOrigin::Tejido,
+            duration_ms: None,
+            narration: None,
+            cast: None,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("audiolibro");
+
+    assert_eq!(audiobook.origin, AudiobookOrigin::Tejido);
+    assert_eq!(audiobook.scope.as_deref(), Some(r#"{"kind":"fullBook"}"#));
+    assert!(
+        test.storage
+            .asset_is_referenced(AssetKind::Audiobook, &hash("audio"))
+            .await
+            .expect("referencia")
+    );
+
+    test.storage
+        .audiobooks
+        .save_progress(&audiobook.id, &owner, 12_500, 2)
+        .await
+        .expect("guardar progreso");
+
+    let progress = test
+        .storage
+        .audiobooks
+        .progress(&audiobook.id)
+        .await
+        .expect("leer progreso")
+        .expect("progreso");
+    assert_eq!(progress.position_ms, 12_500);
+    assert_eq!(progress.chapter_index, 2);
+
+    let latest = test
+        .storage
+        .audiobooks
+        .latest_progress_by_owner(&owner)
+        .await
+        .expect("último progreso")
+        .expect("progreso");
+    assert_eq!(latest.audiobook_id, audiobook.id);
+}
+
+#[tokio::test]
+async fn annotation_ids_are_uuidv7_and_soft_delete_keeps_tombstones() {
+    assert_eq!(
+        uuid::Uuid::parse_str(&crate::storage::repos::new_id())
+            .expect("uuid")
+            .get_version_num(),
+        7
+    );
+
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("soft-delete"), "Soft delete"))
+        .await
+        .expect("libro");
+
+    let annotation = test
+        .storage
+        .annotations
+        .create(NewAnnotation {
+            book_id: book.id.clone(),
+            kind: AnnotationKind::Highlight,
+            locator: "chapter:0:0-5".to_string(),
+            chapter_index: Some(0),
+            offset_start: Some(0),
+            offset_end: Some(5),
+            text: Some("hola".to_string()),
+            note: None,
+            color: Some("#ffd166".to_string()),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("anotación");
+
+    assert_eq!(
+        uuid::Uuid::parse_str(&annotation.id)
+            .expect("uuid")
+            .get_version_num(),
+        7
+    );
+
+    test.storage
+        .annotations
+        .delete(&annotation.id)
+        .await
+        .expect("borrado suave");
+    assert!(
+        test.storage
+            .annotations
+            .get(&annotation.id)
+            .await
+            .expect("leer")
+            .is_none()
+    );
+    assert!(
+        test.storage
+            .annotations
+            .get_any(&annotation.id)
+            .await
+            .expect("leer tumba")
+            .expect("tumba")
+            .deleted
+    );
+    assert!(
+        test.storage
+            .annotations
+            .list_by_book(&book.id)
+            .await
+            .expect("listar")
+            .is_empty()
+    );
+
+    let extract = test
+        .storage
+        .extracts
+        .create(NewExtract {
+            book_id: book.id.clone(),
+            locator: "chapter:0:0-8".to_string(),
+            text: "fragmento buscable".to_string(),
+            note: Some("una nota".to_string()),
+            chapter_index: Some(0),
+            offset_start: Some(0),
+            offset_end: Some(8),
+            citation: Some("Soft delete · capítulo 1".to_string()),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("extracto");
+
+    let found = test
+        .storage
+        .extracts
+        .search(&owner, Some(&book.id), "buscable", 10)
+        .await
+        .expect("buscar");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, extract.id);
+
+    test.storage
+        .extracts
+        .delete(&extract.id)
+        .await
+        .expect("borrar extracto");
+    assert!(
+        test.storage
+            .extracts
+            .search(&owner, Some(&book.id), "buscable", 10)
+            .await
+            .expect("buscar tras borrar")
+            .is_empty()
+    );
+
+    let note = test
+        .storage
+        .notes
+        .create(NewNote {
+            book_id: Some(book.id.clone()),
+            title: Some("Rica".to_string()),
+            body: "texto plano".to_string(),
+            content_json: Some(r#"{"ops":[{"insert":"texto plano\n"}]}"#.to_string()),
+            chapter_index: Some(0),
+            offset_start: Some(0),
+            offset_end: Some(8),
+            text: Some("fragmento".to_string()),
+            audio_hash: None,
+            audio_ext: None,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("nota");
+    test.storage
+        .notes
+        .delete(&note.id)
+        .await
+        .expect("borrar nota");
+    assert!(
+        test.storage
+            .notes
+            .get(&note.id)
+            .await
+            .expect("leer")
+            .is_none()
+    );
+    assert!(
+        test.storage
+            .notes
+            .get_any(&note.id)
+            .await
+            .expect("leer tumba")
+            .expect("tumba")
+            .deleted
+    );
+}
+
+#[tokio::test]
+async fn voice_notes_and_reactions_round_trip() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(
+            &owner,
+            &hash("voz-reacciones"),
+            "Voz y reacciones",
+        ))
+        .await
+        .expect("libro");
+
+    let voice = test
+        .storage
+        .voice_notes
+        .create(NewVoiceNote {
+            id: None,
+            book_id: book.id.clone(),
+            chapter_index: 2,
+            offset_start: 10,
+            offset_end: 20,
+            text: "pasaje".to_string(),
+            duration_ms: 1_500,
+            audio_hash: None,
+            audiobook_id: None,
+            position_ms: 0,
+            quote: None,
+            transcript: None,
+            source: "manual".to_string(),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("nota de voz");
+    assert_eq!(voice.duration_ms, 1_500);
+    assert_eq!(voice.chapter_index, 2);
+    assert!(voice.audiobook_id.is_none());
+    assert_eq!(voice.position_ms, 0);
+    assert_eq!(voice.source, "manual");
+    assert_eq!(
+        test.storage
+            .voice_notes
+            .list_by_book(&book.id)
+            .await
+            .expect("listar voz")
+            .len(),
+        1
+    );
+
+    for kind in [
+        ReactionKind::Like,
+        ReactionKind::Like,
+        ReactionKind::Surprise,
+        ReactionKind::Tension,
+    ] {
+        test.storage
+            .reactions
+            .create(NewReaction {
+                book_id: book.id.clone(),
+                chapter_index: 2,
+                offset_start: 10,
+                offset_end: 20,
+                kind,
+                text: None,
+                owner_account_id: owner.clone(),
+                origin_share_id: None,
+            })
+            .await
+            .expect("reacción");
+    }
+
+    let counts = test
+        .storage
+        .reactions
+        .counts_by_book(&book.id)
+        .await
+        .expect("mapa");
+    assert_eq!(counts.len(), 3);
+    assert_eq!(
+        counts
+            .iter()
+            .find(|(_, kind, _)| *kind == ReactionKind::Like)
+            .expect("like")
+            .2,
+        2
+    );
+    assert_eq!(
+        test.storage
+            .reactions
+            .list_by_book(&book.id)
+            .await
+            .expect("listar reacciones")
+            .len(),
+        4
+    );
+
+    let mut edited_voice = voice.clone();
+    edited_voice.text = "pasaje corregido".to_string();
+    edited_voice.transcript = Some("transcripción nueva".to_string());
+    edited_voice.quote = Some("cita del libro".to_string());
+    test.storage
+        .voice_notes
+        .update(&edited_voice)
+        .await
+        .expect("editar voz");
+    let stored_voice = test
+        .storage
+        .voice_notes
+        .get(&voice.id)
+        .await
+        .expect("consultar voz")
+        .expect("voz editada");
+    assert_eq!(stored_voice.text, "pasaje corregido");
+    assert_eq!(
+        stored_voice.transcript.as_deref(),
+        Some("transcripción nueva")
+    );
+
+    let mut reaction = test
+        .storage
+        .reactions
+        .list_by_book(&book.id)
+        .await
+        .expect("listar reacciones")
+        .into_iter()
+        .next()
+        .expect("reacción existente");
+    reaction.kind = ReactionKind::Emotion;
+    reaction.text = Some("me llegó".to_string());
+    test.storage
+        .reactions
+        .update(&reaction)
+        .await
+        .expect("editar reacción");
+    let stored_reaction = test
+        .storage
+        .reactions
+        .get(&reaction.id)
+        .await
+        .expect("consultar reacción")
+        .expect("reacción editada");
+    assert_eq!(stored_reaction.kind, ReactionKind::Emotion);
+    assert_eq!(stored_reaction.text.as_deref(), Some("me llegó"));
+
+    test.storage
+        .voice_notes
+        .delete(&voice.id)
+        .await
+        .expect("borrar voz");
+    assert!(
+        test.storage
+            .voice_notes
+            .list_by_book(&book.id)
+            .await
+            .expect("listar voz")
+            .is_empty()
+    );
+    assert!(
+        test.storage
+            .voice_notes
+            .list_by_book_including_deleted(&book.id)
+            .await
+            .expect("listar tumbas")
+            .len()
+            == 1
+    );
+}
+
+#[tokio::test]
+async fn audiobook_favorites_survive_round_trip_and_cascade() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("favorito-audio"), "Favorito"))
+        .await
+        .expect("libro");
+    let audiobook = test
+        .storage
+        .audiobooks
+        .create(NewAudiobook {
+            book_id: book.id.clone(),
+            voice_id: None,
+            status: AudiobookStatus::Done,
+            manifest_hash: Some(hash("manifiesto-favorito")),
+            manifest_ext: Some("json".to_string()),
+            audio_hash: Some(hash("audio-favorito")),
+            audio_ext: Some("m4b".to_string()),
+            scope: None,
+            origin: AudiobookOrigin::Generated,
+            duration_ms: Some(60_000),
+            narration: None,
+            cast: None,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("audiolibro");
+
+    assert!(
+        !test
+            .storage
+            .audiobooks
+            .is_favorite(&audiobook.id)
+            .await
+            .expect("favorito inicial")
+    );
+    test.storage
+        .audiobooks
+        .set_favorite(&owner, &audiobook.id, true)
+        .await
+        .expect("marcar favorito");
+    assert!(
+        test.storage
+            .audiobooks
+            .is_favorite(&audiobook.id)
+            .await
+            .expect("favorito")
+    );
+
+    test.storage
+        .audiobooks
+        .delete(&audiobook.id)
+        .await
+        .expect("borrar audiolibro");
+    assert!(
+        !test
+            .storage
+            .audiobooks
+            .is_favorite(&audiobook.id)
+            .await
+            .expect("favorito tras borrar")
+    );
 }

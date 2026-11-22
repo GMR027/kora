@@ -21,6 +21,7 @@ pub struct SyncEntry {
     pub resource_id: String,
     pub peer_device_id: String,
     pub version: i64,
+    pub hash: Option<String>,
     pub last_synced_at: Option<DateTime<Utc>>,
     pub state: SyncState,
 }
@@ -32,7 +33,37 @@ pub struct NewSyncEntry {
     pub resource_id: String,
     pub peer_device_id: String,
     pub version: i64,
+    pub hash: Option<String>,
     pub state: SyncState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPending {
+    pub resource_type: ResourceType,
+    pub resource_id: String,
+    pub changed_at: DateTime<Utc>,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct CrdtDocument {
+    pub resource_type: ResourceType,
+    pub resource_id: String,
+    pub snapshot: Vec<u8>,
+    pub hash: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCollection {
+    pub device_id: String,
+    pub category_id: String,
+    pub enabled: bool,
+    pub updated_at: DateTime<Utc>,
+    pub owner_account_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

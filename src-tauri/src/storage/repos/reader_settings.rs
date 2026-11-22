@@ -32,14 +32,20 @@ impl ReaderSettingsRepo {
     pub async fn save(&self, new: NewReaderSettings) -> Result<ReaderSettings> {
         sqlx::query(
             "INSERT INTO reader_settings
-                (book_id, font_size, line_height, margin, font_family, theme, texture,
-                 mode, zoom, updated_at, owner_account_id, origin_share_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (book_id, font_size, line_height, margin, font_family, font_face,
+                 column_width, text_align, paragraph_indent, hyphenate, theme,
+                 texture, mode, zoom, updated_at, owner_account_id, origin_share_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (book_id) DO UPDATE SET
                 font_size = excluded.font_size,
                 line_height = excluded.line_height,
                 margin = excluded.margin,
                 font_family = excluded.font_family,
+                font_face = excluded.font_face,
+                column_width = excluded.column_width,
+                text_align = excluded.text_align,
+                paragraph_indent = excluded.paragraph_indent,
+                hyphenate = excluded.hyphenate,
                 theme = excluded.theme,
                 texture = excluded.texture,
                 mode = excluded.mode,
@@ -53,6 +59,11 @@ impl ReaderSettingsRepo {
         .bind(new.line_height)
         .bind(new.margin)
         .bind(&new.font_family)
+        .bind(&new.font_face)
+        .bind(new.column_width)
+        .bind(&new.text_align)
+        .bind(new.paragraph_indent)
+        .bind(new.hyphenate)
         .bind(&new.theme)
         .bind(&new.texture)
         .bind(&new.mode)

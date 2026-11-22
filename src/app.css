@@ -1,51 +1,153 @@
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/Newsreader.ttf") format("truetype");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/Newsreader-Italic.ttf") format("truetype");
+  font-weight: 200 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+
+@font-face {
+  font-family: "Literata";
+  src: url("/fonts/Literata.ttf") format("truetype");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "EB Garamond";
+  src: url("/fonts/EBGaramond.ttf") format("truetype");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("/fonts/AtkinsonHyperlegible.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OpenDyslexic";
+  src: url("/fonts/OpenDyslexic.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("/fonts/PlusJakartaSans.ttf") format("truetype");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --bg: #f6f4ef;
-  --surface: #fffdf9;
-  --surface-2: #efece4;
-  --border: #ddd8cc;
-  --text: #221f1a;
-  --muted: #6f6a5f;
-  --accent: #2f6f5e;
-  --accent-2: #7aa38f;
-  --accent-contrast: #f7fffb;
+  --bg: #fbf9f5;
+  --surface: #ffffff;
+  --surface-2: #f5f3ef;
+  --surface-3: #efeeea;
+  --surface-4: #eae8e4;
+  --border: #e4e2de;
+  --border-warm: #dbc2b0;
+  --text: #1b1c1a;
+  --muted: #554336;
+  --accent: #8d4b00;
+  --accent-2: #b15f00;
+  --accent-3: #7d531f;
+  --accent-contrast: #ffffff;
   --ok: #2f7d4f;
   --warn: #a35a1e;
 
-  font-family:
-    "Inter",
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    "Helvetica Neue",
-    Arial,
-    sans-serif;
+  /* Sistema visual derivado del tema activo. */
+  --surface-3: #efeeea;
+  --surface-4: #eae8e4;
+  --border-strong: #cbbfae;
+  --accent-soft: color-mix(in srgb, var(--accent) 9%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 34%, var(--border));
+  --gold: #f59e0b;
+  --gold-deep: #d97706;
+  --danger: #ba1a1a;
+  --shadow-color: color-mix(in srgb, #31180c 16%, transparent);
+  --shadow-xs: 0 1px 2px color-mix(in srgb, #31180c 6%, transparent);
+  --shadow-sm: 0 2px 10px -4px color-mix(in srgb, #31180c 12%, transparent);
+  --shadow-md: 0 12px 30px -20px var(--shadow-color);
+  --shadow-lg: 0 28px 70px -38px var(--shadow-color);
+  --shadow-warm: 0 12px 30px -18px color-mix(in srgb, var(--gold) 30%, transparent);
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --sidebar-width: 288px;
+  --topbar-height: 64px;
+
+  --font-sans:
+    "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display:
+    "Newsreader", "Iowan Old Style", "Palatino Linotype", "Book Antiqua",
+    Palatino, Georgia, ui-serif, serif;
+  --font-reading:
+    "Newsreader", "Iowan Old Style", "Palatino Linotype", Georgia, ui-serif,
+    serif;
+
+  font-family: var(--font-sans);
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[data-dark="true"] {
+  --shadow-color: color-mix(in srgb, #000 65%, transparent);
+  --gold: #fbbf24;
+  --gold-deep: #f97316;
+  --danger: #ff8b84;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #151715;
-    --surface: #1d201d;
-    --surface-2: #262a26;
-    --border: #333833;
-    --text: #eceee9;
-    --muted: #a2a89f;
-    --accent: #7fc2a6;
-    --accent-2: #3f7d67;
-    --accent-contrast: #10201a;
-    --ok: #7ed39b;
-    --warn: #e2a268;
+  :root:not([data-theme]) {
+      --bg: #151311;
+    --surface: #1d1b19;
+    --surface-2: #211f1d;
+    --surface-3: #2c2927;
+    --surface-4: #373432;
+    --border: #534434;
+    --text: #e8e1dd;
+    --muted: #d8c3ad;
+    --accent: #ffc174;
+    --accent-2: #f59e0b;
+    --accent-3: #ffb95f;
+    --accent-contrast: #472a00;
+    --ok: #34d399;
+    --warn: #fb923c;
   }
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 html,
@@ -55,19 +157,454 @@ body {
 }
 
 body {
-  background:
-    radial-gradient(1100px 500px at 85% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent),
-    var(--bg);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
 }
 
-button {
-  transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease;
+h1,
+h2,
+h3,
+h4 {
+  color: var(--text);
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-weight: 520;
+  letter-spacing: -0.02em;
+}
+
+h2,
+h3,
+h4 {
+  font-weight: 600;
+  letter-spacing: -0.008em;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+a {
+  color: var(--accent);
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 0.78;
+}
+
+button,
+[role="button"],
+a,
+input,
+select,
+textarea,
+summary {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    opacity 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+button,
+[role="button"] {
+  min-height: 40px;
+  font: inherit;
+  touch-action: manipulation;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
 }
 
 button:not(:disabled):hover {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+}
+
+button:disabled {
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  button,
+  [role="button"] {
+    min-height: 44px;
+  }
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+    [type="color"]
+  ),
+select,
+textarea {
+  min-height: 40px;
+  padding: 0.52rem 0.68rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 82%, transparent);
+  outline-offset: 2px;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  background-clip: padding-box;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Pequeño vocabulario compartido para las cabeceras editoriales. */
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.page-title {
+  margin: 0.25rem 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 3.2vw, 2.75rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.08;
+}
+
+.page-subtitle {
+  max-width: 64ch;
+  margin: 0.45rem 0 0;
+  color: var(--muted);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.surface-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.lumina-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.lumina-label {
+  color: var(--muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.icon-button:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chip.active {
+  background: var(--text);
+  color: var(--surface);
+}
+
+/* Texturas de lectura. Se aplican a la superficie del lector y pueden
+   heredarse desde la preferencia global. Las capas radiales usan mosaicos
+   de tamaño fijo para que no se deformen al cambiar el tamaño del panel. */
+[data-texture="paper"] {
+  --app-texture:
+    radial-gradient(
+      circle at 18% 22%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 4%, transparent) 0 1px,
+      transparent 1px
+    ),
+    radial-gradient(
+      circle at 74% 68%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 3.5%, transparent) 0 1px,
+      transparent 1px
+    ),
+    repeating-linear-gradient(
+      115deg,
+      transparent 0 3px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 2.2%, transparent) 3px 4px
+    );
+  --app-texture-size: 7px 7px, 11px 11px, 100% 100%;
+}
+
+[data-texture="parchment"] {
+  --app-texture:
+    radial-gradient(
+      ellipse at 20% 30%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 5%, transparent) 0 1px,
+      transparent 1.5px
+    ),
+    radial-gradient(
+      ellipse at 80% 65%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 4%, transparent) 0 1px,
+      transparent 1.5px
+    ),
+    repeating-linear-gradient(
+      92deg,
+      transparent 0 5px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 1.8%, transparent) 5px 6px
+    );
+  --app-texture-size: 13px 17px, 19px 23px, 100% 100%;
+}
+
+[data-texture="soft-dark"] {
+  --app-texture:
+    radial-gradient(
+      circle at 24% 26%,
+      color-mix(in srgb, #000 16%, transparent) 0 0.9px,
+      transparent 1.3px
+    ),
+    radial-gradient(
+      circle at 72% 68%,
+      color-mix(in srgb, #000 11%, transparent) 0 0.7px,
+      transparent 1.1px
+    ),
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 4px,
+      color-mix(in srgb, #000 2%, transparent) 4px 5px
+    );
+  --app-texture-size: 9px 9px, 13px 13px, 100% 100%;
+}
+
+[data-texture="grid"] {
+  --app-texture:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 23px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 5%, transparent) 23px 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 23px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 5%, transparent) 23px 24px
+    );
+  --app-texture-size: 24px 24px, 24px 24px;
+}
+
+[data-texture="linen"] {
+  --app-texture:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 3px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 3.6%, transparent) 3px 4px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 3px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 2.8%, transparent) 3px 4px
+    );
+  --app-texture-size: 4px 4px, 4px 4px;
+}
+
+[data-texture="dots"] {
+  --app-texture:
+    radial-gradient(
+      circle at 30% 30%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 7%, transparent) 0 1.1px,
+      transparent 1.4px
+    ),
+    radial-gradient(
+      circle at 70% 70%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 4.5%, transparent) 0 0.9px,
+      transparent 1.2px
+    );
+  --app-texture-size: 14px 14px, 18px 18px;
+}
+
+[data-texture="waves"] {
+  --app-texture:
+    radial-gradient(
+      circle at 100% 50%,
+      transparent 18%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 5%, transparent) 19% 21%,
+      transparent 22% 27%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 4%, transparent) 28% 30%,
+      transparent 31%
+    ),
+    radial-gradient(
+      circle at 0% 50%,
+      transparent 18%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 5%, transparent) 19% 21%,
+      transparent 22% 27%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 4%, transparent) 28% 30%,
+      transparent 31%
+    );
+  --app-texture-size: 36px 36px, 36px 36px;
+  --app-texture-position: 0 0, 18px 18px;
+}
+
+[data-texture="stripes"] {
+  --app-texture:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 7px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 3%, transparent) 7px 8px
+    );
+  --app-texture-size: 100% 100%;
+}
+
+[data-texture="grain"] {
+  --app-texture:
+    radial-gradient(
+      circle at 21% 31%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 7%, transparent) 0 0.7px,
+      transparent 1px
+    ),
+    radial-gradient(
+      circle at 71% 67%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 5.5%, transparent) 0 0.6px,
+      transparent 0.9px
+    ),
+    radial-gradient(
+      circle at 47% 85%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 6%, transparent) 0 0.5px,
+      transparent 0.8px
+    ),
+    radial-gradient(
+      circle at 87% 17%,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 4.5%, transparent) 0 0.6px,
+      transparent 0.9px
+    );
+  --app-texture-size: 9px 9px, 11px 11px, 13px 13px, 17px 17px;
+}
+
+[data-texture="gingham"] {
+  --app-texture:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 4px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 6%, transparent) 4px 13px,
+      transparent 13px 22px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 4px,
+      color-mix(in srgb, var(--texture-ink, var(--text)) 6%, transparent) 4px 13px,
+      transparent 13px 22px
+    );
+  --app-texture-size: 22px 22px, 22px 22px;
+}
+
+[data-texture="none"] {
+  --app-texture: none;
+  --app-texture-size: auto;
+}
+
+.app-texture {
+  background-image: var(--app-texture);
+  background-position: var(--app-texture-position, 0 0);
+  background-size: var(--app-texture-size, auto);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

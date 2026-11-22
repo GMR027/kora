@@ -26,8 +26,8 @@
         "enable": true,
         "scope": ["$APPLOCALDATA/assets/**"]
       },
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost",
-      "devCsp": "default-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost ws://localhost:1420 http://localhost:1420"
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:; media-src 'self' asset: http://asset.localhost data: blob:; connect-src ipc: http://ipc.localhost asset: http://asset.localhost",
+      "devCsp": "default-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:; media-src 'self' asset: http://asset.localhost data: blob:; connect-src ipc: http://ipc.localhost asset: http://asset.localhost ws://localhost:1420 http://localhost:1420"
     }
   },
   "bundle": {
@@ -45,7 +45,7 @@
     ],
     "linux": {
       "deb": {
-        "depends": []
+        "depends": ["espeak-ng"]
       }
     },
     "android": {
