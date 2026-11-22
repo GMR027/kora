@@ -1730,8 +1730,7 @@
     margin: 0;
     padding: 14px 16px 11px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-    background: color-mix(in srgb, var(--surface) 96%, transparent);
-    backdrop-filter: blur(12px);
+    background: var(--surface);
   }
 
   .note-head h2 {

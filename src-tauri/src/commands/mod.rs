@@ -6,6 +6,7 @@ pub mod appearance;
 pub mod audiobook_voice;
 pub mod audiobooks;
 pub mod classification;
+pub mod convert;
 pub mod diary;
 pub mod features;
 pub mod library;

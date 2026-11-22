@@ -2468,9 +2468,8 @@
     border: 0;
     border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
     border-radius: 0;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    background: color-mix(in srgb, var(--surface) 98%, transparent);
     box-shadow: none;
-    backdrop-filter: blur(14px);
     transform: none;
   }
 

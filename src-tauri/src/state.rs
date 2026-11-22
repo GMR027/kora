@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Runtime};
@@ -15,6 +15,7 @@ use crate::features::{
     AchievementsService, PomodoroManager, SemanticService, SessionTracker, platform_provider,
 };
 use crate::reader::ReaderService;
+use crate::reader::convert::PdfConversionState;
 use crate::storage::{LocalIdentity, Storage, StorageLayout};
 use crate::sync::{MirrorHub, SyncService, TauriEventSink};
 use crate::tts::recording::SampleRecorder;
@@ -52,6 +53,9 @@ pub struct AppState {
     pub mirror: MirrorHub,
     /// Libros con un job de OCR en curso. Evita lanzar dos jobs del mismo PDF.
     pub ocr_jobs: Arc<Mutex<HashSet<String>>>,
+    /// Conversiones PDF→EPUB activas y su último estado. El mapa es efímero:
+    /// el PDF original no se toca hasta que la conversión termina y valida.
+    pub pdf_conversions: Arc<Mutex<HashMap<String, PdfConversionState>>>,
     pub semantic: Arc<SemanticService>,
     pub classification: Arc<ClassificationService>,
     pub sessions: Arc<SessionTracker>,
@@ -59,9 +63,23 @@ pub struct AppState {
     pub pomodoro: Arc<PomodoroManager>,
 }
 
+fn cleanup_conversion_temps(layout: &StorageLayout) {
+    let directory = layout.root.join("tmp");
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("pdf-convert-") {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 impl AppState {
     pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<Self> {
         let layout = StorageLayout::resolve(app)?;
+        cleanup_conversion_temps(&layout);
         if let Err(error) = crate::storage::reset::apply_pending_account_reset(&layout) {
             eprintln!("no se pudo borrar la cuenta pendiente: {error}");
             let _ = std::fs::remove_file(layout.root.join("account-reset.pending"));
@@ -162,6 +180,7 @@ impl AppState {
             reader: ReaderService::new(),
             sync,
             ocr_jobs: Arc::new(Mutex::new(HashSet::new())),
+            pdf_conversions: Arc::new(Mutex::new(HashMap::new())),
             semantic,
             classification,
             sessions,

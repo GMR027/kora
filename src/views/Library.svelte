@@ -1,3 +1,9 @@
+<script module lang="ts">
+  // Las portadas generadas son opcionales. Recordamos los intentos durante la
+  // sesión y limitamos el trabajo para no bloquear la biblioteca al abrirla.
+  const attemptedCovers = new Set<string>();
+</script>
+
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
@@ -16,6 +22,7 @@
     categoryUpdate,
     exportNotes,
     libraryAssignCategory,
+    libraryAudiobookBookIds,
     libraryClassify,
     libraryDelete,
     libraryEmptyTrash,
@@ -29,7 +36,6 @@
     libraryTrash,
     libraryUnassignCategory,
     libraryUpdate,
-    listAudiobooks,
     prepareSemanticModel,
     reindexLibrary,
     saveAppearance,
@@ -44,12 +50,14 @@
   import CategorySuggestions from "../lib/components/CategorySuggestions.svelte";
   import EmptyState from "../lib/components/EmptyState.svelte";
   import Icon from "../lib/components/Icon.svelte";
+  import PdfConversionModal from "../lib/components/PdfConversionModal.svelte";
   import Spinner from "../lib/components/Spinner.svelte";
   import type {
     BookSummary,
     Category,
     CategorySuggestion,
     Locator,
+    PdfConversionResult,
     SemanticHit,
     SemanticProgress,
     SemanticStatus,
@@ -111,6 +119,7 @@
   let trash = $state<TrashedBookSummary[]>([]);
   let trashLoading = $state(false);
   let trashBusyId = $state<string | null>(null);
+  let conversionBook = $state<BookSummary | null>(null);
 
   let filtered = $derived.by(() => {
     let result = books;
@@ -299,10 +308,7 @@
       syncCategoryDrafts();
       void loadSuggestions();
       try {
-        const audiobooks = await listAudiobooks();
-        audiobookBookIds = new Set(
-          audiobooks.map((item) => item.bookId),
-        );
+        audiobookBookIds = new Set(await libraryAudiobookBookIds());
       } catch {
         audiobookBookIds = new Set();
       }
@@ -315,8 +321,11 @@
   }
 
   async function ensureCovers(snapshot: BookSummary[]) {
-    for (const book of snapshot) {
-      if (book.coverPath) continue;
+    const pending = snapshot
+      .filter((book) => !book.coverPath && !attemptedCovers.has(book.id))
+      .slice(0, 6);
+    for (const book of pending) {
+      attemptedCovers.add(book.id);
       try {
         const updated = await libraryEnsureCover(book.id);
         books = books.map((item) => (item.id === updated.id ? updated : item));
@@ -744,6 +753,17 @@
       notifyError(cause);
     } finally {
       metadataBusy = false;
+    }
+  }
+
+  function handleConverted(result: PdfConversionResult) {
+    if (result.report.replaced) {
+      books = books.map((item) =>
+        item.id === result.book.id ? result.book : item,
+      );
+      selectedBookId = result.book.id;
+    } else if (!books.some((item) => item.id === result.book.id)) {
+      books = [result.book, ...books];
     }
   }
 
@@ -1685,6 +1705,17 @@
             <Icon name="headphones" size={17} /> {$t("library.listen")}
           </button>
         {/if}
+        {#if menuBook.format === "pdf" && !menuBook.readOnly && !menuBook.receivedShareId}
+          <button
+            onclick={() => {
+              const target = menuBook;
+              closeMenu();
+              conversionBook = target;
+            }}
+          >
+            <Icon name="book" size={17} /> {$t("library.convertPdf")}
+          </button>
+        {/if}
         <button
           onclick={() => {
             closeMenu();
@@ -1846,6 +1877,13 @@
       </div>
     </div>
   {/if}
+
+  <PdfConversionModal
+    open={conversionBook !== null}
+    book={conversionBook}
+    onClose={() => (conversionBook = null)}
+    onConverted={handleConverted}
+  />
 </section>
 
 
@@ -2412,7 +2450,6 @@
     font-size: 0.625rem;
     font-weight: 700;
     letter-spacing: 0.03em;
-    backdrop-filter: blur(8px);
     box-shadow: var(--shadow-xs);
   }
 
@@ -2705,7 +2742,6 @@
     font-size: 0.5rem;
     font-weight: 700;
     letter-spacing: 0.07em;
-    backdrop-filter: blur(8px);
   }
 
   .cover-badge {
@@ -2724,7 +2760,6 @@
     color: var(--surface);
     font-size: 0.5rem;
     font-weight: 600;
-    backdrop-filter: blur(8px);
   }
 
   .cover-badge.done {
@@ -2744,7 +2779,6 @@
     font-size: 0.56rem;
     font-weight: 700;
     box-shadow: var(--shadow-xs);
-    backdrop-filter: blur(8px);
   }
 
   .book-main {
@@ -3464,7 +3498,6 @@
     place-items: center;
     padding: 24px;
     background: color-mix(in srgb, var(--bg) 78%, transparent);
-    backdrop-filter: blur(8px);
   }
 
   .drop-overlay > div {
@@ -3779,7 +3812,6 @@
     background: color-mix(in srgb, var(--surface) 90%, transparent);
     color: var(--muted);
     box-shadow: var(--shadow-xs);
-    backdrop-filter: blur(8px);
   }
 
   .cover-favorite:hover,
@@ -3915,7 +3947,6 @@
     font-size: 0.54rem;
     font-weight: 700;
     line-height: 1;
-    backdrop-filter: blur(8px);
   }
 
   .suggestion-banner {

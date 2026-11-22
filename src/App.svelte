@@ -5,17 +5,9 @@
   import AppShell from "./lib/components/AppShell.svelte";
   import Spinner from "./lib/components/Spinner.svelte";
   import ToastHost from "./lib/components/ToastHost.svelte";
-  import Account from "./views/Account.svelte";
-  import Audiobooks from "./views/Audiobooks.svelte";
-  import Diary from "./views/Diary.svelte";
-  import Library from "./views/Library.svelte";
-  import Notes from "./views/Notes.svelte";
   import Onboarding from "./views/Onboarding.svelte";
-  import Reader from "./views/Reader.svelte";
-  import Settings from "./views/Settings.svelte";
-  import Sync from "./views/Sync.svelte";
-  import Voice from "./views/Voice.svelte";
   import { appInfo, getAccount, errorMessage } from "./lib/api";
+  import { loadView } from "./lib/views";
   import {
     appearance,
     loadAppearance,
@@ -30,6 +22,8 @@
     AppearanceState,
     AppInfo,
     Locator,
+    PdfConversionResult,
+    PdfConversionState,
   } from "./lib/types";
 
   let tab = $state<AppTab>("library");
@@ -79,6 +73,8 @@
   onMount(() => {
     void boot();
     let unlisten: UnlistenFn | undefined;
+    let unlistenConversion: UnlistenFn | undefined;
+    let unlistenConversionError: UnlistenFn | undefined;
     void listen<Achievement>("achievement::unlocked", (event) => {
       notify(
         "success",
@@ -88,6 +84,23 @@
     }).then((stop) => {
       unlisten = stop;
     });
+    void listen<PdfConversionResult>("pdf-convert-done", (event) => {
+      notify(
+        "success",
+        $t("pdf.convertDoneToast"),
+        event.payload.book.title,
+      );
+      window.dispatchEvent(new Event("kora:library-changed"));
+    }).then((stop) => {
+      unlistenConversion = stop;
+    });
+    void listen<PdfConversionState>("pdf-convert-failed", (event) => {
+      if (event.payload.error) {
+        notifyError(event.payload.error);
+      }
+    }).then((stop) => {
+      unlistenConversionError = stop;
+    });
 
     const onRejection = (event: PromiseRejectionEvent) => {
       notifyError(event.reason);
@@ -96,6 +109,8 @@
 
     return () => {
       unlisten?.();
+      unlistenConversion?.();
+      unlistenConversionError?.();
       window.removeEventListener("unhandledrejection", onRejection);
     };
   });
@@ -152,29 +167,83 @@
     {#key tab}
       <div class="screen" in:fly={{ y: 8, duration: 180 }} out:fade={{ duration: 90 }}>
         {#if tab === "library"}
-          <Library onRead={openReader} onListen={openReaderListen} onNavigate={navigate} />
+          {@const view = loadView("library")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View onRead={openReader} onListen={openReaderListen} onNavigate={navigate} />
+          {/await}
         {:else if tab === "reader"}
-          <Reader
-            bookId={readerBookId}
-            initialLocator={readerLocator}
-            autoListen={readerAutoListen}
-            onExit={() => navigate("library")}
-            onSettings={() => navigate("settings")}
-          />
+          {@const view = loadView("reader")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View
+              bookId={readerBookId}
+              initialLocator={readerLocator}
+              autoListen={readerAutoListen}
+              onExit={() => navigate("library")}
+              onSettings={() => navigate("settings")}
+            />
+          {/await}
         {:else if tab === "audiobooks"}
-          <Audiobooks onRead={openReader} onNavigate={navigate} />
+          {@const view = loadView("audiobooks")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View onRead={openReader} onNavigate={navigate} />
+          {/await}
         {:else if tab === "notes"}
-          <Notes onRead={openReader} onNavigate={navigate} />
+          {@const view = loadView("notes")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View onRead={openReader} onNavigate={navigate} />
+          {/await}
         {:else if tab === "diary"}
-          <Diary onRead={openReader} />
+          {@const view = loadView("diary")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View onRead={openReader} />
+          {/await}
         {:else if tab === "voice"}
-          <Voice />
+          {@const view = loadView("voice")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View />
+          {/await}
         {:else if tab === "account"}
-          <Account />
+          {@const view = loadView("account")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View />
+          {/await}
         {:else if tab === "sync"}
-          <Sync onNavigate={navigate} />
+          {@const view = loadView("sync")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View onNavigate={navigate} />
+          {/await}
         {:else}
-          <Settings onNavigate={navigate} profile={account} />
+          {@const view = loadView("settings")}
+          {#await view}
+            <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
+          {:then module}
+            {@const View = module.default}
+            <View onNavigate={navigate} profile={account} />
+          {/await}
         {/if}
       </div>
     {/key}
@@ -184,6 +253,12 @@
 <ToastHost />
 
 <style>
+  .view-loading {
+    display: grid;
+    place-items: center;
+    min-height: 40vh;
+  }
+
   .boot {
     min-height: 100vh;
     display: flex;

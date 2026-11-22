@@ -822,6 +822,12 @@ pub async fn play_audiobook(
 
     let manifest = read_manifest(&state, &audiobook)?;
     let path = audio_path(&state, &audiobook)?;
+    let cover = state
+        .storage
+        .books
+        .get(&audiobook.book_id)
+        .await?
+        .and_then(|book| cover_path(&state, &book));
     let start_ms = state
         .storage
         .audiobooks
@@ -839,7 +845,7 @@ pub async fn play_audiobook(
 
     state
         .audiobook_player
-        .play(audiobook.id.clone(), &path, manifest, start_ms)
+        .play(audiobook.id.clone(), &path, manifest, start_ms, cover)
         .map_err(|error| KoraError::Internal(format!("{error:#}")))
 }
 
@@ -1198,12 +1204,16 @@ pub async fn get_audiobook_progress(
     let Ok(manifest) = read_manifest(&state, &audiobook) else {
         return Ok(None);
     };
-    Ok(Some(PlaybackSnapshot::from_manifest(
-        audiobook.id,
+    let mut snapshot = PlaybackSnapshot::from_manifest(
+        audiobook.id.clone(),
         &manifest,
         progress.position_ms,
         false,
-    )))
+    );
+    if let Some(book) = state.storage.books.get(&audiobook.book_id).await? {
+        snapshot.cover_path = cover_path(&state, &book);
+    }
+    Ok(Some(snapshot))
 }
 
 #[tauri::command]

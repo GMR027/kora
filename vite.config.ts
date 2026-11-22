@@ -34,5 +34,20 @@ export default defineConfig({
     minify: process.env.TAURI_ENV_DEBUG ? false : "esbuild",
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     chunkSizeWarningLimit: 900,
+    rolldownOptions: {
+      output: {
+        // pdf.js y Quill son las dependencias más pesadas. En chunks propios
+        // solo se descargan al abrir el lector PDF o el editor de notas.
+        codeSplitting: {
+          groups: [
+            { name: "pdfjs", test: /node_modules[\\/]pdfjs-dist[\\/]/ },
+            {
+              name: "quill",
+              test: /node_modules[\\/](quill|parchment|quill-delta)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
   },
 });

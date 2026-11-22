@@ -92,6 +92,20 @@ impl AnnotationRepo {
         .await?)
     }
 
+    /// Anotaciones de todos los libros activos de una cuenta. Se resuelve con
+    /// una sola consulta para la libreta global.
+    pub async fn list_by_owner(&self, owner_account_id: &str) -> Result<Vec<Annotation>> {
+        Ok(sqlx::query_as::<_, Annotation>(
+            "SELECT a.* FROM annotations a
+             JOIN books b ON b.id = a.book_id
+             WHERE b.owner_account_id = ? AND b.deleted_at IS NULL AND a.deleted = 0
+             ORDER BY a.created_at DESC",
+        )
+        .bind(owner_account_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     pub async fn update(&self, annotation: &Annotation) -> Result<()> {
         let result = sqlx::query(
             "UPDATE annotations SET
@@ -542,6 +556,19 @@ impl VoiceNoteRepo {
         .await?)
     }
 
+    /// Notas de voz de todos los libros activos de una cuenta.
+    pub async fn list_by_owner(&self, owner_account_id: &str) -> Result<Vec<VoiceNote>> {
+        Ok(sqlx::query_as::<_, VoiceNote>(
+            "SELECT v.* FROM voice_notes v
+             JOIN books b ON b.id = v.book_id
+             WHERE b.owner_account_id = ? AND b.deleted_at IS NULL AND v.deleted = 0
+             ORDER BY v.created_at DESC",
+        )
+        .bind(owner_account_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     /// Marcadores de voz de un audiolibro, ordenados por posición de escucha.
     pub async fn list_by_audiobook(&self, audiobook_id: &str) -> Result<Vec<VoiceNote>> {
         Ok(sqlx::query_as::<_, VoiceNote>(
@@ -694,6 +721,19 @@ impl ReactionRepo {
              ORDER BY chapter_index, offset_start, created_at",
         )
         .bind(book_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    /// Reacciones de todos los libros activos de una cuenta.
+    pub async fn list_by_owner(&self, owner_account_id: &str) -> Result<Vec<Reaction>> {
+        Ok(sqlx::query_as::<_, Reaction>(
+            "SELECT r.* FROM reactions r
+             JOIN books b ON b.id = r.book_id
+             WHERE b.owner_account_id = ? AND b.deleted_at IS NULL AND r.deleted = 0
+             ORDER BY r.created_at DESC",
+        )
+        .bind(owner_account_id)
         .fetch_all(&self.pool)
         .await?)
     }

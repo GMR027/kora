@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -509,41 +511,56 @@ pub async fn list_library_annotations(
 ) -> Result<Vec<LibraryAnnotationEntry>> {
     let owner = state.identity.account.id.clone();
     let books = state.storage.books.list_by_owner(&owner).await?;
+    let titles: HashMap<String, String> = books
+        .into_iter()
+        .map(|book| (book.id, book.title))
+        .collect();
     let mut entries = Vec::new();
 
-    for book in books {
-        for marker in state.storage.annotations.list_by_book(&book.id).await? {
+    for marker in state.storage.annotations.list_by_owner(&owner).await? {
+        if let Some(title) = titles.get(&marker.book_id) {
             entries.push(LibraryAnnotationEntry {
-                book_id: book.id.clone(),
-                book_title: book.title.clone(),
+                book_id: marker.book_id.clone(),
+                book_title: title.clone(),
                 entry: AnnotationEntry::Marker(marker),
             });
         }
-        for note in state.storage.notes.list_by_book(&book.id).await? {
+    }
+    for note in state.storage.notes.list_by_owner(&owner).await? {
+        let Some(book_id) = note.book_id.clone() else {
+            continue;
+        };
+        if let Some(title) = titles.get(&book_id) {
             entries.push(LibraryAnnotationEntry {
-                book_id: book.id.clone(),
-                book_title: book.title.clone(),
+                book_id,
+                book_title: title.clone(),
                 entry: AnnotationEntry::Note(note),
             });
         }
-        for extract in state.storage.extracts.list_by_book(&book.id).await? {
+    }
+    for extract in state.storage.extracts.list_by_owner(&owner).await? {
+        if let Some(title) = titles.get(&extract.book_id) {
             entries.push(LibraryAnnotationEntry {
-                book_id: book.id.clone(),
-                book_title: book.title.clone(),
+                book_id: extract.book_id.clone(),
+                book_title: title.clone(),
                 entry: AnnotationEntry::Extract(extract),
             });
         }
-        for note in state.storage.voice_notes.list_by_book(&book.id).await? {
+    }
+    for note in state.storage.voice_notes.list_by_owner(&owner).await? {
+        if let Some(title) = titles.get(&note.book_id) {
             entries.push(LibraryAnnotationEntry {
-                book_id: book.id.clone(),
-                book_title: book.title.clone(),
+                book_id: note.book_id.clone(),
+                book_title: title.clone(),
                 entry: AnnotationEntry::VoiceNote(voice_note_view(&state, note)),
             });
         }
-        for reaction in state.storage.reactions.list_by_book(&book.id).await? {
+    }
+    for reaction in state.storage.reactions.list_by_owner(&owner).await? {
+        if let Some(title) = titles.get(&reaction.book_id) {
             entries.push(LibraryAnnotationEntry {
-                book_id: book.id.clone(),
-                book_title: book.title.clone(),
+                book_id: reaction.book_id.clone(),
+                book_title: title.clone(),
                 entry: AnnotationEntry::Reaction(reaction),
             });
         }

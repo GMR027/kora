@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod backup;
+pub mod conversion;
 pub mod db;
 pub mod hash;
 pub mod migrations;

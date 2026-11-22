@@ -15,6 +15,9 @@ pub struct PlaybackSnapshot {
     pub offset_start: usize,
     pub offset_end: usize,
     pub playing: bool,
+    /// Portada del libro para el mini-reproductor; se resuelve una vez al
+    /// iniciar la reproducción para no consultar SQLite en cada sondeo.
+    pub cover_path: Option<String>,
 }
 
 impl PlaybackSnapshot {
@@ -39,6 +42,7 @@ impl PlaybackSnapshot {
             offset_start: chapter.map(|chapter| chapter.offset_start).unwrap_or(0),
             offset_end: chapter.map(|chapter| chapter.offset_end).unwrap_or(0),
             playing,
+            cover_path: None,
         }
     }
 }
@@ -89,6 +93,7 @@ mod desktop {
     struct Current {
         audiobook_id: String,
         manifest: AudiobookManifest,
+        cover_path: Option<String>,
     }
 
     /// Reproductor de M4B/MP3 con búsqueda. Comparte un único dispositivo de
@@ -128,6 +133,7 @@ mod desktop {
             path: &Path,
             manifest: AudiobookManifest,
             start_ms: i64,
+            cover_path: Option<String>,
         ) -> Result<PlaybackSnapshot> {
             let (_, player) = self.output()?;
             player.stop();
@@ -146,8 +152,9 @@ mod desktop {
             }
 
             let position = player.get_pos().as_millis() as i64;
-            let snapshot =
+            let mut snapshot =
                 PlaybackSnapshot::from_manifest(audiobook_id.clone(), &manifest, position, true);
+            snapshot.cover_path = cover_path.clone();
             *self
                 .current
                 .lock()
@@ -155,6 +162,7 @@ mod desktop {
                 Some(Current {
                     audiobook_id,
                     manifest,
+                    cover_path,
                 });
             Ok(snapshot)
         }
@@ -227,12 +235,14 @@ mod desktop {
                 self.finished.store(true, Ordering::SeqCst);
             }
             let playing = !player.is_paused() && !finished;
-            Ok(Some(PlaybackSnapshot::from_manifest(
+            let mut snapshot = PlaybackSnapshot::from_manifest(
                 current.audiobook_id.clone(),
                 &current.manifest,
                 position,
                 playing,
-            )))
+            );
+            snapshot.cover_path = current.cover_path.clone();
+            Ok(Some(snapshot))
         }
 
         /// Indica si el audio terminó de forma natural. El comando que sondea
@@ -275,6 +285,7 @@ mod android {
             _path: &Path,
             _manifest: AudiobookManifest,
             _start_ms: i64,
+            _cover_path: Option<String>,
         ) -> Result<PlaybackSnapshot> {
             bail!("el reproductor de audiolibros aún no está disponible en Android")
         }

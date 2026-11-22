@@ -226,6 +226,22 @@ impl AudiobookRepo {
         .await?)
     }
 
+    /// Ids de libros que ya tienen al menos un audiolibro. Evita leer todos
+    /// los manifiestos para pintar el filtro de la biblioteca.
+    pub async fn list_book_ids_by_owner(&self, owner_account_id: &str) -> Result<Vec<String>> {
+        Ok(sqlx::query_as::<_, (String,)>(
+            "SELECT DISTINCT a.book_id FROM audiobooks a
+             JOIN books b ON b.id = a.book_id
+             WHERE b.owner_account_id = ? AND b.deleted_at IS NULL",
+        )
+        .bind(owner_account_id)
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|(book_id,)| book_id)
+        .collect())
+    }
+
     pub async fn list_by_owner(&self, owner_account_id: &str) -> Result<Vec<Audiobook>> {
         Ok(sqlx::query_as::<_, Audiobook>(
             "SELECT * FROM audiobooks WHERE owner_account_id = ? ORDER BY created_at DESC",

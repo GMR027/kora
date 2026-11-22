@@ -12,7 +12,9 @@ import type {
   AuditEntry,
   AppearanceState,
   AutoIndex,
+  AutoIndexEntry,
   BookSummary,
+  LibraryOverview,
   TrashedBookSummary,
   BackupInfo,
   RestoreInfo,
@@ -30,6 +32,9 @@ import type {
   NewAnnotation,
   NotesExportResult,
   PageTextLayer,
+  PdfConversionOptions,
+  PdfConversionPreview,
+  PdfConversionState,
   PdfOcrState,
   PdfSearchHit,
   PeerInfo,
@@ -179,6 +184,31 @@ export const deleteCustomTheme = (themeId: string) =>
 // --- Biblioteca -------------------------------------------------------------
 
 export const libraryList = () => invoke<BookSummary[]>("library_list");
+
+export const libraryOverview = () =>
+  invoke<LibraryOverview>("library_overview");
+
+export const libraryAudiobookBookIds = () =>
+  invoke<string[]>("library_audiobook_book_ids");
+
+export const pdfConversionPreview = (bookId: string) =>
+  invoke<PdfConversionPreview>("pdf_conversion_preview", { bookId });
+
+export const convertPdfToEpub = (
+  bookId: string,
+  options: PdfConversionOptions,
+  pages: PageTextLayer[] | null = null,
+  outline: AutoIndexEntry[] | null = null,
+) =>
+  invoke<PdfConversionState>("convert_pdf_to_epub", {
+    bookId,
+    options,
+    pages,
+    outline,
+  });
+
+export const pdfConversionStatus = (bookId: string) =>
+  invoke<PdfConversionState | null>("pdf_conversion_status", { bookId });
 
 export const libraryImport = (source: string) =>
   invoke<BookSummary>("library_import", { source });

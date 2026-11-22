@@ -5,15 +5,14 @@
   import { fly } from "svelte/transition";
   import {
     getAudiobookProgress,
-    libraryList,
-    listAudiobooks,
+    libraryOverview,
     pauseAudiobook,
     playAudiobook,
     seekAudiobook,
   } from "../api";
   import { t, formatDuration, type MessageKey } from "../i18n";
   import type { AppTab } from "../navigation";
-  import type { AudiobookInfo, BookSummary, PlaybackSnapshot } from "../types";
+  import type { LibraryOverview, PlaybackSnapshot } from "../types";
   import Icon from "./Icon.svelte";
   import ComfortHost from "./ComfortHost.svelte";
 
@@ -47,11 +46,10 @@
   } = $props();
 
   let moreOpen = $state(false);
-  let books = $state<BookSummary[]>([]);
-  let audiobooks = $state<AudiobookInfo[]>([]);
+  let overview = $state<LibraryOverview | null>(null);
   let playback = $state<PlaybackSnapshot | null>(null);
   let playerBusy = $state(false);
-  let playerTimer: ReturnType<typeof setInterval> | undefined;
+  let shelfTab = $state<AppTab>("library");
   let stackReturnTab = $state<AppTab>("library");
   let profileInitial = $derived(
     account?.displayName?.trim().slice(0, 1).toUpperCase() ?? "K",
@@ -78,35 +76,9 @@
     (item) => !mobileItems.some((entry) => entry.id === item.id),
   );
 
-  let nowBook = $derived.by(() => {
-    const pending = books
-      .filter((book) => book.progress > 0.001 && book.progress < 0.995)
-      .sort((left, right) => {
-        const leftTime = left.lastReadAt
-          ? new Date(left.lastReadAt).getTime()
-          : new Date(left.addedAt).getTime();
-        const rightTime = right.lastReadAt
-          ? new Date(right.lastReadAt).getTime()
-          : new Date(right.addedAt).getTime();
-        return rightTime - leftTime;
-      });
-    return pending[0] ?? books[0] ?? null;
-  });
-  let inProgress = $derived(
-    books.filter((book) => book.progress > 0.001 && book.progress < 0.995)
-      .length,
-  );
-  let currentAudiobook = $derived(
-    audiobooks.find((item) => item.id === playback?.audiobookId) ?? null,
-  );
-  let currentCover = $derived.by(() => {
-    if (!currentAudiobook) return null;
-    return (
-      currentAudiobook.coverPath ??
-      books.find((book) => book.id === currentAudiobook?.bookId)?.coverPath ??
-      null
-    );
-  });
+  let nowBook = $derived(overview?.current ?? null);
+  let inProgress = $derived(overview?.inProgress ?? 0);
+  let currentCover = $derived(playback?.coverPath ?? null);
   let playerVisible = $derived(playback !== null && tab !== "audiobooks");
   let playerPercent = $derived.by(() => {
     if (!playback || playback.durationMs <= 0) return 0;
@@ -118,14 +90,9 @@
 
   async function loadShelf() {
     try {
-      books = await libraryList();
+      overview = await libraryOverview();
     } catch {
-      books = [];
-    }
-    try {
-      audiobooks = await listAudiobooks();
-    } catch {
-      audiobooks = [];
+      overview = null;
     }
   }
 
@@ -168,16 +135,30 @@
   onMount(() => {
     void loadShelf();
     void loadPlayback();
-    playerTimer = setInterval(() => void loadPlayback(), 1500);
-    return () => {
-      if (playerTimer) clearInterval(playerTimer);
-    };
+
+    const refreshShelf = () => void loadShelf();
+    window.addEventListener("kora:library-changed", refreshShelf);
+    return () => window.removeEventListener("kora:library-changed", refreshShelf);
+  });
+
+  // Solo se sondea mientras hay audio reproduciéndose. En pausa o en reposo
+  // la UI se actualiza con la respuesta de play/pause/seek.
+  $effect(() => {
+    if (!playback?.playing) return;
+    const timer = setTimeout(() => void loadPlayback(), 1500);
+    return () => clearTimeout(timer);
   });
 
   $effect(() => {
-    // Refresca la estantería al cambiar de sección para mantener el pulso
-    // del lector y del contador de progreso.
-    if (tab) void loadShelf();
+    if (tab === shelfTab) return;
+    const previous = shelfTab;
+    shelfTab = tab;
+    // El progreso cambia al leer o escuchar; en el resto de pestañas no hace
+    // falta volver a cargar toda la estantería.
+    if (previous === "reader" || previous === "audiobooks") {
+      void loadShelf();
+      void loadPlayback();
+    }
   });
 
   function isStack(id: AppTab) {
@@ -782,8 +763,9 @@
     height: var(--topbar-height);
     padding: 0 24px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-    background: color-mix(in srgb, var(--surface) 84%, transparent);
-    backdrop-filter: blur(18px) saturate(1.06);
+    /* Sin backdrop-filter: en WebKitGTK obliga a desenfocar el contenido en
+       cada frame de scroll. Un fondo casi opaco da el mismo efecto visual. */
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
     box-shadow: 0 1px 8px rgba(49, 24, 12, 0.035);
   }
 
@@ -819,11 +801,10 @@
     padding: 4px 5px 4px 6px;
     border: 1px solid var(--accent-line);
     border-radius: 999px;
-    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
     box-shadow:
       0 10px 28px -24px var(--shadow-color),
       inset 0 1px 0 color-mix(in srgb, #fff 18%, transparent);
-    backdrop-filter: blur(14px) saturate(1.08);
   }
 
   .mini-cover {
@@ -1216,8 +1197,7 @@
       gap: 0.1rem;
       padding: 0.35rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom));
       border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
-      background: color-mix(in srgb, var(--surface) 92%, transparent);
-      backdrop-filter: blur(20px) saturate(1.1);
+      background: color-mix(in srgb, var(--surface) 98%, transparent);
       box-shadow: 0 -10px 28px -26px var(--shadow-color);
     }
 
@@ -1342,9 +1322,8 @@
       padding: 7px 8px;
       border: 1px solid var(--accent-line);
       border-radius: 15px;
-      background: color-mix(in srgb, var(--surface) 94%, transparent);
+      background: color-mix(in srgb, var(--surface) 98%, transparent);
       box-shadow: 0 16px 38px -26px var(--shadow-color);
-      backdrop-filter: blur(18px) saturate(1.1);
     }
 
     .mobile-player-cover {
@@ -1507,8 +1486,7 @@
       height: calc(58px + env(safe-area-inset-top));
       padding: env(safe-area-inset-top) 14px 0;
       border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-      background: color-mix(in srgb, var(--surface) 90%, transparent);
-      backdrop-filter: blur(18px) saturate(1.06);
+      background: color-mix(in srgb, var(--surface) 97%, transparent);
     }
 
     .mobile-stack-bar button {

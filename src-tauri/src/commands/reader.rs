@@ -14,7 +14,7 @@ use crate::state::AppState;
 use crate::storage::{
     Annotation, AnnotationKind, AssetKind, AssetRef, AutoIndex, Book, BookFormat, Extract,
     NewAnnotation, NewExtract, NewReaderSettings, NewReadingProgress, OcrStatus, PdfDocumentInfo,
-    PdfOcrState, ReaderSettings, ResourceType,
+    PdfOcrState, ReaderSettings, ResourceType, Storage,
 };
 
 const MAX_ANNOTATION_TEXT: usize = 20_000;
@@ -993,20 +993,25 @@ pub(crate) fn ensure_pdf(book: &Book) -> Result<()> {
 }
 
 pub(crate) fn book_asset_path(state: &AppState, book: &Book) -> Result<PathBuf> {
+    book_asset_path_for(&state.storage, book)
+}
+
+/// Variante para tareas en segundo plano que solo tienen `Storage`.
+pub(crate) fn book_asset_path_for(storage: &Storage, book: &Book) -> Result<PathBuf> {
     let reference = AssetRef {
         kind: AssetKind::Book,
         hash: book.content_hash.clone(),
         extension: book.content_ext.clone(),
     };
 
-    let path = state.storage.assets.path(&reference)?;
+    let path = storage.assets.path(&reference)?;
     if path.is_file() {
         return Ok(path);
     }
 
     // Los libros generados (Tejido y transcripciones) viven en
     // assets/generated_books/ y no duplican el archivo en assets/books/.
-    let generated = state.storage.assets.path(&AssetRef {
+    let generated = storage.assets.path(&AssetRef {
         kind: AssetKind::GeneratedBook,
         hash: book.content_hash.clone(),
         extension: book.content_ext.clone(),

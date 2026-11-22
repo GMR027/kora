@@ -1,4 +1,5 @@
 pub mod auto_index;
+pub mod convert;
 pub mod epub;
 pub mod model;
 pub mod ocr;

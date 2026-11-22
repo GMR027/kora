@@ -205,6 +205,23 @@ impl BookCategoryRepo {
         )
     }
 
+    /// Asignaciones de toda la biblioteca en una sola consulta. Evita una
+    /// consulta por libro al construir la lista de la biblioteca.
+    pub async fn list_pairs_by_owner(
+        &self,
+        owner_account_id: &str,
+    ) -> Result<Vec<(String, String)>> {
+        Ok(sqlx::query_as::<_, (String, String)>(
+            "SELECT bc.book_id, bc.category_id
+             FROM book_categories bc
+             JOIN books b ON b.id = bc.book_id
+             WHERE b.owner_account_id = ? AND b.deleted_at IS NULL",
+        )
+        .bind(owner_account_id)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
     pub async fn list_by_book(&self, book_id: &str) -> Result<Vec<Category>> {
         Ok(sqlx::query_as::<_, Category>(
             "SELECT c.* FROM categories c

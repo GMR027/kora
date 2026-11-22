@@ -47,6 +47,21 @@ export interface TrashedBookSummary extends BookSummary {
   deletedAt: string;
 }
 
+export interface ContinueBook {
+  id: string;
+  title: string;
+  format: BookFormat;
+  coverPath: string | null;
+  progress: number;
+  addedAt: string;
+  lastReadAt: string | null;
+}
+
+export interface LibraryOverview {
+  current: ContinueBook | null;
+  inProgress: number;
+}
+
 export interface Category {
   id: string;
   name: string;
@@ -260,6 +275,71 @@ export interface PdfOcrState {
   updatedAt: string;
   ownerAccountId: string;
   originShareId: string | null;
+}
+
+export interface PdfConversionPreview {
+  bookId: string;
+  title: string;
+  author: string | null;
+  language: string | null;
+  pages: number;
+  scanned: boolean;
+  ocrStatus: "pending" | "running" | "done" | "failed" | "skipped";
+  ocrPagesDone: number;
+  ocrPagesTotal: number;
+  hasNativeOutline: boolean;
+  estimatedChapters: number;
+  extraction: "backend" | "frontend" | "none";
+  sample: string;
+  annotations: number;
+  extracts: number;
+  notes: number;
+  voiceNotes: number;
+  reactions: number;
+  audiobooks: number;
+  canConvert: boolean;
+  warnings: string[];
+}
+
+export interface PdfConversionOptions {
+  title?: string;
+  author?: string;
+  language?: string;
+  chapterMode?: "auto" | "outline" | "heuristic" | "pages";
+  replaceOriginal: boolean;
+}
+
+export interface PdfConversionReport {
+  bookId: string;
+  chapters: number;
+  chars: number;
+  pages: number;
+  ocrUsed: boolean;
+  anchored: number;
+  approximate: number;
+  unmapped: number;
+  warnings: string[];
+  replaced: boolean;
+}
+
+export interface PdfConversionState {
+  bookId: string;
+  phase: string;
+  percent: number;
+  message: string;
+  pagesDone: number;
+  pagesTotal: number;
+  error: string | null;
+  done: boolean;
+  startedAt: string;
+  finishedAt: string | null;
+  report: PdfConversionReport | null;
+}
+
+export interface PdfConversionResult {
+  sourceBookId: string;
+  book: BookSummary;
+  report: PdfConversionReport;
 }
 
 export interface ChapterContent {
@@ -1035,6 +1115,7 @@ export interface PlaybackSnapshot {
   offsetStart: number;
   offsetEnd: number;
   playing: boolean;
+  coverPath: string | null;
 }
 
 export interface AudiobookProgressEvent {

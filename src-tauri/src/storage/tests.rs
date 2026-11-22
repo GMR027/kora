@@ -409,6 +409,33 @@ async fn annotations_extracts_and_notes_crud() {
             .len(),
         1
     );
+    assert_eq!(
+        test.storage
+            .annotations
+            .list_by_owner(&owner)
+            .await
+            .expect("anotaciones de la cuenta")
+            .len(),
+        1
+    );
+    assert_eq!(
+        test.storage
+            .extracts
+            .list_by_owner(&owner)
+            .await
+            .expect("extractos de la cuenta")
+            .len(),
+        1
+    );
+    assert_eq!(
+        test.storage
+            .notes
+            .list_by_owner(&owner)
+            .await
+            .expect("notas de la cuenta")
+            .len(),
+        1
+    );
 
     test.storage.books.delete(&book.id).await.expect("borrar");
 
@@ -563,6 +590,80 @@ async fn reader_settings_are_saved_per_book_and_cascade() {
             .expect("leer ajustes")
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn library_aggregates_categories_and_audiobook_ids() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("agregado"), "Agregado"))
+        .await
+        .expect("libro");
+    let other = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("sin-categoria"), "Sin categoría"))
+        .await
+        .expect("otro libro");
+    let category = test
+        .storage
+        .categories
+        .create(NewCategory {
+            name: "Agregados".to_string(),
+            color: None,
+            sort_order: 0,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("categoría");
+    test.storage
+        .book_categories
+        .assign(&book.id, &category.id, &owner, None)
+        .await
+        .expect("asignar");
+
+    let pairs = test
+        .storage
+        .book_categories
+        .list_pairs_by_owner(&owner)
+        .await
+        .expect("pares");
+    assert_eq!(pairs, vec![(book.id.clone(), category.id.clone())]);
+
+    test.storage
+        .audiobooks
+        .create(NewAudiobook {
+            book_id: book.id.clone(),
+            voice_id: None,
+            status: AudiobookStatus::Done,
+            manifest_hash: None,
+            manifest_ext: None,
+            audio_hash: None,
+            audio_ext: None,
+            scope: None,
+            origin: AudiobookOrigin::Generated,
+            duration_ms: None,
+            narration: None,
+            cast: None,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("audiolibro");
+
+    let ids = test
+        .storage
+        .audiobooks
+        .list_book_ids_by_owner(&owner)
+        .await
+        .expect("ids con audio");
+    assert_eq!(ids, vec![book.id.clone()]);
+    assert!(!ids.contains(&other.id));
 }
 
 #[tokio::test]
@@ -1783,6 +1884,24 @@ async fn voice_notes_and_reactions_round_trip() {
             .len(),
         4
     );
+    assert_eq!(
+        test.storage
+            .voice_notes
+            .list_by_owner(&owner)
+            .await
+            .expect("voz de la cuenta")
+            .len(),
+        1
+    );
+    assert_eq!(
+        test.storage
+            .reactions
+            .list_by_owner(&owner)
+            .await
+            .expect("reacciones de la cuenta")
+            .len(),
+        4
+    );
 
     let mut edited_voice = voice.clone();
     edited_voice.text = "pasaje corregido".to_string();
@@ -1921,5 +2040,225 @@ async fn audiobook_favorites_survive_round_trip_and_cascade() {
             .is_favorite(&audiobook.id)
             .await
             .expect("favorito tras borrar")
+    );
+}
+
+#[tokio::test]
+async fn replaces_pdf_content_with_epub_and_cleans_pdf_tables() {
+    use crate::storage::conversion::{AnchorUpdate, EpubReplacement, ProgressUpdate};
+    use crate::storage::model::{AutoIndexEntry, PdfDocumentInfo, PdfOcrState};
+
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let mut new_book = new_book(&owner, &hash("pdf-a-epub"), "PDF original");
+    new_book.format = BookFormat::Pdf;
+    new_book.content_ext = "pdf".to_string();
+    new_book.original_name = "original.pdf".to_string();
+    let book = test
+        .storage
+        .books
+        .create(new_book)
+        .await
+        .expect("crear PDF");
+
+    test.storage
+        .pdf
+        .upsert_info(&PdfDocumentInfo {
+            book_id: book.id.clone(),
+            page_count: 10,
+            is_scanned: false,
+            has_native_outline: false,
+            inspected_at: chrono::Utc::now(),
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("info PDF");
+    test.storage
+        .pdf
+        .upsert_ocr_state(&PdfOcrState::pending(book.id.clone(), 10, owner.clone()))
+        .await
+        .expect("estado OCR");
+    test.storage
+        .pdf
+        .save_auto_index(
+            &book.id,
+            "heuristic",
+            &[AutoIndexEntry {
+                title: "Uno".to_string(),
+                page: 0,
+                level: 0,
+            }],
+            &owner,
+            None,
+        )
+        .await
+        .expect("índice PDF");
+
+    test.storage
+        .progress
+        .upsert(NewReadingProgress {
+            book_id: book.id.clone(),
+            locator: "{\"section\":4,\"offset\":0}".to_string(),
+            percent: 0.4,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("progreso");
+
+    let annotation = test
+        .storage
+        .annotations
+        .create(NewAnnotation {
+            book_id: book.id.clone(),
+            kind: AnnotationKind::Highlight,
+            locator: "chapter:4:10-20".to_string(),
+            chapter_index: Some(4),
+            offset_start: Some(10),
+            offset_end: Some(20),
+            text: Some("texto subrayado".to_string()),
+            note: None,
+            color: None,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("anotación");
+
+    let category = test
+        .storage
+        .categories
+        .create(NewCategory {
+            name: "Convertidos".to_string(),
+            color: None,
+            sort_order: 0,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("categoría");
+    test.storage
+        .book_categories
+        .assign(&book.id, &category.id, &owner, None)
+        .await
+        .expect("categoría asignada");
+    test.storage
+        .books
+        .set_favorite(&owner, &book.id, true)
+        .await
+        .expect("favorito");
+
+    let new_hash = hash("epub-convertido");
+    crate::storage::conversion::replace_book_with_epub(
+        &test.storage,
+        &EpubReplacement {
+            book_id: &book.id,
+            title: "PDF convertido",
+            author: Some("Autora"),
+            language: Some("es"),
+            description: Some("Convertido desde PDF."),
+            content_hash: &new_hash,
+            content_ext: "epub",
+            original_name: "convertido.epub",
+            size_bytes: 2048,
+            cover_hash: None,
+            cover_ext: None,
+            progress: Some(ProgressUpdate {
+                locator: "{\"section\":2,\"offset\":0}".to_string(),
+                percent: 0.4,
+            }),
+            annotations: vec![AnchorUpdate {
+                id: annotation.id.clone(),
+                chapter_index: 2,
+                offset_start: 30,
+                offset_end: 40,
+            }],
+            extracts: Vec::new(),
+            notes: Vec::new(),
+            voice_notes: Vec::new(),
+            reactions: Vec::new(),
+        },
+    )
+    .await
+    .expect("reemplazar");
+
+    let updated = test
+        .storage
+        .books
+        .get(&book.id)
+        .await
+        .expect("leer libro")
+        .expect("libro convertido");
+    assert_eq!(updated.id, book.id);
+    assert_eq!(updated.format, BookFormat::Epub);
+    assert_eq!(updated.title, "PDF convertido");
+    assert_eq!(updated.content_hash, new_hash);
+    assert_eq!(updated.content_ext, "epub");
+    assert_eq!(updated.original_name, "convertido.epub");
+    assert_eq!(updated.size_bytes, 2048);
+
+    assert!(
+        test.storage
+            .pdf
+            .get_info(&book.id)
+            .await
+            .expect("info")
+            .is_none()
+    );
+    assert!(
+        test.storage
+            .pdf
+            .get_ocr_state(&book.id)
+            .await
+            .expect("ocr")
+            .is_none()
+    );
+    assert!(
+        test.storage
+            .pdf
+            .get_auto_index(&book.id)
+            .await
+            .expect("índice")
+            .is_none()
+    );
+
+    let relocated = test
+        .storage
+        .annotations
+        .get(&annotation.id)
+        .await
+        .expect("anotación")
+        .expect("anotación reubicada");
+    assert_eq!(relocated.chapter_index, Some(2));
+    assert_eq!(relocated.offset_start, Some(30));
+    assert_eq!(relocated.offset_end, Some(40));
+    assert_eq!(relocated.locator, "chapter:2:30-40");
+
+    let progress = test
+        .storage
+        .progress
+        .get(&book.id)
+        .await
+        .expect("progreso")
+        .expect("progreso actualizado");
+    assert_eq!(progress.locator, "{\"section\":2,\"offset\":0}");
+    assert!((progress.percent - 0.4).abs() < f64::EPSILON);
+
+    assert_eq!(
+        test.storage
+            .book_categories
+            .list_by_book(&book.id)
+            .await
+            .expect("categorías")
+            .len(),
+        1
+    );
+    assert!(
+        test.storage
+            .books
+            .is_favorite(&book.id)
+            .await
+            .expect("favorito")
     );
 }

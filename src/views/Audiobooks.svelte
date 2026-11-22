@@ -211,7 +211,6 @@
   let karaokeOpen = $state(false);
   let playbackAt = $state(Date.now());
   let frameClock = $state(Date.now());
-  let frameTimer: ReturnType<typeof setInterval> | undefined;
 
   const KARAOKE_PRECISION_KEYS: Record<KaraokePrecision, MessageKey> = {
     aligned: "audiobooks.karaokeAligned",
@@ -232,7 +231,6 @@
   let unlistenQueue: UnlistenFn | undefined;
   let unlistenVoice: UnlistenFn | undefined;
   let unlistenVoiceError: UnlistenFn | undefined;
-  let timer: ReturnType<typeof setInterval> | undefined;
   let progressHideTimer: ReturnType<typeof setTimeout> | undefined;
   let listeningSessionId: string | null = null;
 
@@ -485,26 +483,41 @@
     void initProgress().catch((cause) => {
       error = errorMessage(cause);
     });
-    timer = setInterval(() => {
-      clock = Date.now();
-      void pollPlayback();
-    }, 900);
-    frameTimer = setInterval(() => {
-      frameClock = Date.now();
-    }, 120);
     return () => {
       unlisten?.();
       unlistenDownload?.();
       unlistenQueue?.();
       unlistenVoice?.();
       unlistenVoiceError?.();
-      if (timer) clearInterval(timer);
-      if (frameTimer) clearInterval(frameTimer);
       if (progressHideTimer) clearTimeout(progressHideTimer);
       clearInterval(sleepTimer);
       void endListeningSession();
       void stopVoiceMarkerListening().catch(() => undefined);
     };
+  });
+
+  // Sondeo y animación solo mientras suena audio. En pausa el estado ya llega
+  // con la respuesta de pause/seek.
+  $effect(() => {
+    if (!playback?.playing) return;
+    const timer = setTimeout(() => void pollPlayback(), 900);
+    return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (!playback?.playing) return;
+    const timer = setInterval(() => {
+      frameClock = Date.now();
+    }, 120);
+    return () => clearInterval(timer);
+  });
+
+  $effect(() => {
+    if (!activeTaskStartedAt) return;
+    const timer = setInterval(() => {
+      clock = Date.now();
+    }, 1000);
+    return () => clearInterval(timer);
   });
 
   $effect(() => {
@@ -546,10 +559,8 @@
         extractList,
         current,
         caps,
-        models,
         generation,
         voiceState,
-        aiSnapshot,
         categoryListResult,
       ] = await Promise.all([
         libraryList(),
@@ -559,10 +570,8 @@
         listAllExtracts(),
         getAudiobookProgress(),
         audiobookCapabilities().catch(() => null),
-        practiceModels().catch(() => [] as WhisperModelInfo[]),
         audiobookQueueStatus().catch(() => null),
         voiceMarkerStatus().catch(() => null),
-        aiStatus().catch(() => null),
         categoryList().catch(() => [] as Category[]),
       ]);
       books = bookList;
@@ -576,8 +585,6 @@
       frameClock = playbackAt;
       syncKaraoke(current);
       capabilities = caps;
-      aiState = aiSnapshot;
-      whisperModels = models;
       if (voiceState) voiceStatus = voiceState;
       if (generation) applyGenerationState(generation);
       seekValue = current?.positionMs ?? 0;
@@ -3508,9 +3515,8 @@
     padding: 0.85rem 1rem;
     border: 1px solid var(--accent-line);
     border-radius: 18px;
-    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    background: color-mix(in srgb, var(--surface) 98%, transparent);
     box-shadow: var(--shadow-lg);
-    backdrop-filter: blur(18px) saturate(1.1);
   }
 
   .player-cover {

@@ -93,6 +93,12 @@
   } = $props();
 
   let tab = $state<SettingsTab>("appearance");
+  let basePromise: Promise<void> | null = null;
+  let readerPromise: Promise<void> | null = null;
+  let usagePromise: Promise<void> | null = null;
+  let aiPromise: Promise<void> | null = null;
+  let classificationPromise: Promise<void> | null = null;
+  let syncPromise: Promise<void> | null = null;
   let layout = $state<StorageLayout | null>(null);
   let usage = $state<StorageUsage | null>(null);
   let readerDefaults = $state<ReaderSettings | null>(null);
@@ -136,12 +142,6 @@
   let contrast = $derived(contrastRatio(themeForeground, themeBackground));
 
   onMount(() => {
-    void load();
-    void loadExtras();
-    void loadSync();
-    void loadAi();
-    void loadClassification();
-
     let unlisten: (() => void) | undefined;
     let unlistenSemantic: (() => void) | undefined;
     let unlistenSemanticModel: (() => void) | undefined;
@@ -204,6 +204,48 @@
       if (classificationRefresh) clearTimeout(classificationRefresh);
     };
   });
+
+  // Cada pestaña carga solo lo que muestra. La pestaña de apariencia abre al
+  // instante y el resto se pide bajo demanda.
+  function ensureBase() {
+    return (basePromise ??= load());
+  }
+
+  function ensureReader() {
+    return (readerPromise ??= loadReaderDefaults());
+  }
+
+  function ensureUsage() {
+    return (usagePromise ??= loadUsage());
+  }
+
+  function ensureAi() {
+    return (aiPromise ??= loadAi());
+  }
+
+  function ensureClassification() {
+    return (classificationPromise ??= loadClassification());
+  }
+
+  function ensureSync() {
+    return (syncPromise ??= loadSync());
+  }
+
+  function selectTab(next: SettingsTab) {
+    tab = next;
+    if (next === "reading") void ensureReader();
+    if (next === "ai") {
+      void ensureBase();
+      void ensureAi();
+      void ensureClassification();
+    }
+    if (next === "sync") void ensureSync();
+    if (next === "storage") {
+      void ensureBase();
+      void ensureUsage();
+    }
+    if (next === "about") void ensureBase();
+  }
 
   async function load() {
     try {
@@ -322,16 +364,19 @@
     }
   }
 
-  async function loadExtras() {
-    try {
-      usage = await storageUsage();
-    } catch {
-      usage = null;
-    }
+  async function loadReaderDefaults() {
     try {
       readerDefaults = await readerGetDefaults();
     } catch {
       readerDefaults = null;
+    }
+  }
+
+  async function loadUsage() {
+    try {
+      usage = await storageUsage();
+    } catch {
+      usage = null;
     }
   }
 
@@ -676,7 +721,7 @@
       <button
         class:active={tab === id}
         aria-pressed={tab === id}
-        onclick={() => (tab = id as SettingsTab)}
+        onclick={() => selectTab(id as SettingsTab)}
       >
         {$t(key as MessageKey)}
       </button>

@@ -42,16 +42,19 @@ pub fn build_epub(
     zip.start_file("OEBPS/style.css", deflated)?;
     zip.write_all(STYLE.as_bytes())?;
 
-    let mut has_cover = false;
-    if let Some(cover) = cover {
+    let cover_asset = match cover {
+        Some(path) => Some((path, cover_format(path)?)),
+        None => None,
+    };
+    let has_cover = cover_asset.is_some();
+    if let Some((cover, (name, _))) = cover_asset.as_ref() {
         let bytes = std::fs::read(cover)
             .with_context(|| format!("no se pudo leer la portada {}", cover.display()))?;
-        zip.start_file("OEBPS/cover.png", stored)?;
+        zip.start_file(format!("OEBPS/{name}"), stored)?;
         zip.write_all(&bytes)?;
-        has_cover = true;
 
         zip.start_file("OEBPS/cover.xhtml", deflated)?;
-        zip.write_all(cover_xhtml(title, language).as_bytes())?;
+        zip.write_all(cover_xhtml(title, language, name).as_bytes())?;
     }
 
     for (index, chapter) in chapters.iter().enumerate() {
@@ -66,7 +69,8 @@ pub fn build_epub(
     zip.write_all(toc_ncx(title, chapters, has_cover).as_bytes())?;
 
     zip.start_file("OEBPS/content.opf", deflated)?;
-    zip.write_all(opf_xhtml(title, author, language, chapters.len(), has_cover).as_bytes())?;
+    let cover_meta = cover_asset.as_ref().map(|(_, format)| *format);
+    zip.write_all(opf_xhtml(title, author, language, chapters.len(), cover_meta).as_bytes())?;
 
     zip.finish()?;
     Ok(())
@@ -88,17 +92,35 @@ p { margin: 0 0 0.9em; text-align: justify; }
 .cover img { max-width: 100%; height: auto; }
 "#;
 
-fn cover_xhtml(title: &str, language: &str) -> String {
+fn cover_format(path: &Path) -> Result<(&'static str, &'static str)> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Ok(("cover.png", "image/png")),
+        "jpg" | "jpeg" => Ok(("cover.jpg", "image/jpeg")),
+        "webp" => Ok(("cover.webp", "image/webp")),
+        _ => anyhow::bail!(
+            "formato de portada no soportado: {} (usa PNG, JPEG o WebP)",
+            path.display()
+        ),
+    }
+}
+
+fn cover_xhtml(title: &str, language: &str, image: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="{language}">
 <head><title>{title}</title><link rel="stylesheet" href="style.css"/></head>
-<body class="cover" epub:type="cover"><img src="cover.png" alt="{title}"/></body>
+<body class="cover" epub:type="cover"><img src="{image}" alt="{title}"/></body>
 </html>
 "#,
         language = escape_xml(language),
         title = escape_xml(title),
+        image = escape_xml(image),
     )
 }
 
@@ -214,13 +236,13 @@ fn opf_xhtml(
     author: &str,
     language: &str,
     chapter_count: usize,
-    has_cover: bool,
+    cover: Option<(&'static str, &'static str)>,
 ) -> String {
     let mut manifest = String::new();
-    if has_cover {
-        manifest.push_str(
-            r#"<item id="cover-image" href="cover.png" media-type="image/png" properties="cover-image"/><item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>"#,
-        );
+    if let Some((name, media_type)) = cover {
+        manifest.push_str(&format!(
+            r#"<item id="cover-image" href="{name}" media-type="{media_type}" properties="cover-image"/><item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>"#
+        ));
     }
     for index in 0..chapter_count {
         manifest.push_str(&format!(
@@ -239,7 +261,7 @@ fn opf_xhtml(
         spine.push_str(&format!(r#"<itemref idref="chapter-{index}"/>"#));
     }
 
-    let cover_meta = if has_cover {
+    let cover_meta = if cover.is_some() {
         r#"<meta name="cover" content="cover-image"/>"#
     } else {
         ""
@@ -272,7 +294,14 @@ fn opf_xhtml(
 }
 
 pub fn escape_xml(value: &str) -> String {
-    value
+    // XML 1.0 no admite la mayoría de caracteres de control. El texto de un
+    // PDF puede traer form feeds o separadores que romperían el EPUB.
+    let sanitized: String = value
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\t' | '\n' | '\r'))
+        .collect();
+
+    sanitized
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -322,5 +351,41 @@ mod tests {
             .inspect(&path)
             .expect("el EPUB generado debe abrirse con rbook");
         assert_eq!(inspection.sections.len(), 2);
+    }
+
+    #[test]
+    fn keeps_jpeg_cover_media_type() {
+        let workspace = tempfile::tempdir().expect("tmp");
+        let path = workspace.path().join("mini.epub");
+        let cover = workspace.path().join("cover.jpg");
+        std::fs::write(&cover, b"jpeg-bytes").expect("portada");
+        let chapters = vec![EpubChapter {
+            title: "Uno".into(),
+            body: "Hola.".into(),
+            source: None,
+        }];
+
+        build_epub(&path, "Mini", "Kora", "es", &chapters, Some(&cover)).expect("epub");
+
+        let file = std::fs::File::open(&path).expect("abrir");
+        let mut archive = zip::ZipArchive::new(file).expect("zip");
+        assert!(archive.by_name("OEBPS/cover.jpg").is_ok());
+        let mut opf = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("OEBPS/content.opf").expect("opf"),
+            &mut opf,
+        )
+        .expect("leer opf");
+        assert!(
+            opf.contains(r#"href="cover.jpg" media-type="image/jpeg""#),
+            "{opf}"
+        );
+        let mut cover_xhtml = String::new();
+        std::io::Read::read_to_string(
+            &mut archive.by_name("OEBPS/cover.xhtml").expect("cover"),
+            &mut cover_xhtml,
+        )
+        .expect("leer cover");
+        assert!(cover_xhtml.contains("cover.jpg"), "{cover_xhtml}");
     }
 }

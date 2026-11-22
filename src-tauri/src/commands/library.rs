@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, State};
@@ -8,25 +9,30 @@ use crate::reader::ReaderService;
 use crate::state::AppState;
 use crate::storage::{
     AssetKind, AssetRef, Book, BookFormat, BookOrigin, BookSummary, Category, NewAuditEntry,
-    NewBook, NewCategory, ResourceType,
+    NewBook, NewCategory, ResourceType, Storage,
 };
 
 #[tauri::command]
 pub async fn library_list(state: State<'_, AppState>) -> Result<Vec<BookSummary>> {
     let owner = state.identity.account.id.clone();
     let rows = state.storage.books.list_summaries(&owner).await?;
+    let mut categories_by_book: HashMap<String, Vec<String>> = HashMap::new();
+    for (book_id, category_id) in state
+        .storage
+        .book_categories
+        .list_pairs_by_owner(&owner)
+        .await?
+    {
+        categories_by_book
+            .entry(book_id)
+            .or_default()
+            .push(category_id);
+    }
 
     let mut books = Vec::with_capacity(rows.len());
     for row in rows {
         let cover_path = cover_path(&state, row.cover_hash.as_deref(), row.cover_ext.as_deref())?;
-        let category_ids = state
-            .storage
-            .book_categories
-            .list_by_book(&row.id)
-            .await?
-            .into_iter()
-            .map(|category| category.id)
-            .collect();
+        let category_ids = categories_by_book.remove(&row.id).unwrap_or_default();
 
         books.push(BookSummary {
             id: row.id,
@@ -50,6 +56,101 @@ pub async fn library_list(state: State<'_, AppState>) -> Result<Vec<BookSummary>
     }
 
     Ok(books)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinueBook {
+    pub id: String,
+    pub title: String,
+    pub format: BookFormat,
+    pub cover_path: Option<String>,
+    pub progress: f32,
+    pub added_at: chrono::DateTime<chrono::Utc>,
+    pub last_read_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryOverview {
+    pub current: Option<ContinueBook>,
+    pub in_progress: u32,
+}
+
+/// Resumen mínimo para la barra superior: un solo libro y un contador, sin
+/// serializar toda la biblioteca en cada navegación.
+#[tauri::command]
+pub async fn library_overview(state: State<'_, AppState>) -> Result<LibraryOverview> {
+    let owner = state.identity.account.id.clone();
+    let row = sqlx::query_as::<
+        _,
+        (
+            String,
+            String,
+            BookFormat,
+            Option<String>,
+            Option<String>,
+            f64,
+            chrono::DateTime<chrono::Utc>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
+        "SELECT b.id, b.title, b.format, b.cover_hash, b.cover_ext,
+                COALESCE(rp.percent, 0.0), b.added_at, rp.updated_at
+         FROM books b
+         LEFT JOIN reading_progress rp ON rp.book_id = b.id
+         WHERE b.owner_account_id = ? AND b.audio_only = 0 AND b.deleted_at IS NULL
+         ORDER BY
+            CASE WHEN COALESCE(rp.percent, 0.0) > 0.001
+                   AND COALESCE(rp.percent, 0.0) < 0.995 THEN 0 ELSE 1 END,
+            COALESCE(rp.updated_at, b.added_at) DESC
+         LIMIT 1",
+    )
+    .bind(&owner)
+    .fetch_optional(state.storage.books.pool())
+    .await?;
+
+    let current = match row {
+        Some((id, title, format, cover_hash, cover_ext, progress, added_at, last_read_at)) => {
+            Some(ContinueBook {
+                id,
+                title,
+                format,
+                cover_path: cover_path(&state, cover_hash.as_deref(), cover_ext.as_deref())?,
+                progress: progress as f32,
+                added_at,
+                last_read_at,
+            })
+        }
+        None => None,
+    };
+
+    let in_progress: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*)
+         FROM books b
+         LEFT JOIN reading_progress rp ON rp.book_id = b.id
+         WHERE b.owner_account_id = ? AND b.audio_only = 0 AND b.deleted_at IS NULL
+           AND COALESCE(rp.percent, 0.0) > 0.001
+           AND COALESCE(rp.percent, 0.0) < 0.995",
+    )
+    .bind(&owner)
+    .fetch_one(state.storage.books.pool())
+    .await?;
+
+    Ok(LibraryOverview {
+        current,
+        in_progress: in_progress.0.max(0) as u32,
+    })
+}
+
+#[tauri::command]
+pub async fn library_audiobook_book_ids(state: State<'_, AppState>) -> Result<Vec<String>> {
+    let owner = state.identity.account.id.clone();
+    state
+        .storage
+        .audiobooks
+        .list_book_ids_by_owner(&owner)
+        .await
 }
 
 #[tauri::command]
@@ -988,7 +1089,13 @@ pub async fn category_list(state: State<'_, AppState>) -> Result<Vec<Category>> 
 }
 
 async fn book_summary(state: &AppState, book: &Book) -> Result<BookSummary> {
-    let progress = state.storage.progress.get(&book.id).await?;
+    book_summary_for(&state.storage, book).await
+}
+
+/// Variante sin `AppState` para tareas en segundo plano que solo conservan el
+/// `Storage` clonado.
+pub(crate) async fn book_summary_for(storage: &Storage, book: &Book) -> Result<BookSummary> {
+    let progress = storage.progress.get(&book.id).await?;
     let percent = progress
         .as_ref()
         .map(|progress| progress.percent as f32)
@@ -1000,7 +1107,11 @@ async fn book_summary(state: &AppState, book: &Book) -> Result<BookSummary> {
         title: book.title.clone(),
         author: book.author.clone(),
         format: book.format,
-        cover_path: cover_path(state, book.cover_hash.as_deref(), book.cover_ext.as_deref())?,
+        cover_path: cover_path_for(
+            storage,
+            book.cover_hash.as_deref(),
+            book.cover_ext.as_deref(),
+        )?,
         size_bytes: book.size_bytes.max(0) as u64,
         added_at: book.added_at,
         language: book.language.clone(),
@@ -1009,11 +1120,10 @@ async fn book_summary(state: &AppState, book: &Book) -> Result<BookSummary> {
         last_read_at,
         progress: percent,
         origin: book.origin,
-        favorite: state.storage.books.is_favorite(&book.id).await?,
+        favorite: storage.books.is_favorite(&book.id).await?,
         read_only: book.read_only,
         received_share_id: book.received_share_id.clone(),
-        category_ids: state
-            .storage
+        category_ids: storage
             .book_categories
             .list_by_book(&book.id)
             .await?
@@ -1028,6 +1138,14 @@ fn cover_path(
     hash: Option<&str>,
     extension: Option<&str>,
 ) -> Result<Option<String>> {
+    cover_path_for(&state.storage, hash, extension)
+}
+
+pub(crate) fn cover_path_for(
+    storage: &Storage,
+    hash: Option<&str>,
+    extension: Option<&str>,
+) -> Result<Option<String>> {
     let (Some(hash), Some(extension)) = (hash, extension) else {
         return Ok(None);
     };
@@ -1038,9 +1156,7 @@ fn cover_path(
         extension: extension.to_string(),
     };
 
-    Ok(Some(
-        state.storage.assets.path(&reference)?.display().to_string(),
-    ))
+    Ok(Some(storage.assets.path(&reference)?.display().to_string()))
 }
 
 fn detect_book_format(path: &Path) -> Result<BookFormat> {
