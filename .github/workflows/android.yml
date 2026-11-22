@@ -44,16 +44,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # El APK se publica desde el clúster. Este workflow solo valida que la
+      # compilación Android siga funcionando; no crea releases ni artefactos
+      # alojados en GitHub.
       - name: Build core APK
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
           ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
         run: |
           pnpm tauri android build --apk
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: kora-android-core-apk
-          path: |
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
