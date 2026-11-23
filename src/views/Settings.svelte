@@ -740,17 +740,21 @@
         notifySuccess(translate("settings.upToDate"));
       }
     } catch (cause) {
-      updateError = errorMessage(cause);
-      notifyError(cause);
+      const message = errorMessage(cause);
+      const missing = /404|no hay actualizaciones|not found/i.test(message);
+      updateError = missing
+        ? translate("settings.updatesNotPublished")
+        : message;
+      if (!missing) notifyError(cause);
     } finally {
       updateChecking = false;
     }
   }
 
   function installUpdate() {
-    const url = updateCheck?.url;
-    if (!url) return;
     if (platform === "android") {
+      const url = updateCheck?.androidUrl ?? updateCheck?.url;
+      if (!url) return;
       const bridge = (
         window as unknown as {
           KoraChrome?: {
@@ -777,11 +781,13 @@
       );
       bridge.downloadUpdate(
         url,
-        updateCheck?.sha256 ?? "",
+        updateCheck?.androidSha256 ?? updateCheck?.sha256 ?? "",
         `kora-${updateCheck?.latestVersion ?? "update"}-${Date.now()}.apk`,
       );
       return;
     }
+    const url = updateCheck?.releaseUrl ?? updateCheck?.url;
+    if (!url) return;
     void openExternalUrl(url)
       .then(() => notifySuccess(translate("settings.updateDesktopHint")))
       .catch((cause) => {

@@ -7,14 +7,14 @@
 El artefacto se genera en:
 
 ```text
-target/release/bundle/deb/Kora_0.1.2_<arch>.deb
+target/release/bundle/deb/Kora_0.1.3_<arch>.deb
 ```
 
 El sufijo depende de la arquitectura del host (`amd64` en x86_64, `arm64` en
 aarch64). Instálalo con:
 
 ```bash
-sudo apt install ./Kora_0.1.2_amd64.deb
+sudo apt install ./Kora_0.1.3_amd64.deb
 ```
 
 > Usa `apt install ./archivo.deb`, no `dpkg -i`: `apt` descarga las
@@ -24,7 +24,7 @@ sudo apt install ./Kora_0.1.2_amd64.deb
 >
 > ```bash
 > sudo apt-get -f install
-> sudo apt install ./Kora_0.1.2_amd64.deb
+> sudo apt install ./Kora_0.1.3_amd64.deb
 > ```
 
 El paquete declara estas dependencias de ejecución: `espeak-ng`, `libasound2`
@@ -35,6 +35,19 @@ automáticamente.
 Si tu distribución prefiere RPM, Tauri también puede generar `rpm`; el
 paquete `.rpm` debe compilarse en Fedora 42 para que coincidan las versiones de
 Tesseract/Leptonica. El `.deb` es el objetivo verificado en Ubuntu/Debian.
+
+### Actualizaciones
+
+Desde la versión 0.1.3, la app consulta por defecto:
+
+```text
+https://kora.iguzman.com.mx/downloads/latest.json
+```
+
+El manifiesto lo genera `deploy.sh` con la versión, las URLs de los paquetes y
+sus hashes SHA-256. En **Ajustes → Acerca de** puedes cambiar esa URL si usas
+otra copia de Kora. El APK de Android descarga la actualización y la instala
+desde la propia app; en escritorio se abre la sección de descargas.
 
 ### Dependencias opcionales
 

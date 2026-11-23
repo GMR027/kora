@@ -6,12 +6,31 @@ use tauri::AppHandle;
 use crate::error::{KoraError, Result};
 
 const DEFAULT_MANIFEST_URL: &str =
-    "https://github.com/GMR027/kora/releases/latest/download/latest.json";
+    "https://kora.iguzman.com.mx/downloads/latest.json";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateAsset {
+    url: String,
+    #[serde(default)]
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LinuxAssets {
+    #[serde(default)]
+    deb: Option<UpdateAsset>,
+    #[serde(default)]
+    rpm: Option<UpdateAsset>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateManifest {
     version: String,
+    /// URL directa del APK. Se conserva en el nivel superior para que las
+    /// versiones antiguas de Android puedan actualizarse.
     url: String,
     #[serde(default)]
     sha256: Option<String>,
@@ -19,6 +38,12 @@ struct UpdateManifest {
     notes: Option<String>,
     #[serde(default)]
     published_at: Option<String>,
+    #[serde(default)]
+    release_url: Option<String>,
+    #[serde(default)]
+    android: Option<UpdateAsset>,
+    #[serde(default)]
+    linux: Option<LinuxAssets>,
 }
 
 #[derive(Debug, Serialize)]
@@ -32,6 +57,11 @@ pub struct UpdateCheck {
     pub sha256: Option<String>,
     pub published_at: Option<String>,
     pub manifest_url: String,
+    pub android_url: Option<String>,
+    pub android_sha256: Option<String>,
+    pub release_url: Option<String>,
+    pub deb_url: Option<String>,
+    pub rpm_url: Option<String>,
 }
 
 fn version_parts(value: &str) -> Vec<u64> {
@@ -96,6 +126,11 @@ pub async fn check_app_update(app: AppHandle, manifest_url: Option<String>) -> R
     let response = client.get(&manifest_url).send().await.map_err(|error| {
         KoraError::Internal(format!("no se pudo consultar la actualización: {error}"))
     })?;
+    if response.status().as_u16() == 404 {
+        return Err(KoraError::NotFound(
+            "todavía no hay actualizaciones publicadas".into(),
+        ));
+    }
     if !response.status().is_success() {
         return Err(KoraError::Internal(format!(
             "el servidor de actualizaciones respondió {}",
@@ -113,17 +148,54 @@ pub async fn check_app_update(app: AppHandle, manifest_url: Option<String>) -> R
         ));
     }
     validate_http_url(&manifest.url)?;
+    if let Some(android) = &manifest.android {
+        validate_http_url(&android.url)?;
+    }
+    if let Some(linux) = &manifest.linux {
+        if let Some(deb) = &linux.deb {
+            validate_http_url(&deb.url)?;
+        }
+        if let Some(rpm) = &linux.rpm {
+            validate_http_url(&rpm.url)?;
+        }
+    }
+    if let Some(release_url) = &manifest.release_url {
+        validate_http_url(release_url)?;
+    }
 
     let available = is_newer(&manifest.version, &current_version);
+    let android_url = manifest.android.as_ref().map(|asset| asset.url.clone());
+    let android_sha256 = manifest
+        .android
+        .as_ref()
+        .and_then(|asset| asset.sha256.clone())
+        .or_else(|| manifest.sha256.clone());
+    let deb_url = manifest
+        .linux
+        .as_ref()
+        .and_then(|linux| linux.deb.as_ref())
+        .map(|asset| asset.url.clone());
+    let rpm_url = manifest
+        .linux
+        .as_ref()
+        .and_then(|linux| linux.rpm.as_ref())
+        .map(|asset| asset.url.clone());
     Ok(UpdateCheck {
         available,
         current_version,
         latest_version: manifest.version,
         notes: manifest.notes,
-        url: Some(manifest.url),
+        url: Some(manifest.url.clone()),
         sha256: manifest.sha256,
         published_at: manifest.published_at,
         manifest_url,
+        android_url,
+        android_sha256,
+        release_url: manifest
+            .release_url
+            .or_else(|| Some(manifest.url)),
+        deb_url,
+        rpm_url,
     })
 }
 

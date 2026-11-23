@@ -4,7 +4,7 @@ import { translate } from "./i18n";
 import { pushNotification } from "./notifications";
 
 export const DEFAULT_UPDATE_MANIFEST_URL =
-  "https://github.com/GMR027/kora/releases/latest/download/latest.json";
+  "https://kora.iguzman.com.mx/downloads/latest.json";
 
 /// Se incrementa cuando una notificación de actualización abre Ajustes.
 export const openUpdatesRequest = writable(0);

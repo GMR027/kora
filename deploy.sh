@@ -28,7 +28,16 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHART_DIR="$ROOT_DIR/helm/kora"
 TAG_FILE="$ROOT_DIR/.deploy-tag"
 APK_SOURCE="$ROOT_DIR/artifacts/kora-release.apk"
-APK_NAME="Kora-0.1.2-android.apk"
+APP_VERSION="$(node -p "require('${ROOT_DIR}/package.json').version")"
+APK_NAME="Kora-${APP_VERSION}-android.apk"
+DEB_NAME="Kora_${APP_VERSION}_amd64.deb"
+RPM_NAME="Kora-${APP_VERSION}-1.x86_64.rpm"
+DEB_SOURCE="$ROOT_DIR/landing/downloads/$DEB_NAME"
+RPM_SOURCE="$ROOT_DIR/landing/downloads/$RPM_NAME"
+NOTES_FILE="$ROOT_DIR/RELEASE_NOTES.md"
+
+[[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || { echo "Versión inválida en package.json: $APP_VERSION" >&2; exit 1; }
 
 verde()    { printf '\033[32m%s\033[0m\n' "$*"; }
 amarillo() { printf '\033[33m%s\033[0m\n' "$*"; }
@@ -47,7 +56,7 @@ fi
 verde "==> Tag de esta versión: $TAG"
 
 # --- Requisitos -------------------------------------------------------------
-for cmd in docker helm kubectl; do
+for cmd in docker helm kubectl node; do
     command -v "$cmd" >/dev/null 2>&1 || { rojo "Falta '$cmd' en el PATH."; exit 1; }
 done
 
@@ -71,21 +80,68 @@ cp -a "$ROOT_DIR/landing/." "$CONTEXTO/html/"
 rm -f "$CONTEXTO/html/downloads/"*.apk
 cp "$ROOT_DIR/docker/nginx.conf" "$CONTEXTO/nginx.conf"
 
-if [[ -f "$APK_SOURCE" ]]; then
-    cp "$APK_SOURCE" "$CONTEXTO/html/downloads/$APK_NAME"
-    verde "==> APK incluido: $APK_NAME ($(du -h "$APK_SOURCE" | cut -f1))"
-else
-    amarillo "==> No existe $APK_SOURCE: la landing mostrará el APK como «En preparación»."
-fi
-
-# Los instaladores de Linux se copian con el resto de landing/downloads/.
-for pkg in "$CONTEXTO"/html/downloads/*.deb "$CONTEXTO"/html/downloads/*.rpm; do
-    if [[ -f "$pkg" ]]; then
-        verde "==> Instalador incluido: $(basename "$pkg") ($(du -h "$pkg" | cut -f1))"
-    else
-        amarillo "==> Falta un instalador de Linux: la landing lo mostrará como «En preparación»."
+for source in "$APK_SOURCE" "$DEB_SOURCE" "$RPM_SOURCE"; do
+    if [[ ! -f "$source" ]]; then
+        rojo "Falta el artefacto requerido: $source"
+        rojo "Compila los tres paquetes antes de desplegar."
+        exit 1
     fi
 done
+
+cp "$APK_SOURCE" "$CONTEXTO/html/downloads/$APK_NAME"
+find "$CONTEXTO/html/downloads" -maxdepth 1 -type f \
+    \( -name 'Kora_*.deb' -o -name 'Kora-*.rpm' \) \
+    ! -name "$DEB_NAME" ! -name "$RPM_NAME" -delete
+verde "==> APK incluido: $APK_NAME ($(du -h "$APK_SOURCE" | cut -f1))"
+verde "==> DEB incluido: $DEB_NAME ($(du -h "$DEB_SOURCE" | cut -f1))"
+verde "==> RPM incluido: $RPM_NAME ($(du -h "$RPM_SOURCE" | cut -f1))"
+
+APK_SHA="$(sha256sum "$CONTEXTO/html/downloads/$APK_NAME" | awk '{print $1}')"
+DEB_SHA="$(sha256sum "$CONTEXTO/html/downloads/$DEB_NAME" | awk '{print $1}')"
+RPM_SHA="$(sha256sum "$CONTEXTO/html/downloads/$RPM_NAME" | awk '{print $1}')"
+
+if [[ -f "$NOTES_FILE" ]]; then
+    RELEASE_NOTES="$(cat "$NOTES_FILE")"
+else
+    RELEASE_NOTES="Actualización de Kora $APP_VERSION."
+fi
+
+CONTEXTO="$CONTEXTO" PUBLIC_URL="$URL" APP_VERSION="$APP_VERSION" \
+APK_NAME="$APK_NAME" APK_SHA="$APK_SHA" \
+DEB_NAME="$DEB_NAME" DEB_SHA="$DEB_SHA" \
+RPM_NAME="$RPM_NAME" RPM_SHA="$RPM_SHA" \
+RELEASE_NOTES="$RELEASE_NOTES" \
+node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const env = process.env;
+const base = env.PUBLIC_URL.replace(/\/$/, "");
+const asset = (name, sha256) => ({
+  url: `${base}/downloads/${name}`,
+  sha256,
+});
+
+const apk = asset(env.APK_NAME, env.APK_SHA);
+const manifest = {
+  version: env.APP_VERSION,
+  notes: env.RELEASE_NOTES,
+  publishedAt: new Date().toISOString(),
+  // Compatibilidad con clientes antiguos: URL directa del APK.
+  url: apk.url,
+  sha256: apk.sha256,
+  releaseUrl: `${base}/#descargas`,
+  android: apk,
+  linux: {
+    deb: asset(env.DEB_NAME, env.DEB_SHA),
+    rpm: asset(env.RPM_NAME, env.RPM_SHA),
+  },
+};
+
+const target = path.join(env.CONTEXTO, "html", "downloads", "latest.json");
+fs.writeFileSync(target, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+console.log(`Manifiesto generado: ${target}`);
+NODE
 
 verde "==> Contexto preparado en $CONTEXTO"
 
@@ -136,4 +192,14 @@ if curl -fsS --max-time 10 "$URL/healthz" >/dev/null 2>&1; then
     verde "==> Sitio respondiendo en $URL"
 else
     amarillo "==> El sitio aún no responde por HTTPS; revisa DNS, Ingress y certificado."
+fi
+
+if MANIFEST="$(curl -fsS --max-time 10 "$URL/downloads/latest.json" 2>/dev/null)"; then
+    if printf '%s' "$MANIFEST" | grep -q "\"version\": \"$APP_VERSION\""; then
+        verde "==> Manifiesto de actualizaciones sirviendo v$APP_VERSION"
+    else
+        rojo "==> latest.json responde, pero no contiene la versión $APP_VERSION."
+    fi
+else
+    amarillo "==> latest.json aún no responde."
 fi

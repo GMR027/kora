@@ -30,6 +30,11 @@ export interface UpdateCheck {
   sha256: string | null;
   publishedAt: string | null;
   manifestUrl: string;
+  androidUrl: string | null;
+  androidSha256: string | null;
+  releaseUrl: string | null;
+  debUrl: string | null;
+  rpmUrl: string | null;
 }
 
 export type BookOrigin = "imported" | "generated" | "transcribed" | "tejido";
