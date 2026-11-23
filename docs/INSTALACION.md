@@ -7,14 +7,14 @@
 El artefacto se genera en:
 
 ```text
-target/release/bundle/deb/Kora_0.1.3_<arch>.deb
+target/release/bundle/deb/Kora_0.1.4_<arch>.deb
 ```
 
 El sufijo depende de la arquitectura del host (`amd64` en x86_64, `arm64` en
 aarch64). Instálalo con:
 
 ```bash
-sudo apt install ./Kora_0.1.3_amd64.deb
+sudo apt install ./Kora_0.1.4_amd64.deb
 ```
 
 > Usa `apt install ./archivo.deb`, no `dpkg -i`: `apt` descarga las
@@ -24,7 +24,7 @@ sudo apt install ./Kora_0.1.3_amd64.deb
 >
 > ```bash
 > sudo apt-get -f install
-> sudo apt install ./Kora_0.1.3_amd64.deb
+> sudo apt install ./Kora_0.1.4_amd64.deb
 > ```
 
 El paquete declara estas dependencias de ejecución: `espeak-ng`, `libasound2`
@@ -38,7 +38,7 @@ Tesseract/Leptonica. El `.deb` es el objetivo verificado en Ubuntu/Debian.
 
 ### Actualizaciones
 
-Desde la versión 0.1.3, la app consulta por defecto:
+Desde la versión 0.1.4, la app consulta por defecto:
 
 ```text
 https://kora.iguzman.com.mx/downloads/latest.json

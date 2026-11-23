@@ -494,8 +494,8 @@ impl DeviceRepo {
         peer_account_id: &str,
         peer_username: &str,
         peer_account_public_key: &str,
-        account_signature: &str,
-        peer_account_signature: &str,
+        account_signature: Option<&str>,
+        peer_account_signature: Option<&str>,
         address: Option<&str>,
         port: Option<i64>,
     ) -> Result<Device> {

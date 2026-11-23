@@ -158,6 +158,38 @@ pub fn client_config(identity: &DeviceIdentity) -> Result<ClientConfig> {
     Ok(ClientConfig::new(Arc::new(quic)))
 }
 
+/// Prueba todas las direcciones conocidas. En LAN es habitual que una
+/// interfaz anuncie IPv6 link-local o una dirección de otro adaptador; probar
+/// en orden evita que el primer candidato inválido bloquee la conexión.
+pub async fn connect_any(
+    endpoint: &Endpoint,
+    addresses: &[SocketAddr],
+    expected_fingerprint: Option<&str>,
+) -> Result<(Connection, String, SocketAddr)> {
+    let mut last_error = None;
+    for address in addresses {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            connect(endpoint, *address, expected_fingerprint),
+        )
+        .await
+        {
+            Ok(Ok((connection, fingerprint))) => {
+                return Ok((connection, fingerprint, *address));
+            }
+            Ok(Err(error)) => last_error = Some(error),
+            Err(_) => {
+                last_error = Some(KoraError::Internal(format!(
+                    "tiempo de conexión agotado con {address}"
+                )))
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        KoraError::NotFound("el dispositivo no tiene una dirección conocida".into())
+    }))
+}
+
 pub async fn connect(
     endpoint: &Endpoint,
     address: SocketAddr,

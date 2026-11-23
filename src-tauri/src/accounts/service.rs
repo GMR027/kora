@@ -784,10 +784,6 @@ impl AccountService {
             .await?;
         Ok(())
     }
-
-    pub async fn pairing_password(&self, account_id: &str, code: &str) -> Result<Vec<u8>> {
-        Ok(crypto::derive_key(code, account_id.as_bytes())?.to_vec())
-    }
 }
 
 fn decode_avatar(image: &str) -> Result<Vec<u8>> {

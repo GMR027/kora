@@ -13,8 +13,8 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 > fases 6–8 añadieron clonación de voz, audiolibros M4B, Tejido y anotaciones
 > superpuestas. La fase 9 añadió descubrimiento mDNS, transporte QUIC con TLS
 > mutuo Ed25519, diff por hash, CRDT con `yrs`, handoff y lectura en espejo. La
-> fase 10 añadió cuenta local con PIN Argon2id, claves Ed25519, SPAKE2 + SAS,
-> QR de emparejamiento y shares con permisos, caducidad y usos. La fase 11
+> fase 10 añadió cuenta local con PIN Argon2id, claves Ed25519, vinculación de
+> dispositivos con código temporal y QR, y shares con permisos, caducidad y usos. La fase 11
 > añade búsqueda semántica offline con `fastembed` y `multilingual-e5-small`,
 > diario automático por sesión con heatmap, 22 logros, Pomodoro configurable,
 > sync selectivo por dispositivo y exportación del diario a EPUB/M4B. La fase
@@ -51,6 +51,7 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 | Android APK núcleo | ✅ workflow x86_64 y build local x86_64; en aarch64 no es nativo |
 | APK debug universal | ✅ compilado localmente para las cuatro ABI |
 | Audiolibros Android | ✅ Media3 ExoPlayer, `MediaSessionService`, notificación, segundo plano y pantalla apagada |
+| TTS Android | ✅ `TextToSpeech` + `MediaSessionService`, tarjeta de pantalla de bloqueo y portada de respaldo |
 | APK release firmado | ✅ 28 MB, firma V2 verificada con la llave de Kora |
 | Búsqueda semántica | ✅ chunking UTF-16, coseno y ranking con proveedor determinista |
 | IA local | ✅ Ollama/llama.cpp, configuración y detección de modelos |
@@ -69,7 +70,7 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 | ffmpeg + M4B real | ✅ dos capítulos con `ffprobe` y un M4B generado desde Piper |
 | Sync real entre dos instancias | ✅ QUIC local, libro+portada, anotación CRDT, borrado suave y convergencia |
 | Handoff y espejo | ✅ eventos `sync::handoff`, `mirror::position` y `mirror::tts_state` |
-| Cuenta y SPAKE2 | ✅ PIN Argon2id, clave Ed25519, SAS manual y firma cruzada de dispositivos |
+| Cuenta y vinculación | ✅ PIN Argon2id, clave Ed25519, código temporal + QR y confianza por huella TLS |
 | Shares | ✅ copia, solo lectura, caducidad, `max_uses` y revocación |
 | `tauri android init --ci` | ✅ `src-tauri/gen/android` generado |
 | `tauri android build --apk` | ✅ workflow x86_64 en `.github/workflows/android.yml`, builds debug y release firmado locales; el host aarch64 no lo compila de forma nativa |
@@ -83,8 +84,8 @@ detección de escaneados), parser TSV de Tesseract, heurísticas de auto-índice
 WAV con marca de agua, offsets UTF-16, diálogo, pausas expresivas, diff de
 palabras, síntesis Piper, perfiles `.koravoice`, capítulos M4B, EPUB generados,
 portadas PNG, UUIDv7, borrado suave, notas ricas, notas de voz Opus,
-emparejamiento SAS, QUIC/TLS, CRDT, diff por hash, filtros de colecciones por
-peer, handoff, espejo, PIN Argon2id, SPAKE2, QR, shares, chunking semántico,
+vinculación con código temporal, QUIC/TLS, CRDT, diff por hash, filtros de colecciones por
+peer, handoff, espejo, PIN Argon2id, SPAKE2, QR, auto-sync, shares, chunking semántico,
 ranking por coseno, diario automático, heatmap, 22 logros, Pomodoro,
 exportación EPUB, el pipeline real de clonación, IA local, clasificación
 asistida, conversión PDF→EPUB, papelera y copias de seguridad. El workflow
@@ -106,7 +107,7 @@ Ubuntu 24.04.
 | PDF (texto/OCR) | `pdfium-render` + `libpdfium` del sistema (`lopdf` como plan B) |
 | OCR | Tesseract 5 vía `leptess` (solo escritorio) |
 | TTS escritorio | Piper (`piper-rs` + ONNX Runtime) y reproducción con `rodio`/`cpal` |
-| TTS Android | `tauri-plugin-tts` sobre `TextToSpeech` nativo |
+| TTS Android | `TextToSpeech` nativo + plugin Kotlin propio + `MediaSessionService` de Media3 |
 | Modo ensayo | `cpal` para grabar y `whisper-rs` (`tiny`/`base`) para transcribir |
 | Notas ricas | Quill 2 (Delta JSON en `notes.content_json`) |
 | Notas de voz | `cpal` + `opus`/`ogg` (Ogg/Opus en `assets/notes_audio/`) |
@@ -325,8 +326,8 @@ conexión del pool y `audit_log` es append-only.
 | `start_sync` / `stop_sync` | Arrancan o detienen listener QUIC, mDNS pasivo y cola |
 | `get_sync_status` / `get_peers` | Estado, cambios pendientes y peers descubiertos/emparejados |
 | `sync_now` | Diff y transferencia bidireccional con un peer |
-| `start_pairing` / `stop_pairing` | Anuncio mDNS `purpose=pair` y SAS |
-| `pair_with_peer` / `revoke_peer` | Guardan o revocan la confianza de un dispositivo |
+| `start_device_pairing` / `join_device_pairing` / `cancel_device_pairing` | Código temporal + QR, SPAKE2 y confianza automática |
+| `revoke_peer` | Revoca la confianza de un dispositivo |
 | `start_share` / `stop_share` | Anuncio mDNS `purpose=share` para shares, handoff y espejo |
 | `get_sync_collections` / `set_sync_categories` / `list_sync_devices` | Filtro selectivo por categorías y por dispositivo emparejado |
 | `set_sync_collections` | Alias de compatibilidad para el dispositivo local |
@@ -341,7 +342,7 @@ conexión del pool y `audit_log` es append-only.
 | `recover_account_pin` | Restablece el PIN regenerando la identidad de la cuenta |
 | `delete_account` | Borra cuenta, biblioteca, notas, audiolibros y voces clonadas |
 | `rotate_connection_key` | Rota la clave de conexión sin romper dispositivos ya emparejados |
-| `start_pairing` / `confirm_sas` | SPAKE2 + SAS manual y firma cruzada |
+| `set_auto_sync` / `sync_now_all` / `get_sync_diagnostics` | Auto-sync en primer plano y diagnóstico de red |
 | `create_share` / `list_shares` / `revoke_share` | Shares con alcance, permiso, caducidad y usos |
 | `accept_share` / `list_received_shares` / `remove_received_share` | Shares recibidos y limpieza de copias de solo lectura |
 | `reveal_share_key` | Muestra el QR/clave de un share con PIN |
@@ -591,14 +592,17 @@ El resto del proyecto (frontend, Rust de escritorio y `cargo check`) sí se
 compila de forma nativa en aarch64.
 
 En esta fase, Android conserva el visor PDF con `pdf.js` y añade TTS nativo con
-`tauri-plugin-tts` (`TextToSpeech`), declarado en `capabilities/android-tts.json`.
-Los audiolibros M4B/MP3 se reproducen con **Media3 ExoPlayer** dentro de un
+`TextToSpeech` mediante un plugin Kotlin propio (`dev.kora.reader.tts`). La
+lectura publica una `MediaSession` de Media3 dentro de un
 `MediaSessionService`: la reproducción continúa en segundo plano, con la
 pantalla apagada y con controles en la notificación y la pantalla de bloqueo.
+Los audiolibros M4B/MP3 usan **Media3 ExoPlayer** dentro de otro
+`MediaSessionService` con el mismo tipo de controles.
 El temporizador de sueño y el ajuste opcional de mantener la pantalla encendida
 también viven en el servicio nativo. La generación, importación y transcripción
 de audiolibros siguen reservadas a escritorio. El código nativo del reproductor
-está en `app/src/main/java/dev/kora/reader/audio/`; si vuelves a ejecutar
+está en `app/src/main/java/dev/kora/reader/audio/` y el del TTS en
+`app/src/main/java/dev/kora/reader/tts/`; si vuelves a ejecutar
 `tauri android init`, revisa que el generador no haya sobrescrito esas clases.
 Las dependencias nativas de OCR (Tesseract/Leptonica), PDFium, Piper/ONNX y
 Whisper quedan detrás de `cfg` y devuelven un error claro hasta empaquetarlas
@@ -675,9 +679,11 @@ el panel «Índice».
 - **Escritorio:** Piper (`piper-rs` + ONNX Runtime) sintetiza y `rodio`/`cpal`
   reproduce. La pausa y la reanudación son reales y el evento `phrase_end`
   llega cuando termina el audio.
-- **Android:** `tauri-plugin-tts` envuelve `TextToSpeech`. Como la API nativa no
-  permite pausar, `pause_tts` detiene la locución y `resume_tts` repite la
-  frase actual.
+- **Android:** un plugin Kotlin propio envuelve `TextToSpeech` y publica una
+  `MediaSession` de Media3 con un `MediaSessionService`. La tarjeta de la
+  pantalla de bloqueo muestra libro, capítulo, portada y controles de
+  play/pausa/stop. Como la API nativa no permite pausar, `pause_tts` detiene la
+  locución y `resume_tts` repite la frase actual.
 
 El catálogo de voces Piper tiene dos voces por idioma:
 
@@ -709,6 +715,33 @@ emite:
 
 En EPUB los offsets son unidades UTF-16 del texto del capítulo, los mismos que
 usan las anotaciones. En PDF son índices de palabra y `offsetEnd` es exclusivo.
+
+### Pantalla de bloqueo y segundo plano (Android)
+
+Cada sesión de TTS publica metadatos (libro, capítulo, autor y portada) en una
+`MediaSession` de Media3. `TtsPlaybackService` extiende `MediaSessionService` y
+mantiene el servicio en primer plano con una notificación de tipo
+`mediaPlayback`:
+
+- La tarjeta de la pantalla de bloqueo muestra el título, el capítulo y la
+  portada del libro.
+- Play/pausa/stop funcionan desde la notificación, la pantalla de bloqueo y los
+  auriculares. La pausa detiene la locución; al reanudar se repite la frase
+  actual, porque `TextToSpeech` no tiene pausa nativa.
+- Un `PARTIAL_WAKE_LOCK` mantiene vivo el proceso mientras la lectura está
+  activa; se libera al pausar, terminar o cerrar la sesión.
+- Si el libro no tiene portada, se genera una portada editorial de respaldo con
+  el título y el autor, siguiendo el lenguaje visual de Kora. La composición
+  («Ahora suena») se diseñó con Google Stitch y se reproduce en
+  `DefaultTtsArtwork`; el diseño de referencia está en
+  `docs/tts-ahora-suena-stitch.png`.
+- El motor `TextToSpeech` y el `MediaSession` viven en un singleton de proceso
+  (`TtsPlaybackRuntime`), no en la Activity, para sobrevivir a la recreación de
+  la pantalla.
+- El autoavance de capítulo sigue viviendo en el frontend; con la pantalla
+  bloqueada el audio continúa dentro del capítulo actual.
+
+El código nativo está en `app/src/main/java/dev/kora/reader/tts/`.
 
 ### Preprocesador expresivo
 
@@ -829,28 +862,32 @@ valida el formato (PNG, JPG o WebP), la guarda deduplicada por SHA-256 en
 `assets/avatars/` y actualiza `accounts.avatar_hash`/`avatar_ext`. La imagen se
 muestra siempre en un círculo y se incluye en las copias de seguridad.
 
-### Clave de conexión
+### Vincular dispositivos
 
-Formato `usuario-XXXX-XXXX` (base32 Crockford). El QR usa:
+La vinculación no usa la clave permanente de la cuenta ni pide el PIN. El
+dispositivo que muestra el código crea un ticket en memoria con:
+
+- Un código numérico de 6 dígitos.
+- Un `ticket_id` aleatorio.
+- Caducidad de 2 minutos y cinco intentos.
+
+El QR de un solo uso usa:
 
 ```text
-kora://pair?v=1&u=<usuario>&k=<clave>&a=<account_hint>&exp=<unix>
+kora://pair?v=2&t=<ticket>&c=<code>&h=<ip:puerto>&f=<huella>&exp=<unix>
 ```
 
-`rotate_connection_key(pin)` invalida los QR y sesiones pendientes, pero no
-los dispositivos ya emparejados.
+El flujo reutiliza SPAKE2 sobre QUIC:
 
-### SPAKE2 y SAS
+1. La contraseña es `HKDF-SHA256(código, salt=nonce del anfitrión)`.
+2. Ambos calculan un SAS interno; no se muestra ni se teclea.
+3. El invitado confirma el SAS automáticamente y el anfitrión solo guarda el
+   dispositivo cuando la confirmación coincide.
+4. Se fija la huella TLS y se marca el dispositivo como `trusted`.
+5. Se lanza el primer `sync_now` y se activa el auto-sync.
 
-El pairing usa `spake2` sobre `Ed25519Group`:
-
-1. `w = Argon2id(parte_aleatoria, salt=account_id, m=64 MB, t=3)`.
-2. Intercambio SPAKE2 sobre QUIC.
-3. `SAS = HKDF-SHA256(K_s, info="sas", salt=hash del transcript)` → 6 dígitos.
-4. El usuario confirma el SAS en ambos dispositivos con `confirm_sas`.
-5. Cada cuenta firma la clave pública del dispositivo del otro; se guardan
-   ambas firmas y se marca el dispositivo como `trusted`.
-6. Se lanza el primer `sync_now`.
+La clave `usuario-XXXX-XXXX` sigue existiendo para compatibilidad, pero ya no
+forma parte del flujo de vinculación.
 
 ### Shares
 
@@ -880,8 +917,8 @@ grandes en cada `sync_now`.
 
 Estado pendiente de esta fase:
 
-- La lectura de QR con cámara queda para el plugin móvil de barcode; en
-  escritorio se pega la clave o el enlace.
+- La vinculación de dispositivos ya incluye escáner QR en móvil; para shares
+  en escritorio se pega la clave o el enlace.
 - Compartir perfiles de voz clonada (`scope_type = voice`) está deshabilitado
   en la UI y devuelve `unsupported` al aceptar.
 - La revocación de un share ya aceptado en modo `read` requiere quitarlo desde
@@ -978,18 +1015,18 @@ primera vez que arranca sync. La clave privada queda en
 `AppLocalData/sync/device.key` con permisos `0600` y el certificado en
 `sync/device.crt`. La huella SHA-256 del certificado es la identidad estable.
 
-El emparejamiento se anuncia por mDNS con `purpose=pair` y un código **SAS** de
-6 caracteres derivado de ambas huellas. El usuario compara el código en los dos
-dispositivos y confirma. El peer se guarda en `devices` con
-`certificate_fingerprint`, `trusted=1` y su último `host:puerto`.
+La vinculación se anuncia por mDNS con `purpose=pair` y el `ticket_id`, sin
+enviar el código por la red. El invitado puede descubrir el dispositivo, pegar
+el enlace del QR o introducir la IP manualmente. El peer se guarda en `devices`
+con `certificate_fingerprint`, `trusted=1` y su último `host:puerto`.
 
 ### Descubrimiento y transporte
 
-- `mdns-sd` navega `_kora._udp.local.` de forma pasiva mientras sync está
-  activo. Solo se registra un servicio con `purpose=pair` o `purpose=share`
-  cuando la pantalla correspondiente está abierta.
-- El TXT incluye `v=1`, `purpose`, `account_hint`, `sas_prefix`, `device_id`,
-  `fingerprint` y `name`.
+- `mdns-sd` navega `_kora._udp.local.` mientras sync está activo. Se anuncia
+  presencia con `purpose=sync`, y se cambia a `purpose=pair` o `purpose=share`
+  mientras la pantalla correspondiente está abierta.
+- El TXT incluye `v=2`, `purpose`, `ticket`, `account_hint`, `sas_prefix`,
+  `device_id`, `fingerprint`, `name` y `platform`.
 - `quinn` abre QUIC sobre UDP (puerto `47821`, con fallback efímero) y `rustls`
   exige certificado de cliente y servidor. La confianza real se comprueba
   después del handshake contra la huella guardada; un certificado distinto
@@ -1252,7 +1289,7 @@ Ajustes → Modo ensayo.
    y validación de mDNS/QUIC en Android. La importación de audiolibros ya usa
    metadatos nativos y capítulos fijos de diez minutos; falta la transcripción
    en el móvil.
-3. Lector de QR con cámara móvil, compartir perfiles de voz y propagación
+3. Lector de QR de shares en móvil, compartir perfiles de voz y propagación
    automática de revocaciones.
 4. Sincronización de audiolibros M4B y perfiles `.koravoice`.
 5. Selector de archivos nativo en Android: las URIs `content://` ya se

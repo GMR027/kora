@@ -795,7 +795,9 @@
     }
   }
 
-  async function chooseCover(book: BookSummary) {
+  async function chooseCover(book: BookSummary | null) {
+    if (!book) return;
+
     try {
       const selected = await open({
         multiple: false,
@@ -806,10 +808,16 @@
       if (typeof selected !== "string") return;
 
       busy = book.id;
-      const updated = await libraryReplaceCover(book.id, selected);
-      books = books.map((item) => (item.id === updated.id ? updated : item));
-      brokenCovers = { ...brokenCovers, [book.id]: false };
-      notifySuccess(translate("library.cover"), book.title);
+      let staged = selected;
+      try {
+        staged = stageImportSource(selected);
+        const updated = await libraryReplaceCover(book.id, staged);
+        books = books.map((item) => (item.id === updated.id ? updated : item));
+        brokenCovers = { ...brokenCovers, [book.id]: false };
+        notifySuccess(translate("library.cover"), book.title);
+      } finally {
+        if (staged !== selected) discardImportSource(staged);
+      }
     } catch (cause) {
       notifyError(cause);
     } finally {
@@ -1699,8 +1707,9 @@
       <div class="menu-actions">
         <button
           onclick={() => {
+            const target = menuBook;
             closeMenu();
-            onRead?.(menuBook.id);
+            onRead?.(target.id);
           }}
         >
           <Icon name="book" size={17} /> {$t("library.open")}
@@ -1729,8 +1738,9 @@
         {/if}
         <button
           onclick={() => {
+            const target = menuBook;
             closeMenu();
-            void chooseCover(menuBook);
+            void chooseCover(target);
           }}
         >
           <Icon name="folder" size={17} /> {$t("library.cover")}
@@ -1781,8 +1791,9 @@
         <button
           class="danger"
           onclick={() => {
+            const target = menuBook;
             closeMenu();
-            void removeBook(menuBook);
+            void removeBook(target);
           }}
           disabled={busy === menuBook.id}
         >

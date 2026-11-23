@@ -625,7 +625,9 @@ export interface ModelDownloadProgress {
 export interface PeerInfo {
   id: string;
   name: string;
+  platform: string;
   address: string | null;
+  addresses: string[];
   port: number;
   lastSeen: string | null;
   trusted: boolean;
@@ -635,6 +637,7 @@ export interface PeerInfo {
   fingerprint: string;
   fullname: string;
   protocolVersion: number;
+  ticket: string | null;
 }
 
 export interface SyncStatus {
@@ -649,22 +652,64 @@ export interface SyncStatus {
   sharing: boolean;
   mirrorActive: boolean;
   mirrorHosting: boolean;
+  syncing: boolean;
+  autoSync: boolean;
+  onlinePeers: number;
+  lastError: string | null;
 }
 
-export interface PairingInfo {
-  deviceId: string;
-  deviceName: string;
-  fingerprint: string;
-  sasPrefix: string;
-  accountHint: string;
+export interface PairingTicketView {
+  code: string;
+  qrSvg: string;
+  uri: string;
+  expiresAt: number;
+  addresses: string[];
   port: number;
+  deviceName: string;
 }
 
-export interface PairResult {
-  deviceId: string;
-  deviceName: string;
-  sas: string;
+export interface JoinPairingInput {
+  peerId?: string | null;
+  address?: string | null;
+  code?: string | null;
+  uri?: string | null;
+}
+
+export interface PairedDeviceInfo {
+  id: string;
+  name: string;
+  platform: string;
   fingerprint: string;
+  accountHint: string;
+}
+
+export interface SyncDiagnostics {
+  mdnsActive: boolean;
+  listenPort: number;
+  localAddresses: string[];
+  autoSync: boolean;
+  trustedPeers: number;
+  onlinePeers: number;
+  lastError: string | null;
+}
+
+export interface SyncProgressEvent {
+  peerId: string;
+  direction: "send" | "receive";
+  resourceKind: string;
+  current: number;
+  total: number;
+}
+
+export interface PairingStateEvent {
+  state:
+    | "waiting"
+    | "connecting"
+    | "verifying"
+    | "paired"
+    | "error";
+  message: string;
+  peerName: string | null;
 }
 
 export interface SyncOutcome {
@@ -1315,24 +1360,6 @@ export interface AccountCreated {
 
 export interface AccountResetInfo {
   requiresRestart: boolean;
-}
-
-export interface PairingSessionView {
-  role: "host" | "client";
-  key: string | null;
-  uri: string | null;
-  qrSvg: string | null;
-  sas: string | null;
-  accountHint: string;
-  expiresAt: number;
-}
-
-export interface AccountPairResult {
-  deviceId: string;
-  deviceName: string;
-  username: string;
-  sas: string;
-  fingerprint: string;
 }
 
 export type ResourceType =

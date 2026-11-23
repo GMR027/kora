@@ -19,7 +19,8 @@ use crate::storage::{
 };
 use crate::tts::{
     CharacterInfo, EngineInfo, ExpressiveSettings, NARRATOR, SessionPlan, SpeechSequence,
-    SynthesisRequest, TtsStatus, VoiceDescriptor, build_from_text, build_from_words, content_hash,
+    SynthesisRequest, TtsMediaMetadata, TtsStatus, VoiceDescriptor, build_from_text,
+    build_from_words, content_hash,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -67,6 +68,7 @@ struct PreparedSequence {
     sequence: SpeechSequence,
     preferences: TtsPreferences,
     language: Option<String>,
+    media: TtsMediaMetadata,
 }
 
 #[tauri::command]
@@ -190,6 +192,7 @@ pub async fn start_tts(
         rate: prepared.preferences.rate as f32,
         pitch: prepared.preferences.pitch as f32,
         excerpt_end: excerpt.map(|(_, end)| end),
+        media: prepared.media,
     };
 
     state.tts_session.start(app, plan).await
@@ -378,12 +381,20 @@ async fn prepare_sequence(
                 ));
             }
 
+            let chapter_title = chapter.title.trim();
+            let chapter_title = if chapter_title.is_empty() {
+                format!("Sección {}", section + 1)
+            } else {
+                chapter_title.to_string()
+            };
+            let media = media_metadata(state, &book, chapter_title);
             let hash = content_hash(&source.text, &settings);
             if let Some(sequence) = load_cached_sequence(state, book_id, section, &hash).await? {
                 return Ok(PreparedSequence {
                     sequence,
                     preferences,
-                    language: book.language,
+                    language: book.language.clone(),
+                    media,
                 });
             }
 
@@ -393,6 +404,7 @@ async fn prepare_sequence(
                 sequence,
                 preferences,
                 language: book.language,
+                media,
             })
         }
         BookFormat::Pdf => {
@@ -416,12 +428,14 @@ async fn prepare_sequence(
                 ));
             }
 
+            let media = media_metadata(state, &book, format!("Página {}", section + 1));
             let hash = content_hash(&text, &settings);
             if let Some(sequence) = load_cached_sequence(state, book_id, section, &hash).await? {
                 return Ok(PreparedSequence {
                     sequence,
                     preferences,
-                    language: book.language,
+                    language: book.language.clone(),
+                    media,
                 });
             }
 
@@ -431,8 +445,18 @@ async fn prepare_sequence(
                 sequence,
                 preferences,
                 language: book.language,
+                media,
             })
         }
+    }
+}
+
+fn media_metadata(state: &AppState, book: &Book, artist: String) -> TtsMediaMetadata {
+    TtsMediaMetadata {
+        title: book.title.clone(),
+        artist,
+        album: book.author.clone(),
+        cover_path: crate::commands::audiobooks::cover_path(state, book),
     }
 }
 
@@ -487,12 +511,20 @@ async fn prepare_excerpt(
                 ));
             }
 
+            let chapter_title = chapter.title.trim();
+            let chapter_title = if chapter_title.is_empty() {
+                format!("Sección {}", section + 1)
+            } else {
+                chapter_title.to_string()
+            };
+            let media = media_metadata(state, &book, chapter_title);
             let mut sequence = build_from_text(section, &excerpt, &settings);
             shift_offsets(&mut sequence, start);
             Ok(PreparedSequence {
                 sequence,
                 preferences,
                 language: book.language,
+                media,
             })
         }
         BookFormat::Pdf => {
@@ -505,6 +537,7 @@ async fn prepare_excerpt(
                 ));
             }
 
+            let media = media_metadata(state, &book, format!("Página {}", section + 1));
             let mut sequence = build_from_words(section, &layer.words[start..end], &settings);
             shift_offsets(&mut sequence, start);
             if sequence.chunks.is_empty() {
@@ -516,6 +549,7 @@ async fn prepare_excerpt(
                 sequence,
                 preferences,
                 language: book.language,
+                media,
             })
         }
     }

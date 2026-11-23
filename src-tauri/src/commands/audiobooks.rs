@@ -1836,7 +1836,7 @@ async fn generation_view(state: &AppState) -> Result<AudiobookGenerationView> {
     })
 }
 
-fn cover_path(state: &AppState, book: &Book) -> Option<String> {
+pub(crate) fn cover_path(state: &AppState, book: &Book) -> Option<String> {
     let hash = book.cover_hash.as_deref()?;
     let extension = book.cover_ext.as_deref()?;
     let reference = AssetRef {

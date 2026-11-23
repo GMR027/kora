@@ -50,6 +50,8 @@ import type {
   NotesExportResult,
   PageTextLayer,
   PdfConversionPreview,
+  PairedDeviceInfo,
+  PairingTicketView,
   PeerInfo,
   PlaybackSnapshot,
   PomodoroConfig,
@@ -68,6 +70,7 @@ import type {
   ShareView,
   StorageUsage,
   SyncDeviceInfo,
+  SyncDiagnostics,
   SyncStatus,
   SynthesisOutput,
   TrashedBookSummary,
@@ -634,6 +637,10 @@ let demoSyncStatus: SyncStatus = {
   sharing: false,
   mirrorActive: false,
   mirrorHosting: false,
+  syncing: false,
+  autoSync: true,
+  onlinePeers: 0,
+  lastError: null,
 };
 let demoSyncSelections = new Map<
   string,
@@ -710,7 +717,9 @@ function seedDemoPeers(): PeerInfo[] {
     {
       id: "peer-marta",
       name: "Portátil de Marta",
+      platform: "linux",
       address: "192.168.1.42",
+      addresses: ["192.168.1.42"],
       port: 43_777,
       lastSeen: daysAgo(0),
       trusted: true,
@@ -720,11 +729,14 @@ function seedDemoPeers(): PeerInfo[] {
       fingerprint: "8c:41:2e:9a:74:0b:55:de",
       fullname: "Marta Ríos",
       protocolVersion: 2,
+      ticket: null,
     },
     {
       id: "peer-salon",
       name: "Kora del salón",
+      platform: "android",
       address: "192.168.1.18",
+      addresses: ["192.168.1.18"],
       port: 43_777,
       lastSeen: daysAgo(1),
       trusted: true,
@@ -734,6 +746,7 @@ function seedDemoPeers(): PeerInfo[] {
       fingerprint: "2a:0f:63:bd:11:84:7e:30",
       fullname: "Kora del salón",
       protocolVersion: 2,
+      ticket: null,
     },
   ];
 }
@@ -890,6 +903,10 @@ function resetSyncAndSettingsDemo() {
     sharing: false,
     mirrorActive: false,
     mirrorHosting: false,
+    syncing: false,
+    autoSync: true,
+    onlinePeers: demoPeers.length,
+    lastError: null,
   };
   demoAuditSeq = 1;
   demoAudit = [
@@ -4228,6 +4245,10 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
         sharing: true,
         mirrorActive: mirror.active,
         mirrorHosting: mirror.hosting,
+        syncing: false,
+        autoSync: demoSyncStatus.autoSync,
+        onlinePeers: 2,
+        lastError: null,
       };
 
     case "stop_share":
@@ -4243,6 +4264,10 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
         sharing: false,
         mirrorActive: mirror.active,
         mirrorHosting: mirror.hosting,
+        syncing: false,
+        autoSync: demoSyncStatus.autoSync,
+        onlinePeers: 2,
+        lastError: null,
       };
 
     case "weave_extracts": {
@@ -5380,6 +5405,85 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
       demoSyncStatus.sharing = false;
       emitSyncStatus();
       return clone(demoSyncStatus);
+
+    case "start_device_pairing":
+      return {
+        code: "482913",
+        qrSvg: shareQr(482),
+        uri: "kora://pair?v=2&t=demo&c=482913&h=192.168.1.10&p=47821&f=demo",
+        expiresAt: Math.floor(Date.now() / 1000) + 120,
+        addresses: ["192.168.1.10"],
+        port: 47_821,
+        deviceName: "Kora de demo",
+      } satisfies PairingTicketView;
+
+    case "join_device_pairing": {
+      const device = {
+        id: "peer-demo-new",
+        name: "Dispositivo de demo",
+        platform: "android",
+        fingerprint: "demo",
+        accountHint: "@demo",
+      } satisfies PairedDeviceInfo;
+      if (!demoPeers.some((peer) => peer.id === device.id)) {
+        demoPeers.push({
+          id: device.id,
+          name: device.name,
+          platform: device.platform,
+          address: "192.168.1.77",
+          addresses: ["192.168.1.77"],
+          port: 47_821,
+          lastSeen: isoNow(),
+          trusted: true,
+          accountHint: device.accountHint,
+          purpose: "sync",
+          sasPrefix: "",
+          fingerprint: device.fingerprint,
+          fullname: device.name,
+          protocolVersion: 2,
+          ticket: null,
+        });
+        demoAccountDevices = seedDemoDevices(demoPeers);
+      }
+      emit("sync::paired", device);
+      emitSyncStatus();
+      return device;
+    }
+
+    case "cancel_device_pairing":
+      demoSyncStatus.pairing = false;
+      return emitSyncStatus();
+
+    case "set_auto_sync":
+      demoSyncStatus.autoSync = Boolean(args.enabled);
+      return emitSyncStatus();
+
+    case "sync_now_all": {
+      if (!demoSyncStatus.running) startDemoSync();
+      const outcomes = demoPeers
+        .filter((peer) => peer.trusted)
+        .map((peer) => ({
+          peerId: peer.id,
+          sent: 4,
+          received: 3,
+          durationMs: 420,
+        }));
+      demoSyncStatus.lastSync = isoNow();
+      demoSyncStatus.pendingChanges = 0;
+      emitSyncStatus();
+      return outcomes;
+    }
+
+    case "get_sync_diagnostics":
+      return {
+        mdnsActive: true,
+        listenPort: demoSyncStatus.listenPort || 47_821,
+        localAddresses: ["192.168.1.10"],
+        autoSync: demoSyncStatus.autoSync,
+        trustedPeers: demoPeers.filter((peer) => peer.trusted).length,
+        onlinePeers: demoPeers.length,
+        lastError: null,
+      } satisfies SyncDiagnostics;
 
     case "sync_now": {
       const peerId = String(args.peerId ?? "");

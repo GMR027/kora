@@ -15,12 +15,15 @@ pub const SERVICE_TYPE: &str = "_kora._udp.local.";
 pub struct ServiceInfo {
     pub instance: String,
     pub name: String,
+    pub platform: String,
     pub port: u16,
     pub fingerprint: String,
     pub device_id: String,
     pub account_hint: String,
     pub sas_prefix: String,
     pub purpose: String,
+    pub version: u32,
+    pub ticket: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,7 +31,11 @@ pub struct ServiceInfo {
 pub struct PeerInfo {
     pub id: String,
     pub name: String,
+    pub platform: String,
     pub address: Option<String>,
+    /// Todas las direcciones resueltas, con `%scope` en IPv6 link-local.
+    #[serde(default)]
+    pub addresses: Vec<String>,
     pub port: u16,
     pub last_seen: Option<DateTime<Utc>>,
     pub trusted: bool,
@@ -38,6 +45,9 @@ pub struct PeerInfo {
     pub fingerprint: String,
     pub fullname: String,
     pub protocol_version: u32,
+    /// Ticket efímero que anuncia el dispositivo mientras muestra un código.
+    #[serde(default)]
+    pub ticket: Option<String>,
 }
 
 /// Descubrimiento mDNS. La navegación es pasiva y solo se registra el
@@ -113,15 +123,19 @@ impl MdnsDiscovery {
             .ok_or_else(|| KoraError::Internal("mDNS no iniciado".into()))?;
 
         let host = format!("{}.local.", service.instance.to_lowercase());
-        let properties = [
-            ("v".to_string(), "1".to_string()),
+        let mut properties = vec![
+            ("v".to_string(), service.version.to_string()),
             ("purpose".to_string(), service.purpose.clone()),
             ("account_hint".to_string(), service.account_hint.clone()),
             ("sas_prefix".to_string(), service.sas_prefix.clone()),
             ("device_id".to_string(), service.device_id.clone()),
             ("fingerprint".to_string(), service.fingerprint.clone()),
             ("name".to_string(), service.name.clone()),
+            ("platform".to_string(), service.platform.clone()),
         ];
+        if let Some(ticket) = &service.ticket {
+            properties.push(("ticket".to_string(), ticket.clone()));
+        }
         let info = mdns_sd::ServiceInfo::new(
             SERVICE_TYPE,
             &service.instance,
@@ -164,6 +178,13 @@ impl MdnsDiscovery {
         Ok(())
     }
 
+    pub fn is_running(&self) -> bool {
+        self.daemon
+            .lock()
+            .map(|daemon| daemon.is_some())
+            .unwrap_or(false)
+    }
+
     pub fn peers(&self) -> Vec<PeerInfo> {
         self.peers
             .read()
@@ -194,14 +215,51 @@ impl Default for MdnsDiscovery {
     }
 }
 
+pub(crate) fn ipv4_rank(ip: std::net::Ipv4Addr) -> u8 {
+    let octets = ip.octets();
+    if octets[0] == 192 && octets[1] == 168 {
+        0
+    } else if octets[0] == 10 {
+        1
+    } else if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+        2
+    } else if ip.is_private() {
+        3
+    } else {
+        4
+    }
+}
+
 fn peer_from_service(info: &mdns_sd::ResolvedService) -> Option<PeerInfo> {
     let device_id = info.get_property_val_str("device_id")?.to_string();
-    let address = info
+    let mut addresses: Vec<(u8, String)> = info
         .addresses
         .iter()
-        .find(|address| !address.is_loopback())
-        .or_else(|| info.addresses.iter().next())
-        .map(|address| address.to_ip_addr().to_string());
+        .filter_map(|address| match address {
+            mdns_sd::ScopedIp::V4(v4) => {
+                let ip = *v4.addr();
+                if ip.is_loopback() {
+                    None
+                } else {
+                    Some((ipv4_rank(ip), ip.to_string()))
+                }
+            }
+            mdns_sd::ScopedIp::V6(v6) => {
+                let ip = *v6.addr();
+                if ip.is_loopback() {
+                    None
+                } else {
+                    let scope = v6.scope_id().index;
+                    let rank = if ip.is_unicast_link_local() { 7 } else { 6 };
+                    Some((rank, format!("{ip}%{scope}")))
+                }
+            }
+            _ => None,
+        })
+        .collect();
+    addresses.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let addresses: Vec<String> = addresses.into_iter().map(|(_, address)| address).collect();
+    let address = addresses.first().cloned();
     let version = info
         .get_property_val_str("v")
         .and_then(|value| value.parse().ok())
@@ -213,7 +271,12 @@ fn peer_from_service(info: &mdns_sd::ResolvedService) -> Option<PeerInfo> {
             .get_property_val_str("name")
             .unwrap_or_else(|| info.get_hostname())
             .to_string(),
+        platform: info
+            .get_property_val_str("platform")
+            .unwrap_or_default()
+            .to_string(),
         address,
+        addresses,
         port: info.port,
         last_seen: Some(Utc::now()),
         trusted: false,
@@ -235,5 +298,6 @@ fn peer_from_service(info: &mdns_sd::ResolvedService) -> Option<PeerInfo> {
             .to_string(),
         fullname: info.fullname.clone(),
         protocol_version: version,
+        ticket: info.get_property_val_str("ticket").map(str::to_string),
     })
 }

@@ -5,6 +5,7 @@ pub mod audio;
 pub mod download;
 pub mod engine;
 pub mod expressive;
+pub mod media;
 pub mod neutts;
 #[cfg(not(target_os = "android"))]
 pub mod piper;
@@ -24,6 +25,7 @@ pub use expressive::{
     CharacterInfo, DIALOGUE, ExpressiveSettings, NARRATOR, SpeechChunk, SpeechSequence,
     build_from_text, build_from_words, content_hash,
 };
+pub use media::{TtsMediaMetadata, TtsMediaSession, TtsMediaState};
 pub use neutts::{EncodeResult, NeuTtsEngine, phonemize};
 #[cfg(not(target_os = "android"))]
 pub use piper::PiperEngine;
@@ -48,6 +50,7 @@ use crate::error::{KoraError, Result};
 #[derive(Default)]
 pub struct TtsService {
     engines: Vec<Arc<dyn TtsEngine>>,
+    media: Option<Arc<dyn TtsMediaSession>>,
 }
 
 impl TtsService {
@@ -75,7 +78,12 @@ impl TtsService {
         {
             let _ = root;
             let mut service = Self::new();
-            service.register(Arc::new(android::AndroidTtsEngine::new(app.clone())));
+            let engine = Arc::new(android::AndroidTtsEngine::new(app.clone()));
+            service.register(engine.clone());
+            service.media = Some(engine);
+            if let Err(error) = android::install_control_relay() {
+                tracing::warn!(%error, "no se pudo registrar el canal de control TTS");
+            }
             service
         }
     }
@@ -152,5 +160,26 @@ impl TtsService {
             let _ = engine.stop().await;
         }
         Ok(())
+    }
+
+    pub async fn media_start(&self, metadata: &TtsMediaMetadata) -> Result<()> {
+        match self.media.as_ref() {
+            Some(media) => media.start(metadata).await,
+            None => Ok(()),
+        }
+    }
+
+    pub async fn media_state(&self, state: TtsMediaState) -> Result<()> {
+        match self.media.as_ref() {
+            Some(media) => media.set_state(state).await,
+            None => Ok(()),
+        }
+    }
+
+    pub async fn media_stop(&self) -> Result<()> {
+        match self.media.as_ref() {
+            Some(media) => media.stop().await,
+            None => Ok(()),
+        }
     }
 }

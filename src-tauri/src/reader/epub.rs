@@ -11,6 +11,7 @@ use super::DocumentParser;
 use super::model::{ChapterContent, Document, DocumentFormat, Locator, Section};
 use super::sanitize;
 use crate::error::{KoraError, Result};
+use crate::html::plain_text;
 
 /// Límites para no inyectar capítulos gigantes en el WebView. Las imágenes
 /// que superan el límite se descartan en lugar de romper el capítulo.
@@ -75,7 +76,7 @@ impl EpubParser {
 
         let description = metadata
             .description()
-            .map(|description| description.value().trim().to_string())
+            .map(|description| plain_text(description.value()))
             .filter(|description| !description.is_empty());
 
         let mut subjects: Vec<String> = metadata
@@ -435,7 +436,7 @@ mod tests {
     <dc:creator>Autora</dc:creator>
     <dc:language>es</dc:language>
     <dc:publisher>Editorial</dc:publisher>
-    <dc:description>Descripción</dc:description>
+    <dc:description>&lt;p class="sinopsis"&gt;Descripción&lt;/p&gt;</dc:description>
     <dc:subject>Ficción</dc:subject>
     <dc:subject>Ciencia ficción</dc:subject>
     <meta property="dcterms:modified">2020-01-01T00:00:00Z</meta>
@@ -515,6 +516,7 @@ mod tests {
         assert_eq!(inspection.author.as_deref(), Some("Autora"));
         assert_eq!(inspection.language.as_deref(), Some("es"));
         assert_eq!(inspection.publisher.as_deref(), Some("Editorial"));
+        assert_eq!(inspection.description.as_deref(), Some("Descripción"));
         assert!(inspection.subjects.contains(&"Ciencia ficción".to_string()));
         assert!(inspection.subjects.contains(&"Ficción".to_string()));
         assert_eq!(inspection.sections.len(), 2);

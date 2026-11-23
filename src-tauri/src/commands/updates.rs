@@ -5,8 +5,7 @@ use tauri::AppHandle;
 
 use crate::error::{KoraError, Result};
 
-const DEFAULT_MANIFEST_URL: &str =
-    "https://kora.iguzman.com.mx/downloads/latest.json";
+const DEFAULT_MANIFEST_URL: &str = "https://kora.iguzman.com.mx/downloads/latest.json";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -191,9 +190,7 @@ pub async fn check_app_update(app: AppHandle, manifest_url: Option<String>) -> R
         manifest_url,
         android_url,
         android_sha256,
-        release_url: manifest
-            .release_url
-            .or_else(|| Some(manifest.url)),
+        release_url: manifest.release_url.or(Some(manifest.url)),
         deb_url,
         rpm_url,
     })

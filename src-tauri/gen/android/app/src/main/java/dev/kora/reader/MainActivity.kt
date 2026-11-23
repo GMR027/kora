@@ -310,11 +310,15 @@ class MainActivity : TauriActivity() {
         "audio/flac", "audio/x-flac" -> ".flac"
         "audio/ogg" -> ".ogg"
         "audio/opus" -> ".opus"
+        "image/jpeg", "image/jpg", "image/pjpeg" -> ".jpg"
+        "image/png" -> ".png"
+        "image/webp" -> ".webp"
         else -> ""
       }
       var name = sanitizeFileName(rawName)
       val knownExtensions = listOf(
         ".epub", ".pdf", ".mp3", ".m4a", ".m4b", ".aac", ".flac", ".ogg", ".opus",
+        ".jpg", ".jpeg", ".png", ".webp",
       )
       if (extension.isNotEmpty() && knownExtensions.none { name.endsWith(it, ignoreCase = true) }) {
         name += extension

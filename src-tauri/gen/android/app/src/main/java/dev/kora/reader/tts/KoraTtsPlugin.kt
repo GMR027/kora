@@ -1,0 +1,160 @@
+package dev.kora.reader.tts
+
+import android.app.Activity
+import app.tauri.annotation.Command
+import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.TauriPlugin
+import app.tauri.plugin.Channel
+import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSArray
+import app.tauri.plugin.JSObject
+import app.tauri.plugin.Plugin
+
+@InvokeArg
+class TtsSpeakArgs {
+    var text: String = ""
+    var language: String? = null
+    var voiceId: String? = null
+    var rate: Float = 1f
+    var pitch: Float = 1f
+    var volume: Float = 1f
+}
+
+@InvokeArg
+class TtsStartSessionArgs {
+    var title: String = ""
+    var artist: String = ""
+    var album: String? = null
+    var coverPath: String? = null
+}
+
+@InvokeArg
+class TtsSessionStateArgs {
+    var state: String = ""
+    var error: String? = null
+}
+
+@InvokeArg
+class TtsSetupControlRelayArgs {
+    lateinit var channel: Channel
+}
+
+@TauriPlugin
+class KoraTtsPlugin(private val activity: Activity) : Plugin(activity) {
+    private val runtime: TtsPlaybackRuntime
+        get() {
+            TtsPlaybackRuntime.ensure(activity.applicationContext)
+            return TtsPlaybackRuntime
+        }
+
+    @Command
+    fun getVoices(invoke: Invoke) {
+        runCatching {
+            runtime.voices()
+        }.onSuccess { voices ->
+            val array = JSArray()
+            for (voice in voices) {
+                array.put(
+                    JSObject()
+                        .put("id", voice.id)
+                        .put("name", voice.displayName())
+                        .put("language", voice.languageTag)
+                )
+            }
+            invoke.resolve(JSObject().put("voices", array))
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo leer el catálogo de voces")
+        }
+    }
+
+    @Command
+    fun speak(invoke: Invoke) {
+        val args = invoke.parseArgs(TtsSpeakArgs::class.java)
+        runCatching {
+            runtime.speak(
+                text = args.text,
+                language = args.language,
+                voiceId = args.voiceId,
+                rate = args.rate,
+                pitch = args.pitch,
+                volume = args.volume,
+            )
+        }.onSuccess { error ->
+            if (error != null) {
+                invoke.reject(error)
+            } else {
+                invoke.resolve(JSObject().put("success", true))
+            }
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo iniciar la locución")
+        }
+    }
+
+    @Command
+    fun utteranceStatus(invoke: Invoke) {
+        val (state, error) = runtime.utteranceStatus()
+        val payload = JSObject().put("state", state)
+        if (!error.isNullOrBlank()) payload.put("error", error)
+        invoke.resolve(payload)
+    }
+
+    @Command
+    fun stop(invoke: Invoke) {
+        runCatching {
+            runtime.stopSpeech()
+        }.onSuccess {
+            invoke.resolve(JSObject().put("success", true))
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo detener la locución")
+        }
+    }
+
+    @Command
+    fun startSession(invoke: Invoke) {
+        val args = invoke.parseArgs(TtsStartSessionArgs::class.java)
+        runCatching {
+            runtime.startSession(
+                title = args.title,
+                artist = args.artist,
+                album = args.album,
+                coverPath = args.coverPath,
+            )
+        }.onSuccess {
+            invoke.resolve(JSObject().put("success", true))
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo iniciar la sesión de lectura")
+        }
+    }
+
+    @Command
+    fun setSessionState(invoke: Invoke) {
+        val args = invoke.parseArgs(TtsSessionStateArgs::class.java)
+        runCatching {
+            runtime.setSessionState(args.state, args.error)
+        }.onSuccess {
+            invoke.resolve(JSObject().put("success", true))
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo actualizar la sesión de lectura")
+        }
+    }
+
+    @Command
+    fun stopSession(invoke: Invoke) {
+        runCatching {
+            runtime.stopSession()
+        }.onSuccess {
+            invoke.resolve(JSObject().put("success", true))
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo cerrar la sesión de lectura")
+        }
+    }
+
+    @Command
+    fun setupControlRelay(invoke: Invoke) {
+        val args = invoke.parseArgs(TtsSetupControlRelayArgs::class.java)
+        // No pasar por `runtime` aquí: eso inicializaría TextToSpeech y el
+        // MediaSession al arrancar la app, antes de que el usuario pida leer.
+        TtsPlaybackRuntime.setControlChannel(args.channel)
+        invoke.resolve()
+    }
+}

@@ -15,8 +15,8 @@ pub use protocol::{
     Handoff, Hello, Manifest, Message, MirrorTtsState, Purpose, ResourceRef, SyncResource,
 };
 pub use service::{
-    AccountPairResult, EventSink, NullEventSink, PairResult, PairingInfo, PairingSessionView,
-    SyncOutcome, SyncService, TauriEventSink,
+    EventSink, JoinPairingInput, NullEventSink, PairedDeviceView, PairingState, PairingTicketView,
+    SyncDiagnostics, SyncOutcome, SyncProgress, SyncService, TauriEventSink,
 };
 
 use chrono::{DateTime, Utc};
@@ -36,4 +36,8 @@ pub struct SyncStatus {
     pub sharing: bool,
     pub mirror_active: bool,
     pub mirror_hosting: bool,
+    pub syncing: bool,
+    pub auto_sync: bool,
+    pub online_peers: usize,
+    pub last_error: Option<String>,
 }

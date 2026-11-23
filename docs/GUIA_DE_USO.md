@@ -190,9 +190,16 @@ Cada cambio de pantalla tiene una transición suave y respeta
 
 ## Sync
 
-- Inicia Sync para anunciar el dispositivo en la LAN.
-- Empareja desde **Cuenta → Emparejar** con SPAKE2 + SAS.
-- En **Sync** puedes ver peers, sincronizar, detener el anuncio y elegir qué
+- Abre **Sync → Vincular dispositivo** en ambos dispositivos.
+- Uno muestra un código de 6 dígitos y un QR temporal; en el otro elige el
+  dispositivo, escribe el código o escanea el QR.
+- No hace falta PIN ni clave de conexión. La verificación SPAKE2 y la huella
+  TLS se completan automáticamente.
+- Si el dispositivo no aparece por mDNS, introduce su IP:puerto o pega el
+  enlace del QR.
+- La sincronización automática arranca al abrir la app y se puede desactivar
+  en la tarjeta de estado. **Sincronizar ahora** fuerza una pasada manual.
+- En **Sync** puedes ver dispositivos, estado online, progreso y elegir qué
   categorías compartes con cada dispositivo.
 - El modo compartir anuncia el dispositivo para handoff, lectura en espejo y
   transferencia de shares.
@@ -205,11 +212,12 @@ Cada cambio de pantalla tiene una transición suave y respeta
 - Pulsa la foto de perfil para subir una imagen PNG, JPG o WebP. Kora la
   recorta en cuadrado, la guarda en `assets/avatars/` y la muestra en círculo.
   **Quitar foto** vuelve a las iniciales del nombre.
-- Muestra/rota la clave de conexión y su QR.
+- La clave de conexión ya no se usa para vincular dispositivos; queda como dato avanzado de la cuenta.
 - Cambia el PIN.
 - **¿Olvidaste tu PIN?** permite restablecerlo sin el anterior. Se regenera la
-  identidad de la cuenta y la clave de conexión; la biblioteca y las notas se
-  conservan, pero los dispositivos y shares anteriores dejan de ser válidos.
+  identidad de la cuenta; la biblioteca y las notas se conservan, pero los
+  dispositivos y shares anteriores dejan de ser válidos y hay que vincularlos
+  de nuevo.
 - **Zona peligrosa → Eliminar cuenta y datos** borra cuenta, biblioteca, notas,
   audiolibros y voces clonadas al reiniciar Kora. Los modelos de IA descargables
   se conservan.

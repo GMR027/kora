@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::reader::{apply_metadata, apply_pdf_metadata, owned_book};
 use crate::error::{KoraError, Result};
+use crate::html::clean_description;
 use crate::reader::ReaderService;
 use crate::state::AppState;
 use crate::storage::{
@@ -44,7 +46,7 @@ pub async fn library_list(state: State<'_, AppState>) -> Result<Vec<BookSummary>
             added_at: row.added_at,
             language: row.language,
             publisher: row.publisher,
-            description: row.description,
+            description: clean_description(row.description),
             last_read_at: row.last_read_at,
             progress: row.progress as f32,
             origin: row.origin,
@@ -850,7 +852,7 @@ pub async fn library_update(
     }
 
     let author = clean_optional(author);
-    let description = clean_optional(description);
+    let description = clean_description(clean_optional(description));
     let language = clean_optional(language);
     let publisher = clean_optional(publisher);
 
@@ -1116,7 +1118,7 @@ pub(crate) async fn book_summary_for(storage: &Storage, book: &Book) -> Result<B
         added_at: book.added_at,
         language: book.language.clone(),
         publisher: book.publisher.clone(),
-        description: book.description.clone(),
+        description: clean_description(book.description.clone()),
         last_read_at,
         progress: percent,
         origin: book.origin,
@@ -1173,6 +1175,10 @@ fn detect_book_format(path: &Path) -> Result<BookFormat> {
 }
 
 fn detect_image_extension(path: &Path) -> Result<&'static str> {
+    if let Some(extension) = sniff_image_extension(path) {
+        return Ok(extension);
+    }
+
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -1186,5 +1192,64 @@ fn detect_image_extension(path: &Path) -> Result<&'static str> {
         other => Err(KoraError::Unsupported(format!(
             "formato de portada no soportado: {other:?} (se espera jpg, png o webp)"
         ))),
+    }
+}
+
+/// Reconoce la portada por su firma. Así no depende de que el nombre del
+/// archivo traiga extensión (por ejemplo, al copiarlo desde una URI de Android).
+fn sniff_image_extension(path: &Path) -> Option<&'static str> {
+    let mut header = [0u8; 12];
+    let read = std::fs::File::open(path).ok()?.read(&mut header).ok()?;
+    let header = &header[..read];
+
+    if header.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("jpg");
+    }
+    if header.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("png");
+    }
+    if header.len() >= 12 && &header[..4] == b"RIFF" && &header[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_image_extension;
+    use std::io::Write;
+
+    fn temp_image(suffix: &str, bytes: &[u8]) -> tempfile::NamedTempFile {
+        let mut file = tempfile::Builder::new()
+            .suffix(suffix)
+            .tempfile()
+            .expect("archivo temporal");
+        file.write_all(bytes).expect("escribir imagen");
+        file
+    }
+
+    #[test]
+    fn detects_cover_format_by_content() {
+        let jpeg = temp_image("", &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]);
+        assert_eq!(detect_image_extension(jpeg.path()).expect("jpeg"), "jpg");
+
+        let png = temp_image("", &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(detect_image_extension(png.path()).expect("png"), "png");
+
+        let webp = temp_image("", b"RIFF\x24\x00\x00\x00WEBP");
+        assert_eq!(detect_image_extension(webp.path()).expect("webp"), "webp");
+    }
+
+    #[test]
+    fn falls_back_to_extension_when_content_is_unknown() {
+        let jpg = temp_image(".jpg", b"no es una imagen");
+        assert_eq!(detect_image_extension(jpg.path()).expect("jpg"), "jpg");
+    }
+
+    #[test]
+    fn rejects_unsupported_formats() {
+        let heic = temp_image(".heic", b"no es una imagen");
+        assert!(detect_image_extension(heic.path()).is_err());
     }
 }

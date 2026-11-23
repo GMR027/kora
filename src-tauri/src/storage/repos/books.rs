@@ -254,6 +254,40 @@ impl BookRepo {
         .await
     }
 
+    /// Limpia las descripciones que se importaron con HTML incrustado.
+    ///
+    /// Se ejecuta al abrir la base de datos para corregir bibliotecas creadas
+    /// antes de que la inspección del EPUB saneara `dc:description`. Devuelve
+    /// cuántos libros cambiaron.
+    pub async fn repair_descriptions(&self) -> Result<usize> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT id, description FROM books
+             WHERE description IS NOT NULL
+               AND TRIM(description) <> ''
+               AND (description LIKE '%<%' OR description LIKE '%&%')",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut repaired = 0;
+        for (id, description) in rows {
+            let cleaned = crate::html::clean_description(Some(description.clone()));
+            if cleaned.as_deref() == Some(description.as_str()) {
+                continue;
+            }
+
+            sqlx::query("UPDATE books SET description = ?, updated_at = ? WHERE id = ?")
+                .bind(&cleaned)
+                .bind(now())
+                .bind(&id)
+                .execute(&self.pool)
+                .await?;
+            repaired += 1;
+        }
+
+        Ok(repaired)
+    }
+
     pub async fn replace_cover(&self, id: &str, cover_hash: &str, cover_ext: &str) -> Result<()> {
         let result = sqlx::query(
             "UPDATE books SET cover_hash = ?, cover_ext = ?, updated_at = ? WHERE id = ?",

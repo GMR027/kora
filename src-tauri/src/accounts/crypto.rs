@@ -222,6 +222,89 @@ pub fn pairing_uri(username: &str, key: &str, account_hint: &str, expires_at: i6
     format!("kora://pair?v=1&u={username}&k={key}&a={account_hint}&exp={expires_at}")
 }
 
+/// Código efímero de vinculación. Seis dígitos son suficientes porque el
+/// ticket caduca en dos minutos y solo admite cinco intentos.
+pub fn random_pairing_code() -> String {
+    use rand::Rng;
+    let mut rng = OsRng;
+    let value = rng.gen_range(0..1_000_000u32);
+    format!("{value:06}")
+}
+
+/// Deriva la contraseña SPAKE2 del ticket efímero. No usa Argon2: el ticket
+/// vive en memoria, es de un solo uso y está limitado a cinco intentos, así
+/// que un KDF rápido evita que un cliente no autenticado pueda agotar CPU.
+pub fn pairing_password_v2(code: &str, ticket_id: &str) -> Result<[u8; 32]> {
+    use hkdf::Hkdf;
+    use sha2::Sha256;
+
+    let hkdf = Hkdf::<Sha256>::new(Some(ticket_id.as_bytes()), code.as_bytes());
+    let mut output = [0u8; 32];
+    hkdf.expand(b"kora-pair-v2", &mut output)
+        .map_err(|error| KoraError::Internal(format!("HKDF pairing: {error}")))?;
+    Ok(output)
+}
+
+#[derive(Debug, Clone)]
+pub struct PairingLink {
+    pub ticket_id: String,
+    pub code: String,
+    pub hosts: Vec<String>,
+    pub port: u16,
+    pub fingerprint: String,
+    pub expires_at: i64,
+}
+
+pub fn pairing_uri_v2(
+    ticket_id: &str,
+    code: &str,
+    hosts: &[String],
+    port: u16,
+    fingerprint: &str,
+    expires_at: i64,
+) -> String {
+    format!(
+        "kora://pair?v=2&t={ticket_id}&c={code}&h={}&p={port}&f={fingerprint}&exp={expires_at}",
+        hosts.join(",")
+    )
+}
+
+pub fn parse_pairing_link(value: &str) -> Option<PairingLink> {
+    let (kind, params) = parse_uri(value)?;
+    if kind != "pair" || param(&params, "v")? != "2" {
+        return None;
+    }
+    let ticket_id = param(&params, "t")?.to_string();
+    let code = param(&params, "c")?.to_string();
+    if ticket_id.is_empty() || code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let hosts = param(&params, "h")
+        .map(|hosts| {
+            hosts
+                .split(',')
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let port = param(&params, "p")?.parse().ok()?;
+    let fingerprint = param(&params, "f")?.to_string();
+    let expires_at = param(&params, "exp")?.parse().ok()?;
+    if fingerprint.is_empty() {
+        return None;
+    }
+    Some(PairingLink {
+        ticket_id,
+        code,
+        hosts,
+        port,
+        fingerprint,
+        expires_at,
+    })
+}
+
 pub fn share_uri(key: &str, account_hint: &str, expires_at: i64) -> String {
     format!("kora://share?v=1&k={key}&a={account_hint}&exp={expires_at}")
 }
@@ -286,6 +369,40 @@ mod tests {
             b"secreto"
         );
         assert!(decrypt_secret("000000", "account-1", &cipher, &nonce).is_err());
+    }
+
+    #[test]
+    fn pairing_link_v2_round_trips() {
+        let uri = pairing_uri_v2(
+            "ticket-1",
+            "482913",
+            &["192.168.1.24".into(), "fe80::1%2".into()],
+            47821,
+            "abc123",
+            123,
+        );
+        let link = parse_pairing_link(&uri).expect("link");
+        assert_eq!(link.ticket_id, "ticket-1");
+        assert_eq!(link.code, "482913");
+        assert_eq!(link.hosts.len(), 2);
+        assert_eq!(link.port, 47821);
+        assert_eq!(link.fingerprint, "abc123");
+        let password_a = pairing_password_v2("482913", "nonce").expect("password");
+        let password_b = pairing_password_v2("482913", "nonce").expect("password");
+        assert_eq!(password_a, password_b);
+        assert_ne!(
+            password_a,
+            pairing_password_v2("482913", "otro-nonce").expect("password")
+        );
+    }
+
+    #[test]
+    fn pairing_code_has_six_digits() {
+        for _ in 0..20 {
+            let code = random_pairing_code();
+            assert_eq!(code.len(), 6);
+            assert!(code.chars().all(|character| character.is_ascii_digit()));
+        }
     }
 
     #[test]

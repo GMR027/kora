@@ -1,6 +1,10 @@
 # Add project specific ProGuard rules here.
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
+
+# El plugin TTS y el servicio se referencian desde JNI y desde el manifest.
+-keep class dev.kora.reader.tts.** { *; }
+-keep class dev.kora.reader.audio.** { *; }
 #
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html

@@ -6,6 +6,6 @@ Comprobaciones:
   kubectl get pods,svc,ingress -n {{ .Release.Namespace }}
   kubectl get certificate -n {{ .Release.Namespace }}
   curl -I {{ .Values.app.url }}
-  curl -I {{ .Values.app.url }}/downloads/Kora-0.1.3-android.apk
-  curl -I {{ .Values.app.url }}/downloads/Kora_0.1.3_amd64.deb
-  curl -I {{ .Values.app.url }}/downloads/Kora-0.1.3-1.x86_64.rpm
+  curl -I {{ .Values.app.url }}/downloads/Kora-0.1.4-android.apk
+  curl -I {{ .Values.app.url }}/downloads/Kora_0.1.4_amd64.deb
+  curl -I {{ .Values.app.url }}/downloads/Kora-0.1.4-1.x86_64.rpm

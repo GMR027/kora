@@ -179,6 +179,42 @@ async fn creates_reads_and_deletes_books() {
 }
 
 #[tokio::test]
+async fn repairs_book_descriptions_with_embedded_html() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+
+    let mut dirty = new_book(&owner, &hash("descripcion"), "Con HTML");
+    dirty.description = Some("<p class=\"sinopsis\">Hola &amp; adiós</p>".to_string());
+
+    let book = test.storage.books.create(dirty).await.expect("crear libro");
+
+    let repaired = test
+        .storage
+        .books
+        .repair_descriptions()
+        .await
+        .expect("reparar descripciones");
+    assert_eq!(repaired, 1);
+
+    let found = test
+        .storage
+        .books
+        .get(&book.id)
+        .await
+        .expect("leer libro")
+        .expect("libro existente");
+    assert_eq!(found.description.as_deref(), Some("Hola & adiós"));
+
+    let again = test
+        .storage
+        .books
+        .repair_descriptions()
+        .await
+        .expect("reparar de nuevo");
+    assert_eq!(again, 0);
+}
+
+#[tokio::test]
 async fn book_trash_hides_but_keeps_the_record_restorable() {
     let (test, identity) = TestStorage::with_identity().await;
     let owner = identity.account.id.clone();

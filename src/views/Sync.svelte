@@ -8,9 +8,11 @@
     exportAuditLog,
     getPeers,
     getSyncCollections,
+    getSyncDiagnostics,
     getSyncStatus,
     listSyncDevices,
     revokePeer,
+    setAutoSync,
     setSyncCategories,
     listAuditLog,
     startShare,
@@ -18,20 +20,23 @@
     stopShare,
     stopSync,
     syncNow,
+    syncNowAll,
   } from "../lib/api";
+  import PairDevicePanel from "../lib/components/PairDevicePanel.svelte";
   import { formatDate as formatI18nDate, t, translate } from "../lib/i18n";
   import { pushNotification } from "../lib/notifications";
-  import type { AppTab } from "../lib/navigation";
   import type {
     AuditEntry,
+    PairedDeviceInfo,
+    PairingStateEvent,
     PeerInfo,
     SyncCollections,
     SyncDeviceInfo,
+    SyncDiagnostics,
     SyncHandoffEvent,
+    SyncProgressEvent,
     SyncStatus,
   } from "../lib/types";
-
-  let { onNavigate }: { onNavigate?: (tab: AppTab) => void } = $props();
 
   let status = $state<SyncStatus | null>(null);
   let peers = $state<PeerInfo[]>([]);
@@ -48,23 +53,48 @@
   let timer: ReturnType<typeof setInterval> | undefined;
   let audit = $state<AuditEntry[]>([]);
   let exportingAudit = $state(false);
+  let showPairing = $state(false);
+  let autoSync = $state(true);
+  let diagnostics = $state<SyncDiagnostics | null>(null);
+  let progress = $state<SyncProgressEvent | null>(null);
+
+  let visiblePeers = $derived(
+    peers.filter((peer) => peer.trusted || peer.purpose === "pair"),
+  );
 
   onMount(() => {
     void load();
+    void loadDiagnostics();
     timer = setInterval(() => void pollPeers(), 1600);
     void initEvents().catch((cause) => {
       error = errorMessage(cause);
     });
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       for (const stop of unlisten) stop();
       if (timer) clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   });
+
+  function onVisibility() {
+    if (document.visibilityState !== "visible") return;
+    void loadDiagnostics();
+    if (status?.autoSync && status.running) {
+      void syncNowAll().catch(() => {
+        // La sincronización automática no debe mostrar errores por estar offline.
+      });
+    }
+  }
 
   async function initEvents() {
     unlisten.push(
       await listen<SyncStatus>("sync::status", (event) => {
         status = event.payload;
+        autoSync = event.payload.autoSync;
+        if (!event.payload.syncing) {
+          progress = null;
+        }
       }),
     );
     unlisten.push(
@@ -77,6 +107,30 @@
         });
       }),
     );
+    unlisten.push(
+      await listen<SyncProgressEvent>("sync::progress", (event) => {
+        progress = event.payload;
+      }),
+    );
+    unlisten.push(
+      await listen<PairingStateEvent>("sync::pairing_state", (event) => {
+        if (event.payload.state === "paired") {
+          progress = null;
+        }
+      }),
+    );
+    unlisten.push(
+      await listen("sync::error", (event) => {
+        const payload = event.payload as { message?: string };
+        progress = null;
+        if (payload?.message) error = payload.message;
+      }),
+    );
+    unlisten.push(
+      await listen("sync::completed", () => {
+        progress = null;
+      }),
+    );
   }
 
   async function load() {
@@ -87,9 +141,11 @@
         listSyncDevices(),
       ]);
       status = current;
+      autoSync = current.autoSync;
       peers = peerList;
       devices = deviceList;
       audit = await listAuditLog(12);
+      void loadDiagnostics();
 
       const initial = deviceList.find(
         (device) => !device.isLocal && device.trusted,
@@ -144,6 +200,63 @@
     } catch (cause) {
       error = errorMessage(cause);
     }
+  }
+
+  async function loadDiagnostics() {
+    try {
+      diagnostics = await getSyncDiagnostics();
+    } catch {
+      diagnostics = null;
+    }
+  }
+
+  async function changeAutoSync(enabled: boolean) {
+    busy = "auto";
+    error = null;
+    try {
+      status = await setAutoSync(enabled);
+      autoSync = status.autoSync;
+      if (enabled && !status.running) {
+        status = await startSync();
+      }
+      await loadDiagnostics();
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      busy = null;
+    }
+  }
+
+  async function syncAllNow() {
+    busy = "sync-all";
+    error = null;
+    try {
+      const outcomes = await syncNowAll();
+      const received = outcomes.reduce((total, outcome) => total + outcome.received, 0);
+      const sent = outcomes.reduce((total, outcome) => total + outcome.sent, 0);
+      notice = translate("sync.syncAllDone", {
+        devices: outcomes.length,
+        received,
+        sent,
+      });
+      status = await getSyncStatus();
+      await loadPeers();
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      busy = null;
+      progress = null;
+    }
+  }
+
+  function onPaired(device: PairedDeviceInfo) {
+    showPairing = false;
+    notice = device.name
+      ? translate("sync.pairedWith", { peer: device.name })
+      : translate("sync.linked");
+    void load();
+    void loadPeers();
+    void loadDiagnostics();
   }
 
   async function exportAudit() {
@@ -215,6 +328,7 @@
       error = errorMessage(cause);
     } finally {
       busy = null;
+      progress = null;
     }
   }
 
@@ -297,9 +411,22 @@
         <i aria-hidden="true"></i>
         {status?.running ? $t("sync.active") : $t("sync.stopped")}
       </span>
-      <button class="primary" onclick={toggleSync} disabled={busy !== null}>
-        {status?.running ? $t("sync.stop") : $t("sync.start")}
+      <button class="primary" onclick={() => (showPairing = true)} disabled={busy !== null}>
+        <Icon name="plus" size={16} /> {$t("sync.linkDevice")}
       </button>
+      {#if status?.running}
+        <button class="ghost" onclick={syncAllNow} disabled={busy !== null || status?.syncing}>
+          <Icon name="sync" size={16} />
+          {status?.syncing ? $t("sync.syncing") : $t("sync.syncNow")}
+        </button>
+        <button class="ghost" onclick={toggleSync} disabled={busy !== null}>
+          {$t("sync.stop")}
+        </button>
+      {:else}
+        <button class="ghost" onclick={toggleSync} disabled={busy !== null}>
+          {$t("sync.start")}
+        </button>
+      {/if}
     </div>
   </header>
 
@@ -310,7 +437,7 @@
     <p class="ok" role="status">{notice}</p>
   {/if}
 
-  {#if status?.running && status.peerCount === 0}
+  {#if status?.running && (status?.onlinePeers ?? 0) === 0}
     <div class="sync-hint">
       <span class="card-icon"><Icon name="sync" size={18} /></span>
       <div>
@@ -327,12 +454,39 @@
       <p class="card-value">{status?.running ? $t("sync.active") : $t("sync.stopped")}</p>
       <p class="hint">
         {status?.trustedPeers ?? 0} {$t("account.devices").toLowerCase()} ·
+        {status?.onlinePeers ?? 0} {$t("sync.online").toLowerCase()} ·
         {$t("sync.pending", { count: status?.pendingChanges ?? 0 })}
       </p>
       <p class="hint">{$t("sync.lastSync")}: {formatDate(status?.lastSync ?? null)}</p>
       {#if status?.running}
         <p class="hint">{$t("sync.port")}: <code>{status.listenPort}</code></p>
       {/if}
+      {#if progress}
+        <div class="sync-progress" role="status" aria-live="polite">
+          <span>
+            {progress.direction === "send"
+              ? $t("sync.sending")
+              : $t("sync.receiving")}
+            {progress.current}{progress.total ? `/${progress.total}` : ""}
+          </span>
+          <progress
+            value={progress.current}
+            max={progress.total || progress.current || 1}
+          ></progress>
+        </div>
+      {/if}
+      {#if status?.lastError}
+        <p class="sync-error" role="alert">{status.lastError}</p>
+      {/if}
+      <label class="toggle auto-toggle">
+        <input
+          type="checkbox"
+          checked={autoSync}
+          disabled={busy !== null}
+          onchange={(event) => void changeAutoSync(event.currentTarget.checked)}
+        />
+        <span>{$t("sync.autoSync")}</span>
+      </label>
       {#if status?.pairing || status?.sharing}
         <p class="badge">
           {status.pairing
@@ -344,11 +498,11 @@
 
     <article class="card">
       <span class="card-icon"><Icon name="account" size={18} /></span>
-      <h2>{$t("sync.pair")}</h2>
+      <h2>{$t("sync.linkDevice")}</h2>
       <p class="hint">{$t("sync.pairHelp")}</p>
       <div class="actions">
-        <button class="ghost small" onclick={() => onNavigate?.("account")}>
-          {$t("sync.openAccount")}
+        <button class="primary small" onclick={() => (showPairing = true)} disabled={busy !== null}>
+          <Icon name="plus" size={15} /> {$t("sync.linkDevice")}
         </button>
       </div>
     </article>
@@ -370,18 +524,26 @@
       <h2>{$t("sync.peers")}</h2>
       <button class="ghost small" onclick={loadPeers}>{$t("common.retry")}</button>
     </div>
-    {#if peers.length === 0}
+    {#if visiblePeers.length === 0}
       <p class="empty">{$t("sync.noPeers")}</p>
     {:else}
       <div class="peers">
-        {#each peers as peer (peer.id)}
+        {#each visiblePeers as peer (peer.id)}
           <article class="peer">
             <div>
-              <strong>{peer.name}</strong>
+              <strong>
+                {peer.name}
+                <span
+                  class="online-dot"
+                  class:online={peer.trusted && peer.purpose !== "trusted"}
+                  title={peer.trusted && peer.purpose !== "trusted"
+                    ? $t("sync.online")
+                    : $t("sync.offline")}
+                ></span>
+              </strong>
               <span class="hint">
                 {peer.address ?? $t("sync.noAddress")}:{peer.port} ·
                 {peerLabel(peer)}
-                {#if peer.sasPrefix}· SAS {peer.sasPrefix}{/if}
               </span>
             </div>
             <div class="actions">
@@ -389,11 +551,15 @@
                 <button
                   class="ghost small"
                   onclick={() => syncWith(peer)}
-                  disabled={busy !== null || !peers.length}
+                  disabled={busy !== null || status?.syncing}
                 >
-                  {$t("sync.start")}
+                  {$t("sync.syncNow")}
                 </button>
                 <button class="danger small" onclick={() => forget(peer)}>{$t("common.remove")}</button>
+              {:else}
+                <button class="primary small" onclick={() => (showPairing = true)}>
+                  {$t("sync.link")}
+                </button>
               {/if}
             </div>
           </article>
@@ -401,6 +567,25 @@
       </div>
     {/if}
   </section>
+
+  {#if diagnostics}
+    <details class="panel diagnostics">
+      <summary>{$t("sync.diagnostics")}</summary>
+      <div class="diagnostics-grid">
+        <span>{$t("sync.mdns")}: <strong>{diagnostics.mdnsActive ? $t("sync.active") : $t("sync.stopped")}</strong></span>
+        <span>{$t("sync.port")}: <code>{diagnostics.listenPort}</code></span>
+        <span>
+          {$t("sync.localAddresses")}:
+          <code>{diagnostics.localAddresses.length ? diagnostics.localAddresses.join(", ") : "—"}</code>
+        </span>
+        <span>{$t("sync.online")}: <strong>{diagnostics.onlinePeers}</strong></span>
+        <span>{$t("sync.trustedPeers")}: <strong>{diagnostics.trustedPeers}</strong></span>
+      </div>
+      {#if diagnostics.lastError}
+        <p class="sync-error">{diagnostics.lastError}</p>
+      {/if}
+    </details>
+  {/if}
 
   <section class="panel">
     <div class="panel-head">
@@ -495,6 +680,15 @@
         })}
       </p>
     </section>
+  {/if}
+
+  {#if showPairing}
+    <PairDevicePanel
+      onclose={() => {
+        showPairing = false;
+      }}
+      onpaired={onPaired}
+    />
   {/if}
 </section>
 
@@ -915,5 +1109,72 @@
     color: var(--muted);
     font-size: 0.7rem;
     line-height: 1.45;
+  }
+
+  .sync-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    width: 100%;
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .sync-progress progress {
+    width: 100%;
+    height: 6px;
+    border: 0;
+    border-radius: 999px;
+    overflow: hidden;
+    accent-color: var(--accent);
+  }
+
+  .sync-error {
+    margin: 0.25rem 0 0;
+    color: var(--danger);
+    font-size: 0.72rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .auto-toggle {
+    margin-top: 0.35rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  }
+
+  .online-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-left: 0.35rem;
+    border-radius: 50%;
+    background: var(--muted);
+    vertical-align: middle;
+  }
+
+  .online-dot.online {
+    background: var(--ok);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
+  }
+
+  .diagnostics summary {
+    cursor: pointer;
+    color: var(--text);
+    font-size: 0.85rem;
+    font-weight: 650;
+  }
+
+  .diagnostics-grid {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.6rem;
+    color: var(--muted);
+    font-size: 0.74rem;
+  }
+
+  .diagnostics-grid code {
+    overflow-wrap: anywhere;
   }
 </style>

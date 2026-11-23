@@ -1,7 +1,0 @@
-{
-  "identifier": "android-tts",
-  "description": "TTS nativo de Android y micrófono para el modo ensayo",
-  "platforms": ["android"],
-  "windows": ["main"],
-  "permissions": ["tts:default"]
-}

@@ -5,7 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::error::{KoraError, Result};
 use crate::storage::ResourceType;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const ALPN: &[u8] = b"kora/1";
 const MAX_JSON_FRAME: usize = 16 * 1024 * 1024;
 const MAX_BINARY_FRAME: usize = 4 * 1024 * 1024;
@@ -133,19 +133,13 @@ pub enum Message {
     SasConfirm {
         sas: String,
     },
-    CrossSign {
-        signature: String,
-    },
     PairRequest {
-        hello: Hello,
-        sas: String,
-    },
-    PairAccepted {
-        hello: Hello,
-        sas: String,
+        ticket_id: String,
     },
     PairRejected {
         reason: String,
+        #[serde(default)]
+        retryable: bool,
     },
     ShareRequest {
         key_hash: String,

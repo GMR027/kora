@@ -1,7 +1,14 @@
-# Kora 0.1.3
+# Kora 0.1.4
 
-- Importación de audiolibros en Android con metadatos y portada nativos.
-- Corrección del arranque en Android: el estado se registra antes de los logs y
-  la interfaz reintenta si el WebView carga antes que el backend.
-- Instaladores Linux con dependencias completas y RPM compatible con Fedora 42.
-- El autoactualizador usa el manifiesto del clúster en lugar de GitHub.
+- Lectura en voz alta en Android con controles de play, pausa y stop en la
+  notificación y la pantalla de bloqueo.
+- Tarjeta de reproducción con libro, capítulo, autor y portada; portada
+  editorial de respaldo para libros sin imagen.
+- Audio en segundo plano con servicio en primer plano, `MediaSessionService` y
+  wake lock parcial.
+- Nueva vinculación de dispositivos por código de 6 dígitos o QR, sin PIN ni
+  clave de conexión, con sincronización automática al abrir la app.
+- Escaneo de QR y mejoras de sincronización, descubrimiento y estado de
+  dispositivos.
+- Instaladores Linux actualizados para Debian/Ubuntu y Fedora, y APK Android
+  con `versionCode` 5.

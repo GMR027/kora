@@ -2,4 +2,5 @@
     <string name="app_name">"Kora"</string>
     <string name="main_activity_title">"Kora"</string>
     <string name="audiobook_notification_channel">"Reproducción de audiolibros"</string>
+    <string name="tts_notification_channel">"Lectura en voz alta"</string>
 </resources>

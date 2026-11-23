@@ -7,7 +7,6 @@ use crate::accounts::{
 use crate::error::{KoraError, Result};
 use crate::state::AppState;
 use crate::storage::{Device, ReceivedShare, SharePermission};
-use crate::sync::{AccountPairResult, PairingSessionView};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -224,24 +223,4 @@ fn _keep(_: &AccountService) {}
 #[tauri::command]
 pub async fn account_status(state: State<'_, AppState>) -> Result<crate::accounts::AccountStatus> {
     state.account_status().await
-}
-
-#[tauri::command]
-pub async fn start_pairing(
-    state: State<'_, AppState>,
-    pin: String,
-    key: Option<String>,
-    peer_id: Option<String>,
-) -> Result<PairingSessionView> {
-    state.sync.start_account_pairing(&pin, key, peer_id).await
-}
-
-#[tauri::command]
-pub async fn confirm_sas(state: State<'_, AppState>, sas: String) -> Result<AccountPairResult> {
-    state.sync.confirm_sas(&sas).await
-}
-
-#[tauri::command]
-pub async fn stop_pairing(state: State<'_, AppState>) -> Result<crate::sync::SyncStatus> {
-    state.sync.stop_pairing().await
 }

@@ -6,6 +6,7 @@ pub mod classify;
 pub mod commands;
 pub mod error;
 pub mod features;
+pub mod html;
 pub mod reader;
 pub mod state;
 pub mod storage;
@@ -50,7 +51,8 @@ pub fn run() {
     #[cfg(target_os = "android")]
     {
         builder = builder
-            .plugin(tauri_plugin_tts::init())
+            .plugin(tts::android::init_plugin())
+            .plugin(tauri_plugin_barcode_scanner::init())
             .plugin(audiobooks::player::init_mobile_plugin());
     }
 
@@ -85,6 +87,13 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if let Err(error) = semantic.reconcile(Some(&handle), false).await {
                     tracing::warn!(%error, "no se pudo reconciliar el índice semántico al iniciar");
+                }
+            });
+
+            let sync = app.state::<state::AppState>().sync.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = sync.bootstrap().await {
+                    tracing::warn!(%error, "no se pudo iniciar la sincronización automática");
                 }
             });
 
@@ -269,6 +278,12 @@ pub fn run() {
             commands::sync::sync_now,
             commands::sync::start_share,
             commands::sync::stop_share,
+            commands::sync::start_device_pairing,
+            commands::sync::join_device_pairing,
+            commands::sync::cancel_device_pairing,
+            commands::sync::set_auto_sync,
+            commands::sync::sync_now_all,
+            commands::sync::get_sync_diagnostics,
             commands::sync::revoke_peer,
             commands::sync::get_sync_collections,
             commands::sync::set_sync_categories,
@@ -307,9 +322,6 @@ pub fn run() {
             commands::accounts::list_received_shares,
             commands::accounts::list_devices,
             commands::accounts::revoke_device,
-            commands::accounts::start_pairing,
-            commands::accounts::confirm_sas,
-            commands::accounts::stop_pairing,
             commands::features::features_status,
             commands::features::semantic_status,
             commands::features::prepare_semantic_model,

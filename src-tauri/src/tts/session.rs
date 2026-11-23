@@ -10,6 +10,7 @@ use tokio::sync::{Mutex, Notify};
 use super::TtsService;
 use super::engine::SpeakRequest;
 use super::expressive::{NARRATOR, SpeechChunk, SpeechSequence};
+use super::media::{TtsMediaMetadata, TtsMediaState};
 use crate::error::{KoraError, Result};
 use crate::sync::MirrorHub;
 
@@ -90,6 +91,8 @@ pub struct SessionPlan {
     /// Fin exclusivo del extracto. `None` significa leer hasta el final de la
     /// sección.
     pub excerpt_end: Option<usize>,
+    /// Metadatos para la tarjeta de reproducción del sistema.
+    pub media: TtsMediaMetadata,
 }
 
 struct RuntimeState {
@@ -261,6 +264,9 @@ impl TtsSessionManager {
         plan: SessionPlan,
     ) -> Result<TtsStatus> {
         self.stop_active().await;
+        if let Err(error) = self.service.media_stop().await {
+            tracing::warn!(%error, "no se pudo limpiar la sesión multimedia anterior del TTS");
+        }
 
         if plan.default_voice.trim().is_empty() {
             return Err(KoraError::Unsupported(
@@ -286,6 +292,10 @@ impl TtsSessionManager {
         let status = control
             .status(&book_id, section, excerpt_end.is_some())
             .await;
+
+        if let Err(error) = self.service.media_start(&plan.media).await {
+            tracing::warn!(%error, "no se pudo publicar la sesión multimedia del TTS");
+        }
 
         emit_session(
             &app,
@@ -334,6 +344,9 @@ impl TtsSessionManager {
         active.control.set_state(TtsState::Paused).await;
         active.control.notify.notify_one();
         self.service.pause().await?;
+        if let Err(error) = self.service.media_state(TtsMediaState::Paused).await {
+            tracing::warn!(%error, "no se pudo pausar la sesión multimedia del TTS");
+        }
         emit_session(
             app,
             &active.book_id,
@@ -363,6 +376,9 @@ impl TtsSessionManager {
         active.control.set_state(TtsState::Playing).await;
         active.control.notify.notify_one();
         self.service.resume().await?;
+        if let Err(error) = self.service.media_state(TtsMediaState::Playing).await {
+            tracing::warn!(%error, "no se pudo reanudar la sesión multimedia del TTS");
+        }
         emit_session(
             app,
             &active.book_id,
@@ -385,6 +401,9 @@ impl TtsSessionManager {
 
     pub async fn stop<R: Runtime>(&self, app: &AppHandle<R>) -> Result<TtsStatus> {
         let active = self.stop_active().await;
+        if let Err(error) = self.service.media_stop().await {
+            tracing::warn!(%error, "no se pudo cerrar la sesión multimedia del TTS");
+        }
         if let Some(active) = active {
             emit_session(
                 app,
@@ -523,6 +542,12 @@ async fn run_session<R: Runtime>(
                 if control.is_cancelled() {
                     break;
                 }
+                // En Android la locución puede terminar justo cuando llega una
+                // pausa. Si ya está pausado, no se avanza: al reanudar se repite
+                // la frase actual en lugar de saltarla.
+                if control.is_paused() {
+                    continue;
+                }
                 emit_phrase_end(&app, &plan, chunk, index);
                 index += 1;
                 if !control.sleep_pausable(chunk.pause_after_ms).await {
@@ -539,6 +564,12 @@ async fn run_session<R: Runtime>(
                     continue;
                 }
                 let message = error.to_string();
+                if let Err(error) = service
+                    .media_state(TtsMediaState::Error(message.clone()))
+                    .await
+                {
+                    tracing::warn!(%error, "no se pudo publicar el error del TTS");
+                }
                 control.set_error(message.clone()).await;
                 emit_session(
                     &app,
@@ -557,6 +588,7 @@ async fn run_session<R: Runtime>(
 
     if control.is_cancelled() {
         control.set_state(TtsState::Stopped).await;
+        let _ = service.media_state(TtsMediaState::Stopped).await;
         emit_session(
             &app,
             &plan.book_id,
@@ -569,6 +601,7 @@ async fn run_session<R: Runtime>(
         );
     } else {
         control.set_state(TtsState::Finished).await;
+        let _ = service.media_state(TtsMediaState::Finished).await;
         emit_session(
             &app,
             &plan.book_id,

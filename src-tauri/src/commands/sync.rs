@@ -6,7 +6,10 @@ use crate::error::{KoraError, Result};
 use crate::state::AppState;
 use crate::storage::AuditEntry;
 use crate::storage::{Category, Device};
-use crate::sync::{MirrorStatus, PeerInfo, SyncOutcome, SyncStatus};
+use crate::sync::{
+    JoinPairingInput, MirrorStatus, PairedDeviceView, PairingTicketView, PeerInfo, SyncDiagnostics,
+    SyncOutcome, SyncStatus,
+};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +61,39 @@ pub async fn get_peers(state: State<'_, AppState>) -> Result<Vec<PeerInfo>> {
 #[tauri::command]
 pub async fn sync_now(state: State<'_, AppState>, peer_id: String) -> Result<SyncOutcome> {
     state.sync.sync_now(&peer_id).await
+}
+
+#[tauri::command]
+pub async fn start_device_pairing(state: State<'_, AppState>) -> Result<PairingTicketView> {
+    state.sync.start_device_pairing().await
+}
+
+#[tauri::command]
+pub async fn join_device_pairing(
+    state: State<'_, AppState>,
+    input: JoinPairingInput,
+) -> Result<PairedDeviceView> {
+    state.sync.join_device_pairing(input).await
+}
+
+#[tauri::command]
+pub async fn cancel_device_pairing(state: State<'_, AppState>) -> Result<SyncStatus> {
+    state.sync.cancel_device_pairing().await
+}
+
+#[tauri::command]
+pub async fn set_auto_sync(state: State<'_, AppState>, enabled: bool) -> Result<SyncStatus> {
+    state.sync.set_auto_sync(enabled).await
+}
+
+#[tauri::command]
+pub async fn sync_now_all(state: State<'_, AppState>) -> Result<Vec<SyncOutcome>> {
+    state.sync.sync_now_all().await
+}
+
+#[tauri::command]
+pub async fn get_sync_diagnostics(state: State<'_, AppState>) -> Result<SyncDiagnostics> {
+    Ok(state.sync.diagnostics().await)
 }
 
 #[tauri::command]

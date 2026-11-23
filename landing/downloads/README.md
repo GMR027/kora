@@ -3,9 +3,9 @@
 La sección de descargas de `index.html` busca estos nombres exactos:
 
 ```text
-Kora-0.1.3-android.apk
-Kora_0.1.3_amd64.deb
-Kora-0.1.3-1.x86_64.rpm
+Kora-0.1.4-android.apk
+Kora_0.1.4_amd64.deb
+Kora-0.1.4-1.x86_64.rpm
 ```
 
 ## APK
@@ -15,7 +15,7 @@ una copia independiente:
 
 ```bash
 # desde landing/downloads/
-cp ../../artifacts/kora-release.apk ./Kora-0.1.3-android.apk
+cp ../../artifacts/kora-release.apk ./Kora-0.1.4-android.apk
 ```
 
 ## Linux
@@ -36,11 +36,11 @@ pnpm tauri build
 Copia los artefactos (desde `landing/downloads/`):
 
 ```bash
-cp ../../target/release/bundle/deb/Kora_0.1.3_amd64.deb .
-cp ../../target/release/bundle/rpm/Kora-0.1.3-1.x86_64.rpm .
+cp ../../target/release/bundle/deb/Kora_0.1.4_amd64.deb .
+cp ../../target/release/bundle/rpm/Kora-0.1.4-1.x86_64.rpm .
 ```
 
-En Debian/Ubuntu instala con `sudo apt install ./Kora_0.1.3_amd64.deb`, no con
+En Debian/Ubuntu instala con `sudo apt install ./Kora_0.1.4_amd64.deb`, no con
 `dpkg -i`: `apt` resuelve e instala `espeak-ng`, `liblept5`, `libtesseract5` y
 el resto de dependencias. En Fedora, `sudo dnf install ./Kora-*.rpm`.
 

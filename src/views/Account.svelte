@@ -5,18 +5,15 @@
   import { onMount } from "svelte";
   import Icon from "../lib/components/Icon.svelte";
   import { formatDate as formatI18nDate, t, translate } from "../lib/i18n";
-  import { notifyImportant } from "../lib/toast";
   import {
     acceptShare,
     changePin,
-    confirmSas,
     createAccount,
     createShare,
     deleteAccount,
     errorMessage,
     exportNotes,
     getAccount,
-    getConnectionKey,
     getPeers,
     libraryList,
     listDevices,
@@ -28,20 +25,14 @@
     revokeShare,
     recoverAccountPin,
     revealShareKey,
-    rotateConnectionKey,
-    startPairing,
-    stopPairing,
     updateAccountAvatar,
     updateDisplayName,
   } from "../lib/api";
   import type {
     AccountCreated,
-    AccountPairResult,
     AccountView,
     BookSummary,
-    ConnectionKeyView,
     DeviceInfo,
-    PairingSessionView,
     PeerInfo,
     ReceivedShare,
     ResourceType,
@@ -51,7 +42,7 @@
     ShareView,
   } from "../lib/types";
 
-  type Tab = "account" | "pair" | "share" | "received";
+  type Tab = "account" | "share" | "received";
 
   let activeTab = $state<Tab>("account");
   let account = $state<AccountView | null>(null);
@@ -60,10 +51,7 @@
   let books = $state<BookSummary[]>([]);
   let shares = $state<ShareView[]>([]);
   let received = $state<ReceivedShare[]>([]);
-  let connection = $state<ConnectionKeyView | null>(null);
   let createdShare = $state<ShareView | null>(null);
-  let pairing = $state<PairingSessionView | null>(null);
-  let sasInput = $state("");
   let busy = $state<string | null>(null);
   let error = $state<string | null>(null);
   let notice = $state<string | null>(null);
@@ -73,7 +61,6 @@
   let displayName = $state("");
   let pin = $state("");
   let newPin = $state("");
-  let keyPin = $state("");
   let oldPin = $state("");
   let recoverPin = $state("");
   let deletePin = $state("");
@@ -82,11 +69,6 @@
   let avatarInput: HTMLInputElement | undefined = $state();
   let avatarBusy = $state(false);
   let exportingNotes = $state(false);
-
-  let joinPin = $state("");
-  let joinKey = $state("");
-  let joinPeer = $state("");
-  let hostPin = $state("");
 
   let shareScope = $state<ShareScopeType>("book");
   let shareBook = $state("");
@@ -108,32 +90,6 @@
 
   async function initEvents() {
     unlisten.push(
-      await listen<{ role: string; sas: string }>("accounts::pairing_sas", (event) => {
-        if (pairing) {
-          pairing = { ...pairing, sas: event.payload.sas };
-        }
-        sasInput = event.payload.sas;
-        notice = `SAS: ${event.payload.sas}. Compáralo en el otro dispositivo.`;
-        void loadPeers();
-      }),
-    );
-    unlisten.push(
-      await listen<AccountPairResult>("accounts::paired", (event) => {
-        notice = `Emparejado con ${event.payload.deviceName} · SAS ${event.payload.sas}`;
-        notifyImportant(
-          "success",
-          translate("notifications.paired"),
-          translate("notifications.pairedBody", {
-            peer: event.payload.deviceName,
-          }),
-          "account",
-        );
-        pairing = null;
-        sasInput = "";
-        void load();
-      }),
-    );
-    unlisten.push(
       await listen<ReceivedShare>("accounts::share_accepted", () => {
         void loadReceived();
       }),
@@ -142,10 +98,11 @@
 
   async function load() {
     try {
-      const [current, deviceList, shareList, receivedList, bookList] =
+      const [current, deviceList, peerList, shareList, receivedList, bookList] =
         await Promise.all([
           getAccount(),
           listDevices(),
+          getPeers(),
           listShares(),
           listReceivedShares(),
           libraryList(),
@@ -153,6 +110,7 @@
       account = current;
       if (current) profileName = current.displayName;
       devices = deviceList;
+      peers = peerList;
       shares = shareList;
       received = receivedList;
       books = bookList;
@@ -162,14 +120,6 @@
       }
     } catch (cause) {
       error = errorMessage(cause);
-    }
-  }
-
-  async function loadPeers() {
-    try {
-      peers = await getPeers();
-    } catch {
-      peers = [];
     }
   }
 
@@ -192,9 +142,8 @@
         pin,
       );
       account = created.account;
-      connection = created.connection;
       pin = "";
-      notice = "Cuenta creada. Guarda la clave de conexión.";
+      notice = "Cuenta creada. Ya puedes vincular dispositivos desde Sincronización.";
     } catch (cause) {
       error = errorMessage(cause);
     } finally {
@@ -336,33 +285,6 @@
     }
   }
 
-  async function showConnectionKey() {
-    busy = "connection";
-    error = null;
-    try {
-      connection = await getConnectionKey(keyPin);
-      keyPin = "";
-    } catch (cause) {
-      error = errorMessage(cause);
-    } finally {
-      busy = null;
-    }
-  }
-
-  async function rotateKey() {
-    busy = "connection";
-    error = null;
-    try {
-      connection = await rotateConnectionKey(keyPin);
-      keyPin = "";
-      notice = "Clave de conexión rotada. Los dispositivos ya emparejados siguen válidos.";
-    } catch (cause) {
-      error = errorMessage(cause);
-    } finally {
-      busy = null;
-    }
-  }
-
   async function updatePin() {
     busy = "pin";
     error = null;
@@ -383,7 +305,7 @@
     busy = "recover";
     error = null;
     try {
-      connection = await recoverAccountPin(recoverPin);
+      await recoverAccountPin(recoverPin);
       recoverPin = "";
       notice = translate("account.recoverPinDone");
       await load();
@@ -408,60 +330,6 @@
     } finally {
       busy = null;
     }
-  }
-
-  async function hostPairing() {
-    busy = "pair";
-    error = null;
-    try {
-      pairing = await startPairing(hostPin, null, null);
-      hostPin = "";
-      notice = "Esperando al otro dispositivo. Comparte el QR o la clave.";
-      await loadPeers();
-    } catch (cause) {
-      error = errorMessage(cause);
-    } finally {
-      busy = null;
-    }
-  }
-
-  async function joinPairing() {
-    busy = "pair";
-    error = null;
-    try {
-      pairing = await startPairing(joinPin, joinKey.trim(), joinPeer);
-      joinPin = "";
-      if (pairing.sas) {
-        sasInput = pairing.sas;
-        notice = `SAS: ${pairing.sas}. Compáralo y confirma.`;
-      }
-    } catch (cause) {
-      error = errorMessage(cause);
-    } finally {
-      busy = null;
-    }
-  }
-
-  async function confirmPairing() {
-    busy = "confirm";
-    error = null;
-    try {
-      const result = await confirmSas(sasInput);
-      notice = `Emparejado con ${result.deviceName} (${result.username}).`;
-      pairing = null;
-      sasInput = "";
-      await load();
-    } catch (cause) {
-      error = errorMessage(cause);
-    } finally {
-      busy = null;
-    }
-  }
-
-  async function cancelPairing() {
-    await stopPairing();
-    pairing = null;
-    sasInput = "";
   }
 
   async function makeShare() {
@@ -632,13 +500,6 @@
         {$t("account.title")}
       </button>
       <button
-        class:active={activeTab === "pair"}
-        aria-pressed={activeTab === "pair"}
-        onclick={() => (activeTab = "pair")}
-      >
-        {$t("sync.pair")}
-      </button>
-      <button
         class:active={activeTab === "share"}
         aria-pressed={activeTab === "share"}
         onclick={() => (activeTab = "share")}
@@ -735,31 +596,6 @@
           {$t("account.publicKey")}:
           <code>{account.publicKey.slice(0, 24)}…</code>
         </p>
-        <div class="grid">
-          <label>
-            <span>{$t("account.pinForKey")}</span>
-            <input type="password" bind:value={keyPin} maxlength="12" inputmode="numeric" />
-          </label>
-        </div>
-        <div class="actions">
-          <button class="primary small" onclick={showConnectionKey} disabled={busy !== null}>
-            {$t("account.showKey")}
-          </button>
-          <button class="ghost small" onclick={rotateKey} disabled={busy !== null}>
-            {$t("account.rotate")}
-          </button>
-        </div>
-        {#if connection}
-          <div class="qr-card">
-            <div class="qr">{@html connection.qrSvg}</div>
-            <div>
-              <p class="hint">{$t("common.connectionKey")}:</p>
-              <code class="big-code">{connection.key}</code>
-              <p class="hint">{$t("common.uri")}: <code>{connection.uri}</code></p>
-            </div>
-          </div>
-        {/if}
-
         <h3>{$t("account.changePin")}</h3>
         <div class="grid">
           <label>
@@ -840,6 +676,7 @@
 
       <section class="panel">
         <h2>{$t("account.devices")}</h2>
+        <p class="hint">{$t("account.devicesHelp")}</p>
         {#if devices.length === 0}
           <p class="empty">{$t("account.noDevices")}</p>
         {:else}
@@ -867,74 +704,6 @@
           </div>
         {/if}
       </section>
-    {/if}
-
-    {#if activeTab === "pair"}
-      <section class="columns">
-        <article class="panel">
-          <h2>{$t("account.host")}</h2>
-          <p class="hint">{$t("account.hostHelp")}</p>
-          <label>
-            <span>{$t("account.hostPin")}</span>
-            <input type="password" bind:value={hostPin} maxlength="12" inputmode="numeric" />
-          </label>
-          <button class="primary small" onclick={hostPairing} disabled={busy !== null}>
-            {$t("account.showPairing")}
-          </button>
-          {#if pairing?.role === "host"}
-            <div class="qr-card">
-              {#if pairing.qrSvg}<div class="qr">{@html pairing.qrSvg}</div>{/if}
-              <div>
-                <p class="hint">{$t("common.key")}:</p>
-                <code class="big-code">{pairing.key}</code>
-              </div>
-            </div>
-          {/if}
-        </article>
-
-        <article class="panel">
-          <h2>{$t("account.join")}</h2>
-          <p class="hint">{$t("account.joinHelp")}</p>
-          <label>
-            <span>{$t("account.peer")}</span>
-            <select bind:value={joinPeer}>
-              <option value="">{$t("account.choosePeer")}</option>
-              {#each peers as peer (peer.id)}
-                <option value={peer.id}>{peerLabel(peer)}</option>
-              {/each}
-            </select>
-          </label>
-          <label>
-            <span>{$t("account.connectionKey")}</span>
-            <input bind:value={joinKey} placeholder="usuario-XXXX-XXXX" />
-          </label>
-          <label>
-            <span>{$t("account.hostPin")}</span>
-            <input type="password" bind:value={joinPin} maxlength="12" inputmode="numeric" />
-          </label>
-          <button class="primary small" onclick={joinPairing} disabled={busy !== null}>
-            {$t("account.connect")}
-          </button>
-        </article>
-      </section>
-
-      {#if pairing?.sas}
-        <section class="panel sas">
-          <h2>{$t("account.confirmSas")}</h2>
-          <p class="sas-code">{pairing.sas}</p>
-          <p class="hint">{$t("account.sasHelp")}</p>
-          <label>
-            <span>{$t("common.code")}</span>
-            <input bind:value={sasInput} maxlength="6" inputmode="numeric" />
-          </label>
-          <div class="actions">
-            <button class="primary small" onclick={confirmPairing} disabled={busy !== null}>
-              {$t("account.confirmPair")}
-            </button>
-            <button class="ghost small" onclick={cancelPairing}>{$t("account.cancel")}</button>
-          </div>
-        </section>
-      {/if}
     {/if}
 
     {#if activeTab === "share"}
@@ -1175,13 +944,6 @@
     background: var(--accent-soft);
     color: var(--accent);
     font-size: 0.62rem;
-  }
-
-  .columns {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1rem;
-    align-items: start;
   }
 
   .panel {
@@ -1472,25 +1234,6 @@
 
   .row-item strong {
     font-size: 0.84rem;
-  }
-
-  .sas {
-    border-color: var(--accent-line);
-    background:
-      linear-gradient(
-        160deg,
-        color-mix(in srgb, var(--accent) 8%, var(--surface)),
-        var(--surface)
-      );
-  }
-
-  .sas-code {
-    margin: 0 0 0.3rem;
-    font-family: var(--font-display);
-    font-size: 2.1rem;
-    font-weight: 700;
-    letter-spacing: 0.22em;
-    font-variant-numeric: tabular-nums;
   }
 
   .primary {

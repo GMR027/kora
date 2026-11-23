@@ -88,7 +88,12 @@ impl Storage {
         let pool = db::connect(&layout.database_file()).await?;
         migrations::run(&pool).await?;
 
-        Ok(Self::from_pool(pool, layout))
+        let storage = Self::from_pool(pool, layout);
+        if let Err(error) = storage.books.repair_descriptions().await {
+            eprintln!("Kora: no se pudieron reparar las descripciones de libros: {error}");
+        }
+
+        Ok(storage)
     }
 
     fn from_pool(pool: SqlitePool, layout: StorageLayout) -> Self {

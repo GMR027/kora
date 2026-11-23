@@ -38,6 +38,9 @@ import type {
   PdfConversionState,
   PdfOcrState,
   PdfSearchHit,
+  PairedDeviceInfo,
+  PairingTicketView,
+  JoinPairingInput,
   PeerInfo,
   PracticeHistoryEntry,
   PracticeResult,
@@ -49,14 +52,12 @@ import type {
   MirrorStatus,
   AccountCreated,
   AccountResetInfo,
-  AccountPairResult,
   AccountView,
   ConnectionKeyView,
   DeviceInfo,
   DiaryEntry,
   DiaryExport,
   DiaryMonth,
-  PairingSessionView,
   PomodoroConfig,
   PomodoroStatus,
   ReceivedShare,
@@ -69,6 +70,7 @@ import type {
   ShareView,
   SyncCollections,
   SyncDeviceInfo,
+  SyncDiagnostics,
   SyncOutcome,
   SyncStatus,
   SynthesisOutput,
@@ -502,16 +504,22 @@ export const recoverAccountPin = (newPin: string) =>
 export const deleteAccount = (pin: string) =>
   invoke<AccountResetInfo>("delete_account", { pin });
 
-export const startPairing = (
-  pin: string,
-  key: string | null = null,
-  peerId: string | null = null,
-) => invoke<PairingSessionView>("start_pairing", { pin, key, peerId });
+export const startDevicePairing = () =>
+  invoke<PairingTicketView>("start_device_pairing");
 
-export const confirmSas = (sas: string) =>
-  invoke<AccountPairResult>("confirm_sas", { sas });
+export const joinDevicePairing = (input: JoinPairingInput) =>
+  invoke<PairedDeviceInfo>("join_device_pairing", { input });
 
-export const stopPairing = () => invoke<SyncStatus>("stop_pairing");
+export const cancelDevicePairing = () =>
+  invoke<SyncStatus>("cancel_device_pairing");
+
+export const setAutoSync = (enabled: boolean) =>
+  invoke<SyncStatus>("set_auto_sync", { enabled });
+
+export const syncNowAll = () => invoke<SyncOutcome[]>("sync_now_all");
+
+export const getSyncDiagnostics = () =>
+  invoke<SyncDiagnostics>("get_sync_diagnostics");
 
 export const createShare = (pin: string, request: ShareCreateRequest) =>
   invoke<ShareView>("create_share", { pin, request });

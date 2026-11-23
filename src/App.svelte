@@ -269,7 +269,7 @@
             <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
           {:then module}
             {@const View = module.default}
-            <View onNavigate={navigate} />
+            <View />
           {/await}
         {:else}
           {@const view = loadView("settings")}

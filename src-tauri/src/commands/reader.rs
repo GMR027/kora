@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::error::{KoraError, Result};
+use crate::html::clean_description;
 use crate::reader::ocr::{build_and_save_index, read_ocr_page};
 use crate::reader::pdf::PdfParser;
 use crate::reader::{
@@ -133,7 +134,9 @@ async fn open_epub(
         author: inspection.author.or_else(|| book.author.clone()),
         language: inspection.language.or_else(|| book.language.clone()),
         publisher: inspection.publisher.or_else(|| book.publisher.clone()),
-        description: inspection.description.or_else(|| book.description.clone()),
+        description: inspection
+            .description
+            .or_else(|| clean_description(book.description.clone())),
         sections: inspection.sections,
     };
 
@@ -246,7 +249,7 @@ async fn open_pdf(
         author: inspection.author.clone().or_else(|| book.author.clone()),
         language: book.language.clone(),
         publisher: book.publisher.clone(),
-        description: book.description.clone(),
+        description: clean_description(book.description.clone()),
         sections,
     };
 
