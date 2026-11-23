@@ -67,6 +67,11 @@ cp target/release/bundle/deb/Kora_0.1.2_amd64.deb landing/downloads/
 cp target/release/bundle/rpm/Kora-0.1.2-1.x86_64.rpm landing/downloads/
 ```
 
+> El `.rpm` debe compilarse en Fedora 42 (o un contenedor Fedora): Ubuntu enlaza
+> `libtesseract.so.5`/`liblept.so.5` y Fedora usa
+> `libtesseract.so.5.5`/`libleptonica.so.6`. Un RPM generado en Ubuntu instala
+> pero la app no arranca por esas diferencias de soname.
+
 `landing/main.js` hace un `HEAD` a cada archivo: si falta, el botón muestra
 «En preparación» sin romper la sección.
 

@@ -15,12 +15,26 @@ aarch64). Instálalo con:
 
 ```bash
 sudo apt install ./Kora_0.1.2_amd64.deb
-# o en Fedora/derivados con dpkg instalado:
-sudo dpkg -i Kora_0.1.2_amd64.deb
 ```
 
+> Usa `apt install ./archivo.deb`, no `dpkg -i`: `apt` descarga las
+> dependencias que falten. Con `dpkg -i` verás errores como
+> `kora depends on espeak-ng` o `liblept5`. Si ya lo intentaste con `dpkg`,
+> completa la instalación con:
+>
+> ```bash
+> sudo apt-get -f install
+> sudo apt install ./Kora_0.1.2_amd64.deb
+> ```
+
+El paquete declara estas dependencias de ejecución: `espeak-ng`, `libasound2`
+(o `libasound2t64`), `libgomp1`, `liblept5`, `libsecret-1-0`, `libsqlite3-0`,
+`libtesseract5`, `libwebkit2gtk-4.1-0` y `libgtk-3-0`. `apt` las instala
+automáticamente.
+
 Si tu distribución prefiere RPM, Tauri también puede generar `rpm`; el
-paquete `.deb` es el objetivo verificado de esta fase.
+paquete `.rpm` debe compilarse en Fedora 42 para que coincidan las versiones de
+Tesseract/Leptonica. El `.deb` es el objetivo verificado en Ubuntu/Debian.
 
 ### Dependencias opcionales
 
@@ -40,9 +54,10 @@ En Android, el selector del sistema entrega URIs `content://`. Kora copia el
 archivo elegido a su caché interna antes de importarlo, así que puedes abrir
 EPUB y PDF desde Descargas, Drive o cualquier proveedor de documentos.
 
-La importación de audiolibros (MP3, M4B, etc.) todavía no está disponible en
-Android: esa vista solo reproduce audiolibros que ya estén en la biblioteca.
-La importación de audio requiere `ffmpeg`/`ffprobe` y Whisper en el escritorio.
+La importación de audiolibros en Android usa `MediaMetadataRetriever` para leer
+título, artista, duración y portada embebida. Kora guarda el audio y crea
+capítulos en bloques de diez minutos (Android no incluye `ffmpeg`). La
+transcripción automática con Whisper sigue siendo exclusiva del escritorio.
 
 ### Primer arranque
 
@@ -85,6 +100,12 @@ El resultado queda en
 `src-tauri/gen/android/app/build/outputs/apk/`. La firma de release se
 configura en `src-tauri/gen/android/keystore.properties` (ver
 `docs/COMPILACION.md`); sin ese archivo el APK se genera sin firmar.
+
+El APK de release se firma con `src-tauri/gen/android/keystore.properties`
+(firma V2). Android siempre pide permitir «Instalar apps desconocidas» la
+primera vez porque el APK no viene de Play Store; eso no significa que use una
+firma de depuración. Mientras la firma no cambie, las actualizaciones se
+instalan encima de la versión anterior sin desinstalar.
 
 Incluye:
 

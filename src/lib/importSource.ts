@@ -1,9 +1,13 @@
 import { translate } from "./i18n";
+import type { AndroidAudioMetadata } from "./types";
 
 interface KoraChromeBridge {
   stageImportFile?: (uri: string) => string;
   discardImportFile?: (path: string) => void;
+  probeAudio?: (path: string) => string;
 }
+
+export type { AndroidAudioMetadata };
 
 function chromeBridge(): KoraChromeBridge | undefined {
   return (window as Window & { KoraChrome?: KoraChromeBridge }).KoraChrome;
@@ -21,6 +25,30 @@ export function stageImportSource(source: string): string {
     throw new Error(translate("library.importReadFailed"));
   }
   return path;
+}
+
+/** Lee título, artista, duración y portada de un audio ya copiado a caché. */
+export function probeAndroidAudio(path: string): AndroidAudioMetadata | null {
+  const raw = chromeBridge()?.probeAudio?.(path);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AndroidAudioMetadata>;
+    if (typeof parsed.durationMs !== "number" || parsed.durationMs <= 0) {
+      return null;
+    }
+    return {
+      title: typeof parsed.title === "string" ? parsed.title : undefined,
+      artist: typeof parsed.artist === "string" ? parsed.artist : undefined,
+      album: typeof parsed.album === "string" ? parsed.album : undefined,
+      durationMs: parsed.durationMs,
+      coverPath:
+        typeof parsed.coverPath === "string" ? parsed.coverPath : undefined,
+      language:
+        typeof parsed.language === "string" ? parsed.language : undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Borra la copia temporal creada por `stageImportSource`. */

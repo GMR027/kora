@@ -1248,8 +1248,10 @@ Ajustes → Modo ensayo.
 1. Empaquetar `libonnxruntime` y el modelo de embeddings en el instalador, y
    habilitar la búsqueda semántica en Android.
 2. Empaquetado Android de PDFium/Tesseract/Piper/Whisper/ffmpeg y
-   `kora-neutts` por ABI, además del modo ensayo, audiolibros y notas de voz
-   nativas, y validación de mDNS/QUIC en Android.
+   `kora-neutts` por ABI, además del modo ensayo y las notas de voz nativas,
+   y validación de mDNS/QUIC en Android. La importación de audiolibros ya usa
+   metadatos nativos y capítulos fijos de diez minutos; falta la transcripción
+   en el móvil.
 3. Lector de QR con cámara móvil, compartir perfiles de voz y propagación
    automática de revocaciones.
 4. Sincronización de audiolibros M4B y perfiles `.koravoice`.

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -302,10 +303,20 @@ class MainActivity : TauriActivity() {
       val extension = when (contentResolver.getType(parsed)) {
         "application/epub+zip" -> ".epub"
         "application/pdf" -> ".pdf"
+        "audio/mpeg", "audio/mp3" -> ".mp3"
+        "audio/mp4", "audio/x-m4a", "audio/m4a" -> ".m4a"
+        "audio/x-m4b", "application/x-m4b" -> ".m4b"
+        "audio/aac" -> ".aac"
+        "audio/flac", "audio/x-flac" -> ".flac"
+        "audio/ogg" -> ".ogg"
+        "audio/opus" -> ".opus"
         else -> ""
       }
       var name = sanitizeFileName(rawName)
-      if (extension.isNotEmpty() && !name.endsWith(extension, ignoreCase = true)) {
+      val knownExtensions = listOf(
+        ".epub", ".pdf", ".mp3", ".m4a", ".m4b", ".aac", ".flac", ".ogg", ".opus",
+      )
+      if (extension.isNotEmpty() && knownExtensions.none { name.endsWith(it, ignoreCase = true) }) {
         name += extension
       }
 
@@ -344,6 +355,51 @@ class MainActivity : TauriActivity() {
     return cleaned.ifBlank { "libro-${System.currentTimeMillis()}" }
   }
 
+  private fun probeAudioFile(path: String): String {
+    val retriever = MediaMetadataRetriever()
+    return try {
+      retriever.setDataSource(path)
+      val duration = retriever
+        .extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+        ?.toLongOrNull()
+        ?: 0L
+      if (duration <= 0L) return ""
+
+      val coverPath = retriever.embeddedPicture?.let { bytes ->
+        val extension = if (
+          bytes.size >= 4 &&
+          bytes[0] == 0x89.toByte() &&
+          bytes[1] == 0x50.toByte() &&
+          bytes[2] == 0x4E.toByte() &&
+          bytes[3] == 0x47.toByte()
+        ) "png" else "jpg"
+        val directory = File(path).parentFile
+          ?: File(importCacheRoot(), UUID.randomUUID().toString()).apply { mkdirs() }
+        directory.mkdirs()
+        val file = File(directory, "cover.$extension")
+        file.writeBytes(bytes)
+        file.absolutePath
+      }
+
+      org.json.JSONObject().apply {
+        put("title", retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE))
+        put(
+          "artist",
+          retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+            ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUMARTIST),
+        )
+        put("album", retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM))
+        put("durationMs", duration)
+        put("coverPath", coverPath)
+        put("language", java.util.Locale.getDefault().language)
+      }.toString()
+    } catch (_: Exception) {
+      ""
+    } finally {
+      runCatching { retriever.release() }
+    }
+  }
+
   inner class ChromeBridge {
     @JavascriptInterface
     fun setChrome(background: String, dark: Boolean) {
@@ -357,6 +413,9 @@ class MainActivity : TauriActivity() {
 
     @JavascriptInterface
     fun stageImportFile(uri: String): String = stageContentUri(uri)
+
+    @JavascriptInterface
+    fun probeAudio(path: String): String = probeAudioFile(path)
 
     @JavascriptInterface
     fun discardImportFile(path: String) {

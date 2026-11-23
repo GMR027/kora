@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use serde::Deserialize;
 use tauri::AppHandle;
 
 use crate::error::{KoraError, Result};
@@ -12,6 +13,7 @@ use crate::tejido::cover;
 use crate::tejido::epub::{self, EpubChapter};
 
 use super::ai_chapters::{self, AudioChapterDetection, AudioImportOptions};
+use super::chapters::{ChapterSource, DetectedChapter};
 use super::engine::{AudiobookProgressEvent, emit_progress};
 use super::import::{discard_audio_asset, slug};
 use super::jobs::GenerationControl;
@@ -338,6 +340,337 @@ pub async fn import(
         },
     );
     Ok(audiobook)
+}
+
+/// Metadatos que Android obtiene con `MediaMetadataRetriever` y envía al
+/// comando de importación. En escritorio se ignora y se usa ffprobe.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AndroidAudioMetadata {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub duration_ms: i64,
+    #[serde(default)]
+    pub cover_path: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+fn fixed_detection(duration_ms: i64) -> AudioChapterDetection {
+    const BLOCK_MS: i64 = 600_000;
+    const MAX_CHAPTERS: usize = 300;
+
+    let duration = duration_ms.max(1);
+    let mut chapters = Vec::new();
+    let mut start = 0;
+    while start < duration && chapters.len() < MAX_CHAPTERS {
+        let end = (start + BLOCK_MS).min(duration);
+        chapters.push(DetectedChapter {
+            start_ms: start,
+            end_ms: end,
+            title: format!("Capítulo {}", chapters.len() + 1),
+        });
+        start = end;
+    }
+    if chapters.is_empty() {
+        chapters.push(DetectedChapter {
+            start_ms: 0,
+            end_ms: duration,
+            title: "Capítulo 1".to_string(),
+        });
+    }
+
+    AudioChapterDetection {
+        chapters,
+        source: ChapterSource::Fixed,
+        ai_used: false,
+        note: None,
+    }
+}
+
+/// Importa audio en Android sin ffmpeg: los metadatos y la portada vienen del
+/// puente nativo y los capítulos se reparten en bloques de diez minutos.
+pub async fn import_android(
+    state: &AppState,
+    app: &AppHandle,
+    source: &str,
+    options: AudioImportOptions,
+    metadata: AndroidAudioMetadata,
+    control: Option<&GenerationControl>,
+) -> Result<Audiobook> {
+    let source_path = PathBuf::from(source);
+    if !source_path.is_file() {
+        return Err(KoraError::NotFound(format!(
+            "no se encontró el audio {source}"
+        )));
+    }
+
+    let extension = source_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(
+        extension.as_str(),
+        "m4b" | "m4a" | "mp3" | "aac" | "flac" | "ogg" | "opus"
+    ) {
+        return Err(KoraError::Unsupported(
+            "el audiolibro debe ser M4B, M4A, MP3, AAC, FLAC u OGG".into(),
+        ));
+    }
+    if metadata.duration_ms <= 0 {
+        return Err(KoraError::InvalidInput(
+            "no se pudo leer la duración del audio en Android".into(),
+        ));
+    }
+    if let Some(control) = control {
+        control.checkpoint().await?;
+    }
+
+    let duration_ms = metadata.duration_ms;
+    let title = metadata
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            source_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .map(str::to_string)
+        })
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Audiolibro importado".to_string());
+    let author = metadata
+        .artist
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let language = options
+        .language
+        .clone()
+        .or_else(|| metadata.language.clone())
+        .or_else(|| Some("es".to_string()));
+    let detection = fixed_detection(duration_ms);
+
+    emit_progress(
+        app,
+        AudiobookProgressEvent {
+            audiobook_id: None,
+            phase: "extracting".to_string(),
+            chapter: 0,
+            total_chapters: detection.chapters.len(),
+            percent: 5.0,
+            message: "Preparando el audio importado".to_string(),
+        },
+    );
+
+    let workspace = state
+        .layout
+        .root
+        .join("tmp")
+        .join(format!("audio-import-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace)?;
+
+    let audio_asset =
+        match state
+            .storage
+            .assets
+            .put_file(AssetKind::Audiobook, &source_path, &extension)
+        {
+            Ok(asset) => asset,
+            Err(error) => {
+                let _ = std::fs::remove_dir_all(&workspace);
+                return Err(error);
+            }
+        };
+
+    let result = async {
+        if let Some(control) = control {
+            control.checkpoint().await?;
+        }
+
+        emit_progress(
+            app,
+            AudiobookProgressEvent {
+                audiobook_id: None,
+                phase: "building".to_string(),
+                chapter: detection.chapters.len(),
+                total_chapters: detection.chapters.len(),
+                percent: 60.0,
+                message: "Guardando portada y capítulos".to_string(),
+            },
+        );
+
+        let cover_path = match metadata
+            .cover_path
+            .as_deref()
+            .map(PathBuf::from)
+            .filter(|path| path.is_file())
+        {
+            Some(path) => path,
+            None => {
+                let generated = workspace.join("cover.png");
+                cover::render_cover(
+                    &title,
+                    &format!(
+                        "Kora · audiolibro · {}",
+                        author
+                            .clone()
+                            .unwrap_or_else(|| "audio importado".to_string())
+                    ),
+                    &generated,
+                )?;
+                generated
+            }
+        };
+        let cover_ext = cover_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("png")
+            .to_ascii_lowercase();
+
+        let epub_path = workspace.join("audio-import.epub");
+        let body = "Este audiolibro se importó sin transcripción. Los capítulos se \
+            dividieron en bloques de diez minutos. Usa «Transcribir este audiolibro» \
+            en el escritorio para añadir el texto completo y la lectura sincronizada.";
+        epub::build_epub(
+            &epub_path,
+            &title,
+            author.as_deref().unwrap_or("Desconocido"),
+            language.as_deref().unwrap_or("es"),
+            &[EpubChapter {
+                title: PLACEHOLDER_TITLE.to_string(),
+                body: body.to_string(),
+                source: None,
+            }],
+            Some(&cover_path),
+        )?;
+
+        let epub_asset =
+            state
+                .storage
+                .assets
+                .put_file(AssetKind::GeneratedBook, &epub_path, "epub")?;
+        let cover_asset =
+            state
+                .storage
+                .assets
+                .put_file(AssetKind::Cover, &cover_path, &cover_ext)?;
+        let size_bytes = std::fs::metadata(&epub_path)
+            .map(|meta| meta.len())
+            .unwrap_or(0) as i64;
+
+        let book = state
+            .storage
+            .books
+            .create(NewBook {
+                title: title.clone(),
+                author: author.clone(),
+                format: BookFormat::Epub,
+                content_hash: epub_asset.hash,
+                content_ext: "epub".to_string(),
+                original_name: format!("{}.epub", slug(&title)),
+                cover_hash: Some(cover_asset.hash),
+                cover_ext: Some(cover_asset.extension),
+                size_bytes,
+                language: language.clone(),
+                publisher: None,
+                description: Some(metadata.album.clone().unwrap_or_else(|| {
+                    "Audiolibro importado en Android. Los capítulos se dividieron en \
+                     bloques de diez minutos."
+                        .to_string()
+                })),
+                origin: BookOrigin::Imported,
+                owner_account_id: state.identity.account.id.clone(),
+                origin_share_id: None,
+                audio_only: true,
+            })
+            .await?;
+
+        let manifest = build_manifest(&book.id, &title, language.clone(), duration_ms, &detection);
+        let manifest_asset = state.storage.assets.put_bytes(
+            AssetKind::Audiobook,
+            &serde_json::to_vec_pretty(&manifest)?,
+            "json",
+        )?;
+
+        let audiobook = state
+            .storage
+            .audiobooks
+            .create(NewAudiobook {
+                book_id: book.id.clone(),
+                voice_id: None,
+                status: AudiobookStatus::Done,
+                manifest_hash: Some(manifest_asset.hash),
+                manifest_ext: Some(manifest_asset.extension),
+                audio_hash: Some(audio_asset.hash.clone()),
+                audio_ext: Some(audio_asset.extension.clone()),
+                scope: Some(serde_json::to_string(&AudiobookScope::FullBook)?),
+                origin: AudiobookOrigin::External,
+                duration_ms: Some(duration_ms),
+                narration: None,
+                cast: None,
+                owner_account_id: state.identity.account.id.clone(),
+                origin_share_id: None,
+            })
+            .await?;
+
+        let classification = state.classification.clone();
+        let classification_config = classification.config().await.unwrap_or_default();
+        if classification_config.enabled && classification_config.classify_on_import {
+            let handle = app.clone();
+            let target_book = book.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = classification
+                    .classify_book(Some(&handle), &target_book, false, false)
+                    .await
+                {
+                    tracing::warn!(
+                        book = %target_book.id,
+                        %error,
+                        "no se pudo clasificar el audiolibro importado"
+                    );
+                }
+            });
+        }
+
+        Ok::<Audiobook, KoraError>(audiobook)
+    }
+    .await;
+
+    let _ = std::fs::remove_dir_all(&workspace);
+
+    match result {
+        Ok(audiobook) => {
+            emit_progress(
+                app,
+                AudiobookProgressEvent {
+                    audiobook_id: Some(audiobook.id.clone()),
+                    phase: "done".to_string(),
+                    chapter: detection.chapters.len(),
+                    total_chapters: detection.chapters.len(),
+                    percent: 100.0,
+                    message: format!(
+                        "«{title}» importado con {} capítulos",
+                        detection.chapters.len()
+                    ),
+                },
+            );
+            Ok(audiobook)
+        }
+        Err(error) => {
+            let _ = discard_audio_asset(state, &audio_asset).await;
+            Err(error)
+        }
+    }
 }
 
 fn build_manifest(

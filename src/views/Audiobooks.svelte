@@ -81,6 +81,11 @@
     type MessageKey,
   } from "../lib/i18n";
   import {
+    discardImportSource,
+    probeAndroidAudio,
+    stageImportSource,
+  } from "../lib/importSource";
+  import {
     lineIndexAt,
     prepareKaraoke,
     wordIndexAt,
@@ -89,6 +94,7 @@
   import type { AppTab } from "../lib/navigation";
   import type {
     AiStatus,
+    AndroidAudioMetadata,
     AudioImportMode,
     AudioImportOptions,
     AudioTreatment,
@@ -257,6 +263,13 @@
       : $t("audiobooks.engineUnavailable"),
   );
   let platformSupported = $derived(capabilities?.platformSupported ?? true);
+  let audioImportSupported = $derived(
+    capabilities?.audioImportSupported ?? true,
+  );
+  let nativeAudioImport = $derived(capabilities?.nativeAudioImport ?? false);
+  let transcriptionSupported = $derived(
+    capabilities?.transcriptionSupported ?? true,
+  );
   let backgroundPlayback = $derived(capabilities?.backgroundPlayback ?? false);
   let ffmpegReady = $derived(capabilities?.ffmpeg ?? true);
   let whisperBase = $derived(
@@ -1333,20 +1346,26 @@
   ) {
     error = null;
     notice = null;
-    if (!platformSupported) {
+    if (!audioImportSupported) {
       error = translate("audiobooks.importUnavailable");
+      return;
+    }
+    if (kind === "transcribe" && !transcriptionSupported) {
+      error = translate("audiobooks.transcribeUnavailable");
       return;
     }
     let source: string | string[] | null = null;
     try {
       source = await open({
         multiple: false,
-        filters: [
-          {
-            name: "Audiolibro",
-            extensions: ["m4b", "m4a", "mp3", "aac", "flac", "ogg", "opus"],
-          },
-        ],
+        filters: nativeAudioImport
+          ? [{ name: "Audio", extensions: ["audio/*"] }]
+          : [
+              {
+                name: "Audiolibro",
+                extensions: ["m4b", "m4a", "mp3", "aac", "flac", "ogg", "opus"],
+              },
+            ],
       });
     } catch (cause) {
       error = errorMessage(cause);
@@ -1354,10 +1373,27 @@
     }
     if (typeof source !== "string") return;
 
+    let staged = source;
+    let metadata: AndroidAudioMetadata | null = null;
     busy = "import";
+    try {
+      staged = stageImportSource(source);
+      if (nativeAudioImport) {
+        metadata = probeAndroidAudio(staged);
+        if (!metadata) {
+          throw new Error(translate("audiobooks.metadataUnavailable"));
+        }
+      }
+    } catch (cause) {
+      if (staged !== source) discardImportSource(staged);
+      error = errorMessage(cause);
+      busy = null;
+      return;
+    }
+
     hiddenProgress = false;
     activeTaskTitleOverride =
-      source.split(/[\\/]/).pop() ?? translate("audiobooks.import");
+      staged.split(/[\\/]/).pop() ?? translate("audiobooks.import");
     activeTaskVoiceOverride =
       kind === "transcribe"
         ? translate("audiobooks.whisperBase")
@@ -1367,12 +1403,16 @@
     try {
       const imported =
         kind === "transcribe"
-          ? await importExternalAudiobook(source)
-          : await importAudioAudiobook(source, {
-              mode: detection,
-              language: null,
-              modelId: null,
-            } satisfies AudioImportOptions);
+          ? await importExternalAudiobook(staged)
+          : await importAudioAudiobook(
+              staged,
+              {
+                mode: detection,
+                language: metadata?.language ?? null,
+                modelId: null,
+              } satisfies AudioImportOptions,
+              metadata,
+            );
       notice =
         kind === "transcribe"
           ? translate("audiobooks.importNotice", { title: imported.bookTitle })
@@ -1388,6 +1428,7 @@
         error = errorMessage(cause);
       }
     } finally {
+      if (staged !== source) discardImportSource(staged);
       busy = null;
     }
   }
@@ -1951,7 +1992,7 @@
       <Button
         variant="ghost"
         onclick={() => openImport("audio")}
-        disabled={!platformSupported || busy !== null}
+        disabled={!audioImportSupported || busy !== null}
       >
         <Icon name="upload" size={17} />
         {$t("audiobooks.importShort")}
@@ -1968,7 +2009,9 @@
     </div>
   </header>
 
-  {#if !platformSupported}
+  {#if nativeAudioImport}
+    <p class="notice soft" role="status">{$t("audiobooks.mobileImportNotice")}</p>
+  {:else if !platformSupported}
     <p class="notice soft" role="status">{$t("audiobooks.desktopOnly")}</p>
   {:else if capabilities && !capabilities.ffmpeg}
     <p class="notice soft" role="status">
@@ -2613,7 +2656,7 @@
           class="tool-link"
           type="button"
           onclick={() => openImport("transcribe")}
-          disabled={!platformSupported || busy !== null}
+          disabled={!transcriptionSupported || busy !== null}
         >
           {$t("audiobooks.toolTranscribeAction")} <span aria-hidden="true">→</span>
         </button>

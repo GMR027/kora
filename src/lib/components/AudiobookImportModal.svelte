@@ -46,7 +46,11 @@
   let kind = $state<ImportKind>("audio");
   let detection = $state<AudioImportMode>("aiFast");
 
-  let supported = $derived(capabilities?.platformSupported ?? true);
+  let supported = $derived(capabilities?.audioImportSupported ?? true);
+  let nativeImport = $derived(capabilities?.nativeAudioImport ?? false);
+  let transcribeSupported = $derived(
+    capabilities?.transcriptionSupported ?? true,
+  );
   let ffmpegReady = $derived(capabilities?.ffmpeg ?? false);
   let whisperBaseReady = $derived(
     whisperModel?.installed ?? capabilities?.whisperBase ?? false,
@@ -65,8 +69,9 @@
   );
   let ready = $derived(
     supported &&
-      ffmpegReady &&
-      (kind === "audio" || whisperBaseReady),
+      (kind === "transcribe"
+        ? whisperBaseReady && transcribeSupported
+        : nativeImport || ffmpegReady),
   );
   let whisperSize = $derived(
     whisperModel?.sizeBytes ? formatBytes(whisperModel.sizeBytes) : "141 MB",
@@ -82,6 +87,9 @@
   $effect(() => {
     if (!open) return;
     kind = initialKind;
+    if (kind === "transcribe" && !transcribeSupported) {
+      kind = "audio";
+    }
     detection = "aiFast";
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -176,7 +184,7 @@
               role="radio"
               aria-checked={kind === "transcribe"}
               onclick={() => (kind = "transcribe")}
-              disabled={busy}
+              disabled={busy || !transcribeSupported}
             >
               <span class="mode-icon"><Icon name="book" size={18} /></span>
               <span>
@@ -187,7 +195,13 @@
           </div>
         </div>
 
-        {#if kind === "audio"}
+        {#if !transcribeSupported}
+          <p class="notice soft" role="status">
+            {$t("audiobooks.transcribeUnavailable")}
+          </p>
+        {/if}
+
+        {#if kind === "audio" && !nativeImport}
           <div class="mode-section">
             <span class="field-label">{$t("audiobooks.detectionMode")}</span>
             <div
@@ -236,21 +250,33 @@
         {/if}
 
         <div class="status-list">
-          <div class="status-row" class:ok={ffmpegReady} class:missing={!ffmpegReady}>
-            <span class="status-icon">
-              <Icon name={ffmpegReady ? "check" : "close"} size={15} />
-            </span>
-            <div>
-              <strong>
-                {ffmpegReady
-                  ? $t("audiobooks.ffmpegReady")
-                  : $t("audiobooks.ffmpegMissing")}
-              </strong>
-              {#if !ffmpegReady}
-                <small>{$t("audiobooks.ffmpegMissingHelp")}</small>
-              {/if}
+          {#if nativeImport}
+            <div class="status-row ok">
+              <span class="status-icon">
+                <Icon name="check" size={15} />
+              </span>
+              <div>
+                <strong>{$t("audiobooks.nativeImportReady")}</strong>
+                <small>{$t("audiobooks.nativeImportHint")}</small>
+              </div>
             </div>
-          </div>
+          {:else}
+            <div class="status-row" class:ok={ffmpegReady} class:missing={!ffmpegReady}>
+              <span class="status-icon">
+                <Icon name={ffmpegReady ? "check" : "close"} size={15} />
+              </span>
+              <div>
+                <strong>
+                  {ffmpegReady
+                    ? $t("audiobooks.ffmpegReady")
+                    : $t("audiobooks.ffmpegMissing")}
+                </strong>
+                {#if !ffmpegReady}
+                  <small>{$t("audiobooks.ffmpegMissingHelp")}</small>
+                {/if}
+              </div>
+            </div>
+          {/if}
 
           {#if kind === "transcribe"}
             <div class="status-row" class:ok={whisperBaseReady} class:missing={!whisperBaseReady}>
@@ -282,7 +308,7 @@
                 </button>
               {/if}
             </div>
-          {:else}
+          {:else if !nativeImport}
             <div class="status-row" class:ok={aiReady}>
               <span class="status-icon">
                 <Icon name={aiReady ? "check" : "waveform"} size={15} />
@@ -345,9 +371,11 @@
         {/if}
 
         <p class="hint">
-          {kind === "transcribe"
-            ? $t("audiobooks.importRequires")
-            : $t("audiobooks.chapterDetectionHelp")}
+          {nativeImport
+            ? $t("audiobooks.nativeImportHint")
+            : kind === "transcribe"
+              ? $t("audiobooks.importRequires")
+              : $t("audiobooks.chapterDetectionHelp")}
         </p>
       </div>
 

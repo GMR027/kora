@@ -1082,10 +1082,22 @@ export interface AudiobookInfo {
 
 export interface AudiobookCapabilities {
   platformSupported: boolean;
+  audioImportSupported: boolean;
+  nativeAudioImport: boolean;
+  transcriptionSupported: boolean;
   playbackSupported: boolean;
   backgroundPlayback: boolean;
   ffmpeg: boolean;
   whisperBase: boolean;
+}
+
+export interface AndroidAudioMetadata {
+  title?: string;
+  artist?: string;
+  album?: string;
+  durationMs: number;
+  coverPath?: string;
+  language?: string;
 }
 
 export interface AudiobookQueueItem {

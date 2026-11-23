@@ -25,7 +25,13 @@ if (!triple) {
   process.exit(1);
 }
 
-const source = join(root, "target", profile, "kora-neutts");
+const source = join(
+  process.env.CARGO_TARGET_DIR
+    ? resolve(root, process.env.CARGO_TARGET_DIR)
+    : join(root, "target"),
+  profile,
+  "kora-neutts",
+);
 const destinationDir = join(root, "src-tauri", "binaries");
 const destination = join(destinationDir, `kora-neutts-${triple}`);
 

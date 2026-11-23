@@ -71,6 +71,9 @@ pub struct AudiobookInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AudiobookCapabilities {
     pub platform_supported: bool,
+    pub audio_import_supported: bool,
+    pub native_audio_import: bool,
+    pub transcription_supported: bool,
     pub playback_supported: bool,
     pub background_playback: bool,
     pub ffmpeg: bool,
@@ -147,6 +150,9 @@ pub fn audiobook_capabilities(state: State<'_, AppState>) -> AudiobookCapabiliti
     let platform_supported = cfg!(not(target_os = "android"));
     AudiobookCapabilities {
         platform_supported,
+        audio_import_supported: true,
+        native_audio_import: cfg!(target_os = "android"),
+        transcription_supported: platform_supported,
         playback_supported: true,
         background_playback: cfg!(target_os = "android"),
         ffmpeg: platform_supported && m4b::ensure_available().is_ok(),
@@ -514,17 +520,64 @@ pub async fn import_audio_audiobook(
     app: AppHandle,
     path: String,
     options: AudioImportOptions,
+    metadata: Option<crate::audiobooks::import_audio::AndroidAudioMetadata>,
 ) -> Result<AudiobookInfo> {
     #[cfg(target_os = "android")]
     {
-        let _ = (&state, &app, &path, &options);
-        return Err(KoraError::Unsupported(
-            "la importación de audiolibros aún no está disponible en Android".into(),
-        ));
+        let Some(metadata) = metadata else {
+            return Err(KoraError::InvalidInput(
+                "faltan los metadatos de audio de Android".into(),
+            ));
+        };
+        if state.audiobook_jobs.status().is_some() {
+            return Err(KoraError::Conflict(
+                "espera a que termine la tarea actual antes de importar".into(),
+            ));
+        }
+        let _guard = state.audiobook_jobs.run_lock.lock().await;
+        if state.audiobook_jobs.status().is_some() {
+            return Err(KoraError::Conflict(
+                "espera a que termine la tarea actual antes de importar".into(),
+            ));
+        }
+        let title = metadata
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Audiolibro importado")
+            .to_string();
+        let control = state
+            .audiobook_jobs
+            .begin(&title, Some("Importación nativa"));
+        queue::notify_queue(&app);
+
+        let result = crate::audiobooks::import_audio::import_android(
+            &state,
+            &app,
+            &path,
+            options,
+            metadata,
+            Some(control.as_ref()),
+        )
+        .await;
+        state.audiobook_jobs.finish();
+        queue::notify_queue(&app);
+        drop(_guard);
+
+        let audiobook = match result {
+            Ok(audiobook) => audiobook,
+            Err(error) => {
+                eprintln!("Kora: falló la importación de audio en Android: {error:#}");
+                return Err(error);
+            }
+        };
+        return info_for(&state, &audiobook, None).await;
     }
 
     #[cfg(not(target_os = "android"))]
     {
+        let _ = metadata;
         if state.audiobook_jobs.status().is_some() {
             return Err(KoraError::Conflict(
                 "espera a que termine la tarea actual antes de importar".into(),

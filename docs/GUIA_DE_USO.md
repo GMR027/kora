@@ -128,11 +128,12 @@ Cada cambio de pantalla tiene una transición suave y respeta
 - Si una generación falla o se cancela, la tarjeta muestra **Reintentar
   generación**. El reintento reutiliza la voz, el alcance, el estilo y el
   reparto guardados, y conserva los marcadores de voz del audiolibro.
-- La importación acepta M4B, M4A, MP3, AAC, FLAC y OGG. Antes de empezar
-  comprueba ffmpeg y Whisper Base, permite descargar el modelo y conserva la
-  portada embebida cuando existe. Puedes pausarla, reanudarla o cancelarla
-  desde la franja de tarea activa; al cancelar se elimina el audio copiado y
-  los archivos temporales.
+- La importación acepta M4B, M4A, MP3, AAC, FLAC y OGG. En escritorio comprueba
+  ffmpeg y Whisper Base, permite descargar el modelo y conserva la portada
+  embebida cuando existe. En Android usa `MediaMetadataRetriever` para leer
+  metadatos y portada, y reparte el audio en bloques de diez minutos. Puedes
+  pausar, reanudar o cancelar la importación desde la franja de tarea activa; al
+  cancelar se elimina el audio copiado y los archivos temporales.
 - Los capítulos se toman de los metadatos del archivo. Si no los trae, Kora
   detecta pausas largas con ffmpeg y marcas acústicas de 440 Hz o 1 kHz; como
   último recurso divide el audio en bloques de diez minutos. El origen se
@@ -145,8 +146,8 @@ Cada cambio de pantalla tiene una transición suave y respeta
   apagada. La notificación y la pantalla de bloqueo muestran los controles de
   reproducción, el temporizador de sueño sigue funcionando aunque el WebView esté
   suspendido y el botón del sol del reproductor permite mantener la pantalla
-  encendida mientras escuchas. La generación e importación siguen siendo de
-  escritorio.
+  encendida mientras escuchas. La importación de audio está disponible en el
+  móvil; la generación y la transcripción automática siguen siendo de escritorio.
 - La **lectura sincronizada** muestra la frase que suena bajo el reproductor y
   resalta la palabra actual. **Leer y escuchar** abre el capítulo completo con
   todas las frases sincronizadas: toca una frase para saltar a ese punto. En

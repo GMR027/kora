@@ -24,10 +24,14 @@ Genera los paquetes desde la raíz del repositorio:
 
 ```bash
 pnpm build:linux                                   # .deb (compila el helper de voz)
-pnpm build:helper:release && pnpm tauri build --bundles rpm   # .rpm
+pnpm build:helper:release && pnpm tauri build --bundles rpm   # .rpm (en Fedora 42)
 # o todos los bundles:
 pnpm tauri build
 ```
+
+> Compila el `.rpm` dentro de Fedora 42 o un contenedor Fedora. Ubuntu genera
+> un binario que enlaza `libtesseract.so.5`/`liblept.so.5`; Fedora 42 usa
+> `libtesseract.so.5.5`/`libleptonica.so.6` y la app no arrancaría.
 
 Copia los artefactos (desde `landing/downloads/`):
 
@@ -35,6 +39,10 @@ Copia los artefactos (desde `landing/downloads/`):
 cp ../../target/release/bundle/deb/Kora_0.1.2_amd64.deb .
 cp ../../target/release/bundle/rpm/Kora-0.1.2-1.x86_64.rpm .
 ```
+
+En Debian/Ubuntu instala con `sudo apt install ./Kora_0.1.2_amd64.deb`, no con
+`dpkg -i`: `apt` resuelve e instala `espeak-ng`, `liblept5`, `libtesseract5` y
+el resto de dependencias. En Fedora, `sudo dnf install ./Kora-*.rpm`.
 
 El sufijo de arquitectura cambia en hosts ARM (`arm64` / `aarch64`). Ajusta el
 nombre y el `href` si publicas una arquitectura distinta.

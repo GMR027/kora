@@ -3864,6 +3864,9 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
     case "audiobook_capabilities":
       return {
         platformSupported: true,
+        audioImportSupported: true,
+        nativeAudioImport: false,
+        transcriptionSupported: true,
         playbackSupported: true,
         backgroundPlayback: false,
         ffmpeg: true,

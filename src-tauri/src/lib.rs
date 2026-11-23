@@ -56,16 +56,29 @@ pub fn run() {
 
     builder
         .setup(|app| {
-            let state = state::AppState::new(app.handle())?;
-            init_tracing(&state.layout.logs)?;
+            eprintln!("Kora: inicializando estado");
+            let state = match state::AppState::new(app.handle()) {
+                Ok(state) => state,
+                Err(error) => {
+                    eprintln!("Kora: fallo al inicializar el estado: {error:#}");
+                    return Err(Box::new(error));
+                }
+            };
+            let logs = state.layout.logs.clone();
+            // El estado debe quedar registrado antes de cualquier inicialización
+            // que pueda fallar (por ejemplo, el suscriptor global de tracing en
+            // una recreación de la actividad Android).
+            app.manage(state);
+            if let Err(error) = init_tracing(&logs) {
+                eprintln!("Kora: no se pudo iniciar el registro de logs: {error:#}");
+            }
+            eprintln!("Kora: estado listo");
 
             tracing::info!(
-                root = %state.layout.root.display(),
-                database = %state.layout.database_file().display(),
+                root = %app.state::<state::AppState>().layout.root.display(),
+                database = %app.state::<state::AppState>().layout.database_file().display(),
                 "Kora iniciado"
             );
-
-            app.manage(state);
 
             let handle = app.handle().clone();
             let semantic = app.state::<state::AppState>().semantic.clone();

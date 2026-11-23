@@ -13,7 +13,7 @@
     loadAppearance,
     updateAppearance,
   } from "./lib/appearance";
-  import { t } from "./lib/i18n";
+  import { t, translate } from "./lib/i18n";
   import type { AppTab } from "./lib/navigation";
   import { notifyError, notifyImportant } from "./lib/toast";
   import { checkUpdatesInBackground } from "./lib/updates";
@@ -51,7 +51,7 @@
     tab = "reader";
   }
 
-  async function boot() {
+  async function boot(attempt = 0) {
     ready = false;
     error = null;
     try {
@@ -67,8 +67,25 @@
         document.documentElement.lang = currentAppearance.preferences.locale;
       }
     } catch (cause) {
-      error = errorMessage(cause);
+      // En Android el WebView puede cargar antes de que el backend termine de
+      // construir AppState. Reintentamos unos segundos en vez de mostrar el
+      // error interno de Tauri.
+      if (isStateNotManaged(cause) && attempt < 60) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return boot(attempt + 1);
+      }
+      error = isStateNotManaged(cause)
+        ? translate("common.startupStateError")
+        : errorMessage(cause);
     }
+  }
+
+  function isStateNotManaged(cause: unknown): boolean {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    return (
+      message.includes("state not managed") ||
+      message.includes("You must call `.manage()`")
+    );
   }
 
   onMount(() => {
@@ -161,7 +178,7 @@
 {:else if error && !appearanceState}
   <div class="boot">
     <p class="boot-error" role="alert">{error}</p>
-    <button class="primary" onclick={boot}>{$t("common.retry")}</button>
+    <button class="primary" onclick={() => void boot()}>{$t("common.retry")}</button>
   </div>
 {:else if appearanceState && !appearanceState.preferences.onboardingDone}
   <Onboarding

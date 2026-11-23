@@ -535,7 +535,13 @@ mod android {
     pub fn init_plugin() -> TauriPlugin<Wry> {
         Builder::new(PLUGIN_NAME)
             .setup(|app, api| {
-                let handle = api.register_android_plugin(PLUGIN_PACKAGE, PLUGIN_CLASS)?;
+                let handle = match api.register_android_plugin(PLUGIN_PACKAGE, PLUGIN_CLASS) {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        eprintln!("Kora: no se pudo registrar el audio Android: {error}");
+                        return Ok(());
+                    }
+                };
                 let _ = HANDLE.set(handle);
                 RELAY_READY.store(false, Ordering::SeqCst);
 

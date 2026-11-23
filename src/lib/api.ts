@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AccountStatus,
   AiConfig,
+  AndroidAudioMetadata,
   AudioImportOptions,
   AiMessage,
   AiReply,
@@ -842,7 +843,9 @@ export const importExternalAudiobook = (path: string) =>
 export const importAudioAudiobook = (
   path: string,
   options: AudioImportOptions,
-) => invoke<AudiobookInfo>("import_audio_audiobook", { path, options });
+  metadata: AndroidAudioMetadata | null = null,
+) =>
+  invoke<AudiobookInfo>("import_audio_audiobook", { path, options, metadata });
 
 export const reanalyzeAudiobookChapters = (
   audiobookId: string,
