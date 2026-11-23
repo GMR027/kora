@@ -10,14 +10,17 @@
     aiSaveConfig,
     aiStatus,
     categorySeedApply,
+    checkAppUpdate,
     classificationGetConfig,
     classificationSaveConfig,
     classificationStatus,
     deleteCustomTheme,
+    errorMessage,
     featuresStatus,
     getSyncCollections,
     libraryClassifyPending,
     listSyncDevices,
+    openExternalUrl,
     prepareSemanticModel,
     readerApplyToAll,
     readerGetDefaults,
@@ -51,7 +54,13 @@
     resetComfort,
     updateComfort,
   } from "../lib/comfort";
-  import { notifyError, notifySuccess } from "../lib/toast";
+  import { notifyError, notifyImportant, notifySuccess } from "../lib/toast";
+  import {
+    DEFAULT_UPDATE_MANIFEST_URL,
+    getUpdateManifestUrl,
+    openUpdatesRequest,
+    saveUpdateManifestUrl,
+  } from "../lib/updates";
   import type { AppTab } from "../lib/navigation";
   import Button from "../lib/components/Button.svelte";
   import Icon from "../lib/components/Icon.svelte";
@@ -74,6 +83,7 @@
     SyncCollections,
     SyncDeviceInfo,
     SyncStatus,
+    UpdateCheck,
   } from "../lib/types";
 
   type SettingsTab =
@@ -88,9 +98,13 @@
   let {
     onNavigate,
     profile = null,
+    appVersion = "",
+    platform = "",
   }: {
     onNavigate?: (tab: AppTab) => void;
     profile?: { displayName: string; username: string; avatarPath?: string | null } | null;
+    appVersion?: string;
+    platform?: string;
   } = $props();
 
   let tab = $state<SettingsTab>("appearance");
@@ -113,6 +127,12 @@
   let busy = $state<string | null>(null);
   let backupBusy = $state(false);
   let restoreBusy = $state(false);
+  let updateCheck = $state<UpdateCheck | null>(null);
+  let updateChecking = $state(false);
+  let updateDownloading = $state(false);
+  let updateError = $state<string | null>(null);
+  let updateManifestUrl = $state("");
+  let showUpdateAdvanced = $state(false);
 
   let themeName = $state("");
   let themeBackground = $state("#fbf9f5");
@@ -264,7 +284,15 @@
 
   async function loadAi() {
     try {
-      [aiConfig, aiState] = await Promise.all([aiGetConfig(), aiStatus()]);
+      const [config, status] = await Promise.all([aiGetConfig(), aiStatus()]);
+      aiConfig = {
+        ...config,
+        temperature: Number.isFinite(config.temperature)
+          ? config.temperature
+          : 0.55,
+        maxTokens: Number.isFinite(config.maxTokens) ? config.maxTokens : 900,
+      };
+      aiState = status;
     } catch (cause) {
       notifyError(cause);
     }
@@ -422,7 +450,7 @@
       applyCollections(
         await setSyncCategories(selectedDeviceId, selectedCategories, syncAll),
       );
-      notifySuccess(translate("settings.themeApplied"));
+      notifySuccess(translate("settings.syncSaved"));
     } catch (cause) {
       notifyError(cause);
     } finally {
@@ -685,6 +713,125 @@
       ? selectedCategories.filter((value) => value !== id)
       : [...selectedCategories, id];
   }
+
+  async function checkUpdates() {
+    updateChecking = true;
+    updateError = null;
+    updateCheck = null;
+    saveUpdateManifestUrl(updateManifestUrl);
+    try {
+      const result = await checkAppUpdate(updateManifestUrl.trim() || undefined);
+      updateCheck = result;
+      try {
+        localStorage.setItem("kora.updateCheckedAt", String(Date.now()));
+      } catch {
+        // Sin persistencia; el chequeo automático podría repetirse.
+      }
+      if (result.available) {
+        notifyImportant(
+          "update",
+          translate("notifications.updateTitle"),
+          translate("notifications.updateBody", {
+            version: result.latestVersion,
+          }),
+          "updates",
+        );
+      } else {
+        notifySuccess(translate("settings.upToDate"));
+      }
+    } catch (cause) {
+      updateError = errorMessage(cause);
+      notifyError(cause);
+    } finally {
+      updateChecking = false;
+    }
+  }
+
+  function installUpdate() {
+    const url = updateCheck?.url;
+    if (!url) return;
+    if (platform === "android") {
+      const bridge = (
+        window as unknown as {
+          KoraChrome?: {
+            downloadUpdate?: (
+              url: string,
+              sha256: string,
+              fileName: string,
+            ) => void;
+          };
+        }
+      ).KoraChrome;
+      if (!bridge?.downloadUpdate) {
+        updateError = translate("settings.updateError");
+        return;
+      }
+      updateDownloading = true;
+      updateError = null;
+      notifyImportant(
+        "info",
+        translate("settings.updateDownloading"),
+        translate("settings.updateAvailable", {
+          version: updateCheck?.latestVersion ?? "",
+        }),
+      );
+      bridge.downloadUpdate(
+        url,
+        updateCheck?.sha256 ?? "",
+        `kora-${updateCheck?.latestVersion ?? "update"}-${Date.now()}.apk`,
+      );
+      return;
+    }
+    void openExternalUrl(url)
+      .then(() => notifySuccess(translate("settings.updateDesktopHint")))
+      .catch((cause) => {
+        updateError = errorMessage(cause);
+        notifyError(cause);
+      });
+  }
+
+  function persistUpdateManifest() {
+    saveUpdateManifestUrl(updateManifestUrl);
+  }
+
+  onMount(() => {
+    updateManifestUrl = getUpdateManifestUrl();
+    const unsubscribe = openUpdatesRequest.subscribe((value) => {
+      if (value <= 0) return;
+      tab = "about";
+      openUpdatesRequest.set(0);
+      setTimeout(() => {
+        document
+          .querySelector(".update-panel")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 140);
+    });
+
+    const onReady = () => {
+      updateDownloading = false;
+      notifyImportant("success", translate("settings.updateReady"));
+    };
+    const onError = (event: Event) => {
+      updateDownloading = false;
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      const message = detail?.message || translate("settings.updateError");
+      updateError = message;
+      notifyError(new Error(message));
+    };
+    const onPermission = () => {
+      updateDownloading = false;
+      notifyImportant("warning", translate("settings.updatePermission"));
+    };
+    window.addEventListener("kora:update-ready", onReady);
+    window.addEventListener("kora:update-error", onError);
+    window.addEventListener("kora:update-permission", onPermission);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("kora:update-ready", onReady);
+      window.removeEventListener("kora:update-error", onError);
+      window.removeEventListener("kora:update-permission", onPermission);
+    };
+  });
 </script>
 
 <section class="settings">
@@ -1512,16 +1659,16 @@
       <p class="hint">{$t("settings.storageHelp")}</p>
       {#if layout}
         <div class="path-grid">
-          {#each [
-            ["Raíz", layout.root],
-            ["Base de datos", layout.db],
-            ["Assets", layout.assets],
-            ["Exportaciones", layout.exports],
-            ["Papelera", layout.trash],
-            ["Logs", layout.logs],
-          ] as [label, value] (label)}
+          {#each ([
+            ["settings.storageRoot", layout.root],
+            ["settings.storageDatabase", layout.db],
+            ["settings.storageAssets", layout.assets],
+            ["settings.storageExports", layout.exports],
+            ["settings.storageTrashPath", layout.trash],
+            ["settings.storageLogs", layout.logs],
+          ] as [MessageKey, string][]) as [label, value] (label)}
             <div class="path-card">
-              <strong>{label}</strong>
+              <strong>{$t(label)}</strong>
               <code>{value}</code>
             </div>
           {/each}
@@ -1581,6 +1728,82 @@
       </p>
     </section>
   {:else}
+    <section class="panel update-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">{$t("settings.updates")}</p>
+          <h2>{$t("settings.updates")}</h2>
+        </div>
+        <span class="badge">
+          v{appVersion || updateCheck?.currentVersion || "—"}
+        </span>
+      </div>
+      <p class="hint">{$t("settings.updatesHelp")}</p>
+
+      {#if updateCheck}
+        {#if updateCheck.available}
+          <div class="update-available">
+            <strong>
+              {$t("settings.updateAvailable", {
+                version: updateCheck.latestVersion,
+              })}
+            </strong>
+            {#if updateCheck.notes}
+              <p class="hint">{updateCheck.notes}</p>
+            {/if}
+            <Button
+              variant="primary"
+              loading={updateDownloading}
+              disabled={updateDownloading}
+              onclick={installUpdate}
+            >
+              <Icon name="download" size={17} />
+              {$t("settings.downloadInstall")}
+            </Button>
+          </div>
+        {:else}
+          <p class="hint">{$t("settings.upToDate")}</p>
+        {/if}
+      {/if}
+
+      {#if updateError}
+        <p class="error">{updateError}</p>
+      {/if}
+
+      <div class="actions">
+        <Button
+          variant="ghost"
+          loading={updateChecking}
+          disabled={updateChecking || updateDownloading}
+          onclick={checkUpdates}
+        >
+          <Icon name="sync" size={17} />
+          {updateChecking
+            ? $t("settings.checkingUpdates")
+            : $t("settings.checkUpdates")}
+        </Button>
+      </div>
+
+      <p class="hint">
+        {platform === "android"
+          ? $t("settings.updateAndroidHint")
+          : $t("settings.updateDesktopHint")}
+      </p>
+
+      <details class="update-advanced" bind:open={showUpdateAdvanced}>
+        <summary>{$t("settings.updateManifest")}</summary>
+        <label class="wide">
+          <span>{$t("settings.updateManifest")}</span>
+          <input
+            bind:value={updateManifestUrl}
+            onblur={persistUpdateManifest}
+            placeholder={DEFAULT_UPDATE_MANIFEST_URL}
+          />
+        </label>
+        <p class="hint">{$t("settings.updateManifestHelp")}</p>
+      </details>
+    </section>
+
     <section class="panel about">
       <img class="about-mark" src="/logo.png" alt="Kora" />
       <h2>Kora</h2>
@@ -1793,7 +2016,10 @@
     font-size: 0.74rem;
   }
 
-  label input:not([type="color"]),
+  label
+    input:not([type="color"]):not([type="checkbox"]):not([type="radio"]):not(
+      [type="range"]
+    ),
   label select {
     min-height: 40px;
     padding: 0.48rem 0.58rem;
@@ -1817,13 +2043,20 @@
   .check {
     flex-direction: row;
     align-items: center;
-    gap: 0.45rem;
+    gap: 0.55rem;
+    min-height: 40px;
+    padding: 0.15rem 0;
     color: var(--text);
+    cursor: pointer;
   }
 
   .check input {
-    width: 17px;
-    height: 17px;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
+    margin: 0;
   }
 
   .contrast-line {
@@ -1967,6 +2200,43 @@
     font-size: 0.69rem;
   }
 
+  .update-panel .panel-heading {
+    align-items: center;
+  }
+
+  .update-available {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.85rem;
+    border: 1px solid var(--accent-line);
+    border-radius: 12px;
+    background: var(--accent-soft);
+  }
+
+  .update-available strong {
+    color: var(--accent);
+    font-size: 0.9rem;
+  }
+
+  .update-advanced {
+    margin-top: 0.15rem;
+    padding-top: 0.65rem;
+    border-top: 1px dashed var(--border);
+  }
+
+  .update-advanced summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .update-advanced label {
+    margin-top: 0.55rem;
+  }
+
   .about {
     align-items: flex-start;
   }
@@ -1985,10 +2255,12 @@
       width: calc(100% + 32px);
       max-width: none;
       align-self: stretch;
-      flex-wrap: nowrap;
+      flex-wrap: wrap;
       justify-content: flex-start;
+      gap: 0.35rem;
       margin-inline: -16px;
       padding: 0.3rem 16px;
+      overflow: visible;
       border-inline: 0;
       border-radius: 0;
       background: transparent;
@@ -2178,6 +2450,8 @@
 
     .theme-preview-panel {
       display: none;
+      position: static;
+      top: auto;
     }
   }
 
@@ -2403,6 +2677,8 @@
 
   .comfort-panel input[type="range"] {
     width: 100%;
+    min-height: 32px;
+    margin: 0;
     accent-color: var(--accent);
   }
 

@@ -26,4 +26,15 @@ if (!target) {
   throw new Error("No se encontró el contenedor #app");
 }
 
-mount(App, { target });
+async function boot() {
+  // `pnpm dev` en un navegador normal no tiene el IPC de Tauri. En ese caso
+  // se instala un backend de demostración con datos realistas para poder
+  // recorrer la biblioteca y el lector sin la aplicación nativa.
+  if (import.meta.env.DEV && !("__TAURI_INTERNALS__" in window)) {
+    const { installDemoBackend } = await import("./lib/demo");
+    installDemoBackend();
+  }
+  mount(App, { target: target! });
+}
+
+void boot();

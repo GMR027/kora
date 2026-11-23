@@ -71,6 +71,8 @@ pub struct AudiobookInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AudiobookCapabilities {
     pub platform_supported: bool,
+    pub playback_supported: bool,
+    pub background_playback: bool,
     pub ffmpeg: bool,
     pub whisper_base: bool,
 }
@@ -145,6 +147,8 @@ pub fn audiobook_capabilities(state: State<'_, AppState>) -> AudiobookCapabiliti
     let platform_supported = cfg!(not(target_os = "android"));
     AudiobookCapabilities {
         platform_supported,
+        playback_supported: true,
+        background_playback: cfg!(target_os = "android"),
         ffmpeg: platform_supported && m4b::ensure_available().is_ok(),
         whisper_base: platform_supported && practice::installed(&state.layout.assets, "base"),
     }
@@ -1176,6 +1180,23 @@ pub async fn set_audiobook_speed(
     state
         .audiobook_player
         .set_speed(speed)
+        .map_err(|error| KoraError::Internal(format!("{error:#}")))
+}
+
+/// Mantiene la pantalla encendida mientras suena el audiolibro. En escritorio
+/// es una operación sin efecto; en Android la aplica el plugin nativo.
+#[tauri::command]
+pub async fn set_audiobook_keep_screen_on(enabled: bool) -> Result<()> {
+    crate::audiobooks::player::set_keep_screen_on(enabled)
+        .map_err(|error| KoraError::Internal(format!("{error:#}")))
+}
+
+/// Programa el temporizador de sueño en el servicio de reproducción. En
+/// escritorio la vista mantiene su propio temporizador; en Android debe vivir
+/// en el servicio para seguir funcionando con la pantalla apagada.
+#[tauri::command]
+pub async fn set_audiobook_sleep_timer(minutes: u32) -> Result<()> {
+    crate::audiobooks::player::set_sleep_timer(minutes.min(600))
         .map_err(|error| KoraError::Internal(format!("{error:#}")))
 }
 

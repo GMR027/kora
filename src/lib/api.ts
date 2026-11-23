@@ -76,6 +76,7 @@ import type {
   TtsPreferences,
   TtsPreferencesInput,
   TtsStatus,
+  UpdateCheck,
   AnnotationEntry,
   AnnotationFilter,
   LibraryAnnotationEntry,
@@ -131,6 +132,12 @@ export const aiChat = (
 // --- Aplicación y almacenamiento -------------------------------------------
 
 export const appInfo = () => invoke<AppInfo>("app_info");
+export const checkAppUpdate = (manifestUrl?: string) =>
+  invoke<UpdateCheck>("check_app_update", {
+    manifestUrl: manifestUrl?.trim() || null,
+  });
+export const openExternalUrl = (url: string) =>
+  invoke<void>("open_external_url", { url });
 
 export const storageLayout = () => invoke<StorageLayout>("storage_layout");
 
@@ -869,6 +876,12 @@ export const seekAudiobook = (positionMs: number) =>
 
 export const setAudiobookSpeed = (speed: number) =>
   invoke<PlaybackSnapshot | null>("set_audiobook_speed", { speed });
+
+export const setAudiobookKeepScreenOn = (enabled: boolean) =>
+  invoke<void>("set_audiobook_keep_screen_on", { enabled });
+
+export const setAudiobookSleepTimer = (minutes: number) =>
+  invoke<void>("set_audiobook_sleep_timer", { minutes });
 
 export const audiobookChapters = (audiobookId: string) =>
   invoke<AudiobookChapterInfo[]>("audiobook_chapters", { audiobookId });

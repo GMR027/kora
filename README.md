@@ -50,7 +50,8 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 | Linux `.deb` | ✅ paquete generado y documentado |
 | Android APK núcleo | ✅ workflow x86_64 y build local x86_64; en aarch64 no es nativo |
 | APK debug universal | ✅ compilado localmente para las cuatro ABI |
-| APK release firmado | ✅ 98 MB, firma V2 verificada con la llave de Kora |
+| Audiolibros Android | ✅ Media3 ExoPlayer, `MediaSessionService`, notificación, segundo plano y pantalla apagada |
+| APK release firmado | ✅ 28 MB, firma V2 verificada con la llave de Kora |
 | Búsqueda semántica | ✅ chunking UTF-16, coseno y ranking con proveedor determinista |
 | IA local | ✅ Ollama/llama.cpp, configuración y detección de modelos |
 | Clasificación automática | ✅ reglas, metadatos, embeddings, IA y sugerencias |
@@ -314,6 +315,7 @@ conexión del pool y `audit_log` es append-only.
 | `list_audiobooks` / `delete_audiobook` | Biblioteca de audiolibros |
 | `play_audiobook` / `pause_audiobook` / `seek_audiobook` | Reproducción con búsqueda |
 | `set_audiobook_speed` / `audiobook_chapters` | Velocidad y capítulos con anclas al texto |
+| `set_audiobook_sleep_timer` / `set_audiobook_keep_screen_on` | Temporizador de sueño y pantalla encendida en el servicio Android |
 | `stop_audiobook` / `get_audiobook_progress` | Detención y progreso persistido |
 | `import_external_audiobook` | Copia, transcribe con Whisper y crea un libro |
 | `import_audio_audiobook` / `reanalyze_audiobook_chapters` / `update_audiobook_chapters` / `transcribe_audiobook_later` | Importación de audio, capítulos y transcripción diferida |
@@ -451,6 +453,22 @@ pnpm install
 pnpm tauri dev
 ```
 
+### Modo demostración en el navegador
+
+Para revisar la interfaz sin compilar Rust ni disponer de libros en la base
+local:
+
+```bash
+pnpm dev:demo
+```
+
+Al abrir `http://localhost:1420` fuera del WebView de Tauri, el frontend
+instala un backend simulado (`src/lib/demo/`) con diez libros, portadas,
+categorías, progreso, anotaciones, capítulos EPUB y PDF reales, respuestas de
+IA, lectura en voz alta y modo ensayo. Los datos viven en memoria y se pierden
+al recargar; el modo nunca se activa dentro de la aplicación Tauri. La consola
+expone `window.__KORA_DEMO__` para inspeccionar el estado.
+
 Comprobaciones:
 
 ```bash
@@ -574,6 +592,14 @@ compila de forma nativa en aarch64.
 
 En esta fase, Android conserva el visor PDF con `pdf.js` y añade TTS nativo con
 `tauri-plugin-tts` (`TextToSpeech`), declarado en `capabilities/android-tts.json`.
+Los audiolibros M4B/MP3 se reproducen con **Media3 ExoPlayer** dentro de un
+`MediaSessionService`: la reproducción continúa en segundo plano, con la
+pantalla apagada y con controles en la notificación y la pantalla de bloqueo.
+El temporizador de sueño y el ajuste opcional de mantener la pantalla encendida
+también viven en el servicio nativo. La generación, importación y transcripción
+de audiolibros siguen reservadas a escritorio. El código nativo del reproductor
+está en `app/src/main/java/dev/kora/reader/audio/`; si vuelves a ejecutar
+`tauri android init`, revisa que el generador no haya sobrescrito esas clases.
 Las dependencias nativas de OCR (Tesseract/Leptonica), PDFium, Piper/ONNX y
 Whisper quedan detrás de `cfg` y devuelven un error claro hasta empaquetarlas
 por ABI. El código de escritorio es la referencia para completar ese
@@ -1081,8 +1107,11 @@ mientras suena el audio. Si la voz es clonada, el M4B lleva metadatos
 `KORA_CLONED_VOICE` y `KORA_WATERMARK`, y la UI muestra el aviso.
 
 `play_audiobook` usa `rodio` con Symphonia (MP4/AAC y MP3) y permite pausar y
-buscar. `audiobook_progress` guarda la posición por audiolibro; al volver a
-pulsar «Escuchar» se reanuda donde se quedó.
+buscar. En Android la reproducción la hace Media3 ExoPlayer desde un
+`MediaSessionService`, con notificación, controles de pantalla de bloqueo,
+audio focus y reproducción con la pantalla apagada. `audiobook_progress`
+guarda la posición por audiolibro; al volver a pulsar «Escuchar» se reanuda
+donde se quedó.
 
 `generate_audiobook` acepta un estilo de narración (neutro, calmado, dramático
 o enérgico) y una velocidad base; ambos se guardan en el manifiesto y ajustan
@@ -1224,8 +1253,9 @@ Ajustes → Modo ensayo.
 3. Lector de QR con cámara móvil, compartir perfiles de voz y propagación
    automática de revocaciones.
 4. Sincronización de audiolibros M4B y perfiles `.koravoice`.
-5. Selector de archivos nativo en Android (los metadatos y las portadas
-   embebidas ya se extraen al importar en escritorio).
+5. Selector de archivos nativo en Android: las URIs `content://` ya se
+   convierten a rutas temporales antes de importar; faltan metadatos y portadas
+   embebidas en el propio móvil.
 6. Empaquetar `ffmpeg`/`ffprobe` en `deb`/`rpm`/AppImage; el binario auxiliar
    `kora-neutts` ya se incluye mediante `externalBin` en
    `tauri.linux.conf.json`.

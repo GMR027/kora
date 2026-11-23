@@ -293,20 +293,44 @@
   let disposed = false;
   let activeSessionId: string | null = null;
   let activeSessionKind: SessionKind | null = null;
+  let sessionRequest = 0;
   let visitedSections = $state(new Set<number>());
   let autoListenConsumed = false;
+  let openRequest = 0;
+  let chapterRequest = 0;
 
   let scrollerEl = $state<HTMLElement | null>(null);
   let contentEl = $state<HTMLElement | null>(null);
   let progressTimer: ReturnType<typeof setTimeout> | undefined;
   let settingsTimer: ReturnType<typeof setTimeout> | undefined;
+  let settingsRevision = 0;
+  let settingsFrame = 0;
   let scrollFrame = 0;
 
   let ttsState = $derived(ttsStatus?.state ?? "idle");
   let ttsActive = $derived(ttsState === "playing" || ttsState === "paused");
 
   $effect(() => {
+    // El motor TTS es global: si reproduce otro libro u otro audiolibro, el
+    // lector no debe mostrar controles de pausa para la obra equivocada.
+    if (ttsStatus?.bookId && session?.bookId && ttsStatus.bookId !== session.bookId) {
+      ttsStatus = null;
+      excerptTts = false;
+    }
+  });
+
+  $effect(() => {
     if (ttsActive && !excerptTts) ttsPanelOpen = true;
+  });
+
+  $effect(() => {
+    // Cerrar el panel mientras se graba debe apagar el micrófono, no dejar
+    // una captura huérfana en segundo plano.
+    if (!practiceOpen && practiceRecording) {
+      practiceRecording = false;
+      clearInterval(practiceTimer);
+      void practiceCancel();
+    }
   });
   let installedVoices = $derived(
     ttsVoices.filter((voice) => voice.installed),
@@ -321,12 +345,12 @@
   let pdfPageCount = $derived(session?.pdf?.pageCount ?? 0);
   let isPdf = $derived(session?.document.format === "pdf");
   let atBookStart = $derived(
-    chapterIndex <= 0 && chapterProgress <= 0.001,
+    chapterIndex <= 0 && (chapterProgress <= 0.001 || pageCount <= 1),
   );
   let atBookEnd = $derived(
     sectionCount > 0 &&
       chapterIndex >= sectionCount - 1 &&
-      chapterProgress >= 0.999,
+      (chapterProgress >= 0.999 || pageCount <= 1),
   );
   let annotationSections = $derived(
     session
@@ -388,8 +412,10 @@
 
     const handleResize = () => {
       const fraction = chapterProgress;
+      const index = chapterIndex;
       void measure().then(() => {
-        if (settings?.mode === "paged") scrollToFraction(fraction);
+        if (disposed || chapterIndex !== index) return;
+        scrollToFraction(fraction);
         scheduleMarks();
         scheduleTtsRects();
       });
@@ -400,6 +426,9 @@
 
     return () => {
       disposed = true;
+      openRequest += 1;
+      chapterRequest += 1;
+      sessionRequest += 1;
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("keydown", onKeydown);
       clearTimeout(progressTimer);
@@ -407,6 +436,7 @@
       clearTimeout(ttsSettingsTimer);
       clearInterval(practiceTimer);
       clearInterval(sleepTimer);
+      cancelAnimationFrame(settingsFrame);
       cancelAnimationFrame(scrollFrame);
       cancelAnimationFrame(ttsFrame);
       unlistenHandoff?.();
@@ -416,9 +446,15 @@
       unlistenPhraseEnd?.();
       unlistenTtsState?.();
       unlistenPracticeDownload?.();
+      if (practiceRecording) void practiceCancel();
+      if (!isPdf) {
+        if (mirror?.hosting) void stopMirror().catch(() => {});
+        else if (mirror?.active) void leaveMirror().catch(() => {});
+      }
       void persistProgress();
+      void saveSettings();
       void endReadingSession();
-      void ttsStop();
+      void ttsStop().catch(() => {});
       if (isFullscreen) void getCurrentWindow().setFullscreen(false);
     };
   });
@@ -552,8 +588,9 @@
 
   async function startReadingSession(kind: SessionKind) {
     if (!session || activeSessionKind === kind) return;
+    const request = ++sessionRequest;
     await endReadingSession();
-    if (!session) return;
+    if (disposed || request !== sessionRequest || !session) return;
     try {
       const started = await sessionStart(
         session.bookId,
@@ -561,6 +598,14 @@
         chapterIndex,
         bookProgress,
       );
+      if (disposed || request !== sessionRequest) {
+        try {
+          await sessionEnd(started.id, null);
+        } catch {
+          // La sesión efímera ya no existe.
+        }
+        return;
+      }
       activeSessionId = started.id;
       activeSessionKind = kind;
     } catch {
@@ -587,19 +632,77 @@
   }
 
   async function openBook(id: string, locator: Locator | null = null) {
+    const request = ++openRequest;
+    chapterRequest += 1;
+    sessionRequest += 1;
+
     if (session) {
       await persistProgress();
+      if (disposed || request !== openRequest) return;
+      await saveSettings();
+      if (disposed || request !== openRequest) return;
       await endReadingSession();
+      if (disposed || request !== openRequest) return;
+      clearTimeout(settingsTimer);
+      settingsRevision += 1;
+    }
+
+    if (ttsActive && ttsStatus?.bookId !== id) {
+      try {
+        ttsStatus = await ttsStop();
+      } catch {
+        ttsStatus = null;
+      }
+      excerptTts = false;
+      ttsPanelOpen = false;
+      ttsPhrase = null;
+      ttsRects = [];
+      if (disposed || request !== openRequest) return;
+    }
+
+    if (mirror?.active && mirror.bookId !== id) {
+      try {
+        mirror = mirror.hosting ? await stopMirror() : await leaveMirror();
+      } catch {
+        // El espejo de otro libro se cierra igualmente al cambiar de obra.
+        mirror = null;
+      }
+      if (disposed || request !== openRequest) return;
     }
 
     opening = true;
+    loading = true;
+    chapter = null;
     error = null;
+    handoff = null;
+    ttsError = null;
+    extractNotice = null;
+    ttsPanelOpen = false;
     selection = null;
     activeAnnotation = null;
+    panelAnchor = null;
+    tocOpen = false;
+    settingsOpen = false;
+    termPanelOpen = false;
+    characterPanelOpen = false;
+    mirrorOpen = false;
+    aiOpen = false;
+    annotationsOpen = false;
+    if (practiceRecording) {
+      practiceRecording = false;
+      clearInterval(practiceTimer);
+      void practiceCancel();
+    }
+    practiceOpen = false;
+    searchQuery = "";
+    searchResults = [];
+    searchError = null;
+    searchProgress = 0;
     resetAiConversation();
 
     try {
       const opened = await readerOpen(id, locator);
+      if (disposed || request !== openRequest) return;
       session = opened;
       settings = opened.settings;
       selectedBookId = id;
@@ -610,11 +713,19 @@
         Math.max(opened.document.sections.length - 1, 0),
       );
       visitedSections = new Set([chapterIndex]);
-      await loadBookDecorations(id);
+      try {
+        await loadBookDecorations(id);
+      } catch (cause) {
+        // Sin anotaciones el libro sigue siendo legible; no bloqueamos la
+        // apertura por un fallo al cargar las capas decorativas.
+        console.error("No se pudieron cargar las anotaciones", cause);
+      }
+      if (disposed || request !== openRequest) return;
       ttsPhrase = null;
       ttsRects = [];
       autoListenConsumed = false;
       await loadTtsForBook(id);
+      if (disposed || request !== openRequest) return;
 
       if (opened.document.format === "pdf") {
         chapter = null;
@@ -625,22 +736,34 @@
           : 0;
       } else {
         await loadChapter(chapterIndex, opened.locator.offset);
+        if (disposed || request !== openRequest) return;
+        if (!chapter) {
+          failedBookId = id;
+          session = null;
+          return;
+        }
         if (autoListen && !autoListenConsumed) {
           autoListenConsumed = true;
           ttsPanelOpen = true;
           await tick();
+          if (disposed || request !== openRequest) return;
           await startTts();
         }
       }
+      if (disposed || request !== openRequest) return;
       void startReadingSession("reading");
     } catch (cause) {
+      if (disposed || request !== openRequest) return;
       error = errorMessage(cause);
       failedBookId = id;
       session = null;
       chapter = null;
       pdfPage = 0;
     } finally {
-      opening = false;
+      if (request === openRequest) {
+        opening = false;
+        loading = false;
+      }
     }
   }
 
@@ -690,13 +813,14 @@
   async function refreshAiStatus() {
     try {
       aiStatusState = await aiStatus();
+      aiError = null;
     } catch (cause) {
       aiError = errorMessage(cause);
     }
   }
 
   async function ensureAiReady(): Promise<boolean> {
-    if (!aiStatusState) await refreshAiStatus();
+    if (!aiStatusState?.available) await refreshAiStatus();
     if (!aiStatusState?.available) {
       aiError = translate("reader.aiUnavailable");
       return false;
@@ -735,10 +859,16 @@
     const selected = anchor?.text.trim() ?? "";
     if (!anchor || !selected) return;
     termQuery = selected.length > 120 ? `${selected.slice(0, 120)}…` : selected;
-    const text = chapterPlainText();
+    const doc = chapter
+      ? new DOMParser().parseFromString(chapter.html, "text/html")
+      : null;
+    const text = doc?.body.textContent ?? "";
     const start = Math.max(0, anchor.offsetStart - 220);
     const end = Math.min(text.length, anchor.offsetEnd + 220);
-    termContext = `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`;
+    termContext = `${start > 0 ? "…" : ""}${text
+      .slice(start, end)
+      .replace(/\s+/g, " ")
+      .trim()}${end < text.length ? "…" : ""}`;
     termResult = "";
     termError = null;
     termNotice = null;
@@ -789,10 +919,9 @@
 
   async function copyTermLookup() {
     const text = `${termQuery}\n\n${termResult}`;
-    try {
-      await navigator.clipboard.writeText(text);
+    if (await copyText(text)) {
       termNotice = translate("reader.termCopied");
-    } catch {
+    } else {
       termNotice = null;
     }
   }
@@ -909,6 +1038,9 @@
       annotationsOpen = false;
       }
     if (aiOpen && !aiStatusState) void refreshAiStatus();
+    if (aiOpen && aiStatusState && !aiStatusState.available) {
+      void refreshAiStatus();
+    }
   }
 
   function formatSleep(seconds: number): string {
@@ -943,11 +1075,12 @@
     try {
       const next = !isFullscreen;
       const fraction = chapterProgress;
+      const index = chapterIndex;
       await getCurrentWindow().setFullscreen(next);
       isFullscreen = next;
       await tick();
       await measure();
-      if (settings?.mode === "paged") scrollToFraction(fraction);
+      if (chapterIndex === index) scrollToFraction(fraction);
     } catch (cause) {
       error = errorMessage(cause);
     }
@@ -955,7 +1088,7 @@
 
   async function addBookmark() {
     if (!session || !chapter) return;
-    const offset = Math.round(chapterProgress * chapter.charCount);
+    const offset = currentReadingOffset();
     try {
       const annotation = await addMarker({
         bookId: session.bookId,
@@ -1008,9 +1141,47 @@
     }
   }
 
-  function plainTextFromHtml(html: string): string {
+  /**
+   * Texto buscable con un mapa de posiciones normalizado → offset UTF-16 del
+   * capítulo. El HTML de un capítulo contiene saltos de línea e indentación
+   * que una búsqueda sobre el texto colapsado perdía; eso devolvía offsets más
+   * pequeños y «Saltar aquí» llevaba a un punto anterior al real.
+   */
+  function searchableText(html: string): { text: string; offsets: number[] } {
     const doc = new DOMParser().parseFromString(html, "text/html");
-    return (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
+    const source = doc.body.textContent ?? "";
+    let text = "";
+    const offsets: number[] = [];
+    let previousWasSpace = true;
+
+    for (let index = 0; index < source.length; ) {
+      const char = String.fromCodePoint(source.codePointAt(index) ?? 0);
+      if (/\s/u.test(char)) {
+        if (!previousWasSpace) {
+          text += " ";
+          offsets.push(index);
+          previousWasSpace = true;
+        }
+      } else {
+        const lower = char.toLowerCase();
+        text += lower;
+        for (let unit = 0; unit < lower.length; unit += 1) {
+          offsets.push(index);
+        }
+        previousWasSpace = false;
+      }
+      index += char.length;
+    }
+
+    if (text.endsWith(" ")) {
+      text = text.slice(0, -1);
+      offsets.pop();
+    }
+    return { text, offsets };
+  }
+
+  function normalizeQuery(query: string): string {
+    return query.replace(/\s+/gu, " ").trim().toLowerCase();
   }
 
   async function searchInBook() {
@@ -1024,31 +1195,42 @@
     searchError = null;
     searchResults = [];
     searchProgress = 0;
-    const needle = query.toLocaleLowerCase();
+    const needle = normalizeQuery(query);
+    const bookId = session.bookId;
+    const sections = session.document.sections;
+    const activeChapter = chapter;
+    const activeChapterIndex = chapterIndex;
     try {
-      const sections = session.document.sections;
       for (let index = 0; index < sections.length; index += 1) {
-        if (searchResults.length >= 60) break;
+        if (disposed || searchResults.length >= 60) break;
         const content =
-          index === chapterIndex && chapter
-            ? chapter
-            : await readerGetChapter(session.bookId, index);
-        const text = plainTextFromHtml(content.html);
-        const haystack = text.toLocaleLowerCase();
-        let offset = haystack.indexOf(needle);
-        while (offset >= 0 && searchResults.length < 60) {
-          const start = Math.max(0, offset - 80);
-          const end = Math.min(text.length, offset + query.length + 120);
+          index === activeChapterIndex && activeChapter
+            ? activeChapter
+            : await readerGetChapter(bookId, index);
+        if (disposed) return;
+        if (!needle) break;
+        const raw = new DOMParser().parseFromString(content.html, "text/html")
+          .body.textContent ?? "";
+        const { text, offsets } = searchableText(content.html);
+        let found = text.indexOf(needle);
+        while (found >= 0 && searchResults.length < 60) {
+          const start = offsets[found] ?? 0;
+          const end = (offsets[found + needle.length - 1] ?? start) + 1;
+          const snippetStart = Math.max(0, start - 80);
+          const snippetEnd = Math.min(raw.length, end + 120);
           searchResults = [
             ...searchResults,
             {
               section: index,
-              offset,
-              snippet: `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
+              offset: start,
+              snippet: `${snippetStart > 0 ? "…" : ""}${raw
+                .slice(snippetStart, snippetEnd)
+                .replace(/\s+/g, " ")
+                .trim()}${snippetEnd < raw.length ? "…" : ""}`,
               title: sections[index]?.title ?? chapterLabel(index),
             },
           ];
-          offset = haystack.indexOf(needle, offset + needle.length);
+          found = text.indexOf(needle, found + needle.length);
         }
         searchProgress = Math.round(((index + 1) / sections.length) * 100);
         if (index % 3 === 0) {
@@ -1067,27 +1249,20 @@
   }
 
   function jumpToChapterPage() {
+    if (String(pageJump).trim() === "") return;
     const target = Number(pageJump);
     if (!scrollerEl || !Number.isFinite(target)) return;
     const page = Math.max(1, Math.min(pageCount, Math.round(target)));
-    if (settings?.mode === "paged") {
-      scrollerEl.scrollTo({
-        left: (page - 1) * scrollerEl.clientWidth,
-        behavior: "smooth",
-      });
-    } else {
-      const max = scrollerEl.scrollHeight - scrollerEl.clientHeight;
-      const ratio = pageCount > 1 ? (page - 1) / (pageCount - 1) : 0;
-      scrollerEl.scrollTo({ top: ratio * max, behavior: "smooth" });
-    }
+    scrollToPage(page);
     pageIndex = page;
     pageJump = "";
   }
 
   async function openSearchHit(hit: { section: number; offset: number }) {
     if (!session) return;
+    tocOpen = false;
     if (hit.section === chapterIndex) {
-      scrollToFraction((chapter?.charCount ?? 1) > 0 ? hit.offset / (chapter?.charCount ?? 1) : 0);
+      scrollToOffset(hit.offset);
       return;
     }
     await loadChapter(hit.section, hit.offset);
@@ -1115,17 +1290,113 @@
   }
 
   function updatePageMetrics() {
-    if (!scrollerEl || !chapter || settings?.mode !== "paged") {
+    if (!scrollerEl || !chapter) {
       pageIndex = 1;
       pageCount = 1;
       return;
     }
-    const width = Math.max(1, scrollerEl.clientWidth);
-    pageCount = Math.max(1, Math.round(scrollerEl.scrollWidth / width));
-    pageIndex = Math.min(
-      pageCount,
-      Math.max(1, Math.floor(scrollerEl.scrollLeft / width) + 1),
+    const paged = settings?.mode === "paged";
+    const size = Math.max(
+      1,
+      paged ? scrollerEl.clientWidth : scrollerEl.clientHeight,
     );
+    const total = paged ? scrollerEl.scrollWidth : scrollerEl.scrollHeight;
+    const max = Math.max(0, total - size);
+    // `ceil` mantiene la última página parcial; el desplazamiento real de esa
+    // página se limita a `max` en scrollToPage().
+    pageCount = Math.max(1, Math.ceil(total / size));
+    if (max <= 0) {
+      pageIndex = 1;
+    } else {
+      const position = paged ? scrollerEl.scrollLeft : scrollerEl.scrollTop;
+      pageIndex = Math.min(
+        pageCount,
+        Math.max(
+          1,
+          Math.round((position / max) * (pageCount - 1)) + 1,
+        ),
+      );
+    }
+  }
+
+  function scrollToPage(page: number) {
+    if (!scrollerEl) return;
+    const paged = settings?.mode === "paged";
+    const size = Math.max(
+      1,
+      paged ? scrollerEl.clientWidth : scrollerEl.clientHeight,
+    );
+    const max = Math.max(
+      0,
+      (paged ? scrollerEl.scrollWidth : scrollerEl.scrollHeight) - size,
+    );
+    const clamped = Math.max(1, Math.min(pageCount, page));
+    pageIndex = clamped;
+    const position =
+      clamped >= pageCount ? max : Math.min(max, (clamped - 1) * size);
+    if (max > 0) {
+      chapterProgress = Math.min(1, Math.max(0, position / max));
+      bookProgress = sectionCount
+        ? Math.min(1, (chapterIndex + chapterProgress) / sectionCount)
+        : 0;
+    }
+    if (paged) {
+      scrollerEl.scrollTo({ left: position, behavior: "smooth" });
+    } else {
+      scrollerEl.scrollTo({ top: position, behavior: "smooth" });
+    }
+  }
+
+  /**
+   * Lleva el scroll al punto exacto del texto. Usar `offset / charCount` como
+   * fracción de píxeles no coincidía con la maquetación real (títulos,
+   * imágenes, espacios), así que las búsquedas y anotaciones caían antes o
+   * después del pasaje.
+   */
+  function scrollToOffset(offset: number) {
+    if (!scrollerEl || !contentEl) return;
+    if (offset <= 0) {
+      scrollToFraction(0);
+      return;
+    }
+    if (chapter && chapter.charCount > 0 && offset >= chapter.charCount) {
+      scrollToFraction(1);
+      return;
+    }
+    const point = pointAt(contentEl, Math.max(0, offset));
+    if (!point) {
+      scrollToFraction(
+        chapter && chapter.charCount > 0 ? offset / chapter.charCount : 0,
+      );
+      return;
+    }
+
+    const range = document.createRange();
+    range.setStart(point.node, point.offset);
+    range.collapse(true);
+    const rect = range.getBoundingClientRect();
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      scrollToFraction(
+        chapter && chapter.charCount > 0 ? offset / chapter.charCount : 0,
+      );
+      return;
+    }
+
+    const surface = scrollerEl.getBoundingClientRect();
+    if (settings?.mode === "paged") {
+      const size = Math.max(1, scrollerEl.clientWidth);
+      const relative = rect.left - surface.left + scrollerEl.scrollLeft;
+      const page = Math.min(pageCount, Math.max(1, Math.floor(relative / size) + 1));
+      scrollToPage(page);
+      return;
+    }
+
+    const max = Math.max(0, scrollerEl.scrollHeight - scrollerEl.clientHeight);
+    const target =
+      scrollerEl.scrollTop +
+      (rect.top - surface.top) -
+      scrollerEl.clientHeight * 0.25;
+    scrollerEl.scrollTop = Math.min(max, Math.max(0, target));
   }
 
   function handlePdfProgress(page: number, percent: number) {
@@ -1144,6 +1415,7 @@
 
   async function loadChapter(index: number, offset = 0) {
     if (!session) return;
+    const request = ++chapterRequest;
 
     ttsPhrase = null;
     ttsRects = [];
@@ -1152,35 +1424,33 @@
     error = null;
     try {
       const content = await readerGetChapter(session.bookId, index);
+      if (disposed || request !== chapterRequest) return;
       chapter = content;
       chapterIndex = index;
       visitedSections = new Set([...visitedSections, index]);
       await tick();
+      if (disposed || request !== chapterRequest) return;
       if (
         contentEl &&
         contentEl.textContent &&
-        contentEl.textContent.length !== content.charCount
+        contentEl.textContent.length < content.charCount
       ) {
         console.warn(
-          "Kora: los offsets del capítulo no coinciden con el DOM",
+          "Kora: faltan nodos de texto en el capítulo",
           contentEl.textContent.length,
           content.charCount,
         );
       }
       await measure();
-      const fraction = content.charCount > 0 ? offset / content.charCount : 0;
-      scrollToFraction(fraction);
-      chapterProgress = Math.min(1, Math.max(0, fraction));
-      bookProgress = sectionCount
-        ? (chapterIndex + chapterProgress) / sectionCount
-        : 0;
+      if (disposed || request !== chapterRequest) return;
+      scrollToOffset(offset);
+      updateProgressFromScroll();
       scheduleMarks();
-      scheduleProgressSave();
       document.fonts?.ready.then(() => scheduleMarks());
     } catch (cause) {
-      error = errorMessage(cause);
+      if (request === chapterRequest) error = errorMessage(cause);
     } finally {
-      loading = false;
+      if (request === chapterRequest) loading = false;
     }
   }
 
@@ -1222,16 +1492,26 @@
 
     const clamped = Math.min(1, Math.max(0, fraction));
     const paged = settings?.mode === "paged";
-    const max = paged
-      ? scrollerEl.scrollWidth - scrollerEl.clientWidth
-      : scrollerEl.scrollHeight - scrollerEl.clientHeight;
+    const size = Math.max(
+      1,
+      paged ? scrollerEl.clientWidth : scrollerEl.clientHeight,
+    );
+    const total = paged ? scrollerEl.scrollWidth : scrollerEl.scrollHeight;
+    const max = Math.max(0, total - size);
 
     if (paged) {
-      const step = Math.max(1, scrollerEl.clientWidth);
-      scrollerEl.scrollLeft =
-        Math.round((clamped * Math.max(0, max)) / step) * step;
+      const pages = Math.max(1, Math.ceil(total / size));
+      if (pages <= 1 || max <= 0) {
+        scrollerEl.scrollLeft = 0;
+        return;
+      }
+      const page = Math.min(
+        pages - 1,
+        Math.max(0, Math.round(clamped * (pages - 1))),
+      );
+      scrollerEl.scrollLeft = page >= pages - 1 ? max : page * size;
     } else {
-      scrollerEl.scrollTop = clamped * Math.max(0, max);
+      scrollerEl.scrollTop = clamped * max;
     }
   }
 
@@ -1253,7 +1533,10 @@
       : scrollerEl.scrollHeight - scrollerEl.clientHeight;
     const position = paged ? scrollerEl.scrollLeft : scrollerEl.scrollTop;
 
-    chapterProgress = max > 0 ? Math.min(1, Math.max(0, position / max)) : 0;
+    // Si el capítulo entero cabe en pantalla, se ha visto completo: evita
+    // que el progreso del libro se quede en 0% y que «Siguiente» no detecte
+    // el final en capítulos cortos.
+    chapterProgress = max > 0 ? Math.min(1, Math.max(0, position / max)) : 1;
     bookProgress = sectionCount
       ? Math.min(1, (chapterIndex + chapterProgress) / sectionCount)
       : 0;
@@ -1271,7 +1554,7 @@
   async function persistProgress() {
     if (!session || !chapter) return;
 
-    const offset = Math.round(chapterProgress * chapter.charCount);
+    const offset = currentReadingOffset();
     try {
       await readerUpdateProgress(
         session.bookId,
@@ -1288,24 +1571,16 @@
     if (!scrollerEl) return;
 
     if (settings?.mode === "paged") {
-      const max = scrollerEl.scrollWidth - scrollerEl.clientWidth;
-      const atEnd = scrollerEl.scrollLeft >= max - 2;
-      const atStart = scrollerEl.scrollLeft <= 2;
-
-      if (direction > 0 && atEnd) {
+      updatePageMetrics();
+      if (direction > 0 && pageIndex >= pageCount) {
         await goToChapter(chapterIndex + 1);
         return;
       }
-      if (direction < 0 && atStart) {
+      if (direction < 0 && pageIndex <= 1) {
         await goToChapter(chapterIndex - 1, true);
         return;
       }
-
-      const target = Math.min(
-        max,
-        Math.max(0, scrollerEl.scrollLeft + direction * scrollerEl.clientWidth),
-      );
-      scrollerEl.scrollTo({ left: target, behavior: "smooth" });
+      scrollToPage(pageIndex + direction);
       return;
     }
 
@@ -1339,6 +1614,21 @@
       return;
     }
 
+    const panelOpen =
+      tocOpen ||
+      settingsOpen ||
+      termPanelOpen ||
+      practiceOpen ||
+      activeAnnotation !== null ||
+      characterPanelOpen ||
+      mirrorOpen ||
+      aiOpen ||
+      annotationsOpen;
+    if (panelOpen) {
+      if (event.key === "Escape") closeReaderPanels();
+      return;
+    }
+
     if (event.key === "ArrowRight" || event.key === "PageDown") {
       event.preventDefault();
       void pageStep(1);
@@ -1346,10 +1636,7 @@
       event.preventDefault();
       void pageStep(-1);
     } else if (event.key === "Escape") {
-      selection = null;
-      activeAnnotation = null;
-      tocOpen = false;
-      settingsOpen = false;
+      closeReaderPanels();
     }
   }
 
@@ -1380,9 +1667,17 @@
       return;
     }
 
-    const start = offsetAt(contentEl, range.startContainer, range.startOffset);
-    const end = offsetAt(contentEl, range.endContainer, range.endOffset);
-    const text = current.toString().trim();
+    let start = offsetAt(contentEl, range.startContainer, range.startOffset);
+    let end = offsetAt(contentEl, range.endContainer, range.endOffset);
+    const rawText = current.toString();
+    // `trim()` recorta el texto que se guarda; los offsets deben recortarse
+    // igual para que la marca no empiece o acabe en un espacio invisible.
+    const leading = rawText.length - rawText.trimStart().length;
+    const trailing = rawText.length - rawText.trimEnd().length;
+    start += leading;
+    end -= trailing;
+    const text = rawText.trim().slice(0, 2000);
+    end = start + text.length;
 
     if (end <= start || !text) {
       selection = null;
@@ -1394,7 +1689,7 @@
     selection = {
       start,
       end,
-      text: text.slice(0, 2000),
+      text,
       x: rect.left + rect.width / 2,
       y: rect.top,
     };
@@ -1414,24 +1709,96 @@
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let total = 0;
     let node: Node | null;
+    let boundary: { node: Text; offset: number } | null = null;
 
     while ((node = walker.nextNode())) {
       const text = node.textContent ?? "";
-      if (target <= total + text.length) {
+      if (target < total + text.length) {
         return {
           node: node as Text,
           offset: Math.max(0, Math.min(text.length, target - total)),
         };
       }
+      if (target === total + text.length) {
+        // Un offset justo en el límite entre dos nodos debe apuntar al inicio
+        // del siguiente. Quedarse en el final del nodo anterior (a menudo un
+        // salto de línea sin caja) hacía que «Ir» o la búsqueda no supieran
+        // dónde colocar el scroll.
+        boundary = { node: node as Text, offset: text.length };
+      }
       total += text.length;
     }
 
-    return null;
+    return boundary;
+  }
+
+  /**
+   * Offset UTF-16 del punto de lectura actual (la línea que queda a un cuarto
+   * de la altura visible, igual que usa `scrollToOffset`). Guardar
+   * `chapterProgress * charCount` hacía que el progreso se desplazara al
+   * reabrir el libro, porque los píxeles no equivalen a caracteres.
+   */
+  function readingOffset(fallback = 0): number {
+    if (!scrollerEl || !contentEl || !chapter) return fallback;
+    const surface = scrollerEl.getBoundingClientRect();
+    const paged = settings?.mode === "paged";
+    const x = surface.left + (paged ? surface.width * 0.25 : surface.width / 2);
+    const y = surface.top + (paged ? 40 : surface.height * 0.25);
+    const caretDocument = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (
+        x: number,
+        y: number,
+      ) => { offsetNode: Node; offset: number } | null;
+    };
+
+    try {
+      let node: Node | null = null;
+      let offset = 0;
+      if (typeof caretDocument.caretRangeFromPoint === "function") {
+        const range = caretDocument.caretRangeFromPoint(x, y);
+        node = range?.startContainer ?? null;
+        offset = range?.startOffset ?? 0;
+      } else if (typeof caretDocument.caretPositionFromPoint === "function") {
+        const position = caretDocument.caretPositionFromPoint(x, y);
+        node = position?.offsetNode ?? null;
+        offset = position?.offset ?? 0;
+      }
+      if (!node || !contentEl.contains(node)) return fallback;
+      const element =
+        node.nodeType === Node.ELEMENT_NODE
+          ? (node as Element)
+          : node.parentElement;
+      if (element?.closest(".annotation-layer, .tts-layer")) return fallback;
+      return Math.min(
+        chapter.charCount,
+        Math.max(0, offsetAt(contentEl, node, offset)),
+      );
+    } catch {
+      return fallback;
+    }
+  }
+
+  function currentReadingOffset(): number {
+    const fallback = Math.round(chapterProgress * (chapter?.charCount ?? 0));
+    if (!scrollerEl || !chapter) return fallback;
+    const paged = settings?.mode === "paged";
+    const max = Math.max(
+      0,
+      (paged ? scrollerEl.scrollWidth : scrollerEl.scrollHeight) -
+        (paged ? scrollerEl.clientWidth : scrollerEl.clientHeight),
+    );
+    const position = paged ? scrollerEl.scrollLeft : scrollerEl.scrollTop;
+    if (max <= 0) return fallback;
+    if (position <= 2) return 0;
+    if (position >= max - 2) return chapter.charCount;
+    return readingOffset(fallback);
   }
 
   function scheduleMarks() {
     requestAnimationFrame(() => recomputeMarks());
   }
+
 
   function textRects(
     offsetStart: number,
@@ -1610,6 +1977,11 @@
         : null);
     if (!anchor || !anchor.text.trim()) return;
 
+    // Al marcar desde el panel de anotaciones conservamos el pasaje para que
+    // «Extraer», «Reaccionar» o «Nueva nota» sigan disponibles. Si la marca
+    // viene de la barra de selección, sí se limpia la selección.
+    const keepPanelAnchor = panelAnchor !== null;
+
     try {
       const annotation = await addMarker({
         bookId: session.bookId,
@@ -1625,7 +1997,7 @@
       annotations = [...annotations, annotation];
       annotationsRefresh += 1;
       selection = null;
-      panelAnchor = null;
+      if (!keepPanelAnchor) panelAnchor = null;
       window.getSelection()?.removeAllRanges();
       await tick();
       scheduleMarks();
@@ -1660,6 +2032,11 @@
     settingsOpen = false;
     aiOpen = false;
     tocOpen = false;
+    termPanelOpen = false;
+    mirrorOpen = false;
+    characterPanelOpen = false;
+    practiceOpen = false;
+    activeAnnotation = null;
     annotationsRefresh += 1;
   }
 
@@ -1697,8 +2074,7 @@
   async function jumpToAnnotation(section: number, offset: number) {
     if (!session) return;
     if (section === chapterIndex) {
-      const total = chapter?.charCount ?? 0;
-      scrollToFraction(total > 0 ? offset / total : 0);
+      scrollToOffset(offset);
       return;
     }
     await loadChapter(section, offset);
@@ -1754,20 +2130,33 @@
     if (!settings) return;
 
     const fraction = chapterProgress;
+    const index = chapterIndex;
     settings.mode = mode;
     await tick();
     await measure();
+    if (chapterIndex !== index) return;
     scrollToFraction(fraction);
     scheduleMarks();
     scheduleSettingsSave();
   }
 
   function settingsChanged() {
-    scheduleMarks();
+    const fraction = chapterProgress;
+    const index = chapterIndex;
+    cancelAnimationFrame(settingsFrame);
+    settingsFrame = requestAnimationFrame(() => {
+      void measure().then(() => {
+        if (!scrollerEl || disposed || chapterIndex !== index) return;
+        scrollToFraction(fraction);
+        updateProgressFromScroll();
+        scheduleMarks();
+      });
+    });
     scheduleSettingsSave();
   }
 
   function scheduleSettingsSave() {
+    settingsRevision += 1;
     clearTimeout(settingsTimer);
     settingsTimer = setTimeout(() => {
       void saveSettings();
@@ -1776,6 +2165,7 @@
 
   async function saveSettings() {
     if (!session || !settings) return;
+    const revision = settingsRevision;
 
     try {
       const saved = await readerSaveSettings(session.bookId, {
@@ -1793,7 +2183,9 @@
         mode: settings.mode,
         zoom: settings.zoom,
       });
-      settings = saved;
+      // Si el usuario siguió ajustando mientras se guardaba, no pisamos los
+      // valores nuevos con la respuesta antigua.
+      if (revision === settingsRevision) settings = saved;
     } catch (cause) {
       error = errorMessage(cause);
     }
@@ -1857,6 +2249,7 @@
 
   async function initSyncEvents() {
     unlistenHandoff = await listen<SyncHandoffEvent>("sync::handoff", (event) => {
+      if (isPdf) return;
       if (event.payload.handoff.bookId === session?.bookId) {
         handoff = event.payload;
       }
@@ -1888,6 +2281,14 @@
   async function openMirrorPanel() {
     mirrorOpen = !mirrorOpen;
     if (mirrorOpen) {
+      settingsOpen = false;
+      tocOpen = false;
+      aiOpen = false;
+      annotationsOpen = false;
+      termPanelOpen = false;
+      characterPanelOpen = false;
+      practiceOpen = false;
+      activeAnnotation = null;
       await refreshMirror();
       try {
         mirrorPeers = await getPeers();
@@ -1958,7 +2359,7 @@
   }
 
   async function resumeHandoff() {
-    if (!session || !handoff) return;
+    if (!session || !handoff || isPdf) return;
     const target = handoff.handoff;
     handoff = null;
     await loadChapter(target.chapter, target.offset);
@@ -1980,7 +2381,9 @@
     const offset =
       ttsPhrase?.section === chapterIndex
         ? ttsPhrase.start
-        : Math.round(chapterProgress * (chapter?.charCount ?? 0));
+        : chapterProgress >= 0.999
+          ? 0
+          : currentReadingOffset();
 
     try {
       ttsStatus = await ttsStart(session.bookId, {
@@ -2174,6 +2577,14 @@
 
   async function openCharacterPanel() {
     characterPanelOpen = true;
+    settingsOpen = false;
+    tocOpen = false;
+    aiOpen = false;
+    annotationsOpen = false;
+    termPanelOpen = false;
+    mirrorOpen = false;
+    practiceOpen = false;
+    activeAnnotation = null;
     if (!session) return;
     try {
       const [detected, assigned] = await Promise.all([
@@ -2216,6 +2627,14 @@
 
   async function openPracticePanel() {
     practiceOpen = true;
+    settingsOpen = false;
+    tocOpen = false;
+    aiOpen = false;
+    annotationsOpen = false;
+    termPanelOpen = false;
+    mirrorOpen = false;
+    characterPanelOpen = false;
+    activeAnnotation = null;
     practiceError = null;
     practiceResult = null;
     await loadWhisperModels();
@@ -2255,6 +2674,13 @@
 
     practiceError = null;
     practiceResult = null;
+    if (ttsState === "playing") {
+      try {
+        ttsStatus = await ttsPause();
+      } catch {
+        // La práctica puede continuar aunque falle la pausa del TTS.
+      }
+    }
     try {
       await practiceStart(
         session.bookId,
@@ -2264,6 +2690,10 @@
         selection.text,
         ttsLanguage,
       );
+      if (disposed || !practiceOpen) {
+        void practiceCancel();
+        return;
+      }
       practiceRecording = true;
       practiceSeconds = 0;
       clearInterval(practiceTimer);
@@ -2284,6 +2714,7 @@
       await loadPracticeHistory();
     } catch (cause) {
       practiceError = errorMessage(cause);
+      void practiceCancel();
     }
   }
 
@@ -2373,13 +2804,15 @@
             aria-label={$t("reader.contents")}
             title={$t("reader.contents")}
             onclick={() => {
+              if (tocOpen && tocTab === "index") {
+                tocOpen = false;
+                return;
+              }
               tocTab = "index";
-              tocOpen = !tocOpen;
-              if (tocOpen) {
-                settingsOpen = false;
-                aiOpen = false;
-                annotationsOpen = false;
-                          }
+              tocOpen = true;
+              settingsOpen = false;
+              aiOpen = false;
+              annotationsOpen = false;
             }}
           >
             <Icon name="list" size={17} />
@@ -2722,6 +3155,9 @@
               {$t("reader.aiOpenSettings")}
             </button>
           {/if}
+          <button class="ghost small" onclick={refreshAiStatus}>
+            {$t("common.retry")}
+          </button>
         </div>
       {:else}
         <div class="ai-meta">
@@ -2918,12 +3354,14 @@
       {/if}
     </div>
   {:else if isPdf && settings}
-    <PdfView
-      {session}
-      {settings}
-      onprogress={handlePdfProgress}
-      onzoom={handlePdfZoom}
-    />
+    {#key session.bookId}
+      <PdfView
+        {session}
+        {settings}
+        onprogress={handlePdfProgress}
+        onzoom={handlePdfZoom}
+      />
+    {/key}
   {:else}
     <div class="reader-stage">
       <span class="book-spine" class:visible={spreadEnabled} aria-hidden="true"></span>
@@ -4546,7 +4984,6 @@
     --texture-ink: var(--reader-text);
     overflow-y: auto;
     overscroll-behavior: contain;
-    scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--reader-text) 24%, transparent) transparent;
@@ -7321,7 +7758,7 @@
   .panel-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 68;
+    z-index: 39;
     padding: 0;
     border: 0;
     background: color-mix(in srgb, #1a1008 38%, transparent);

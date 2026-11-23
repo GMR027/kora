@@ -141,6 +141,12 @@ Cada cambio de pantalla tiene una transición suave y respeta
   (0,75×–2×), saltar por capítulos y pulsar **Abrir texto** para ir al pasaje
   exacto en el lector. Sobre la barra de progreso se dibuja la **forma de onda**
   real del audio, con la parte reproducida en color de acento.
+- En **Android**, la reproducción continúa en segundo plano y con la pantalla
+  apagada. La notificación y la pantalla de bloqueo muestran los controles de
+  reproducción, el temporizador de sueño sigue funcionando aunque el WebView esté
+  suspendido y el botón del sol del reproductor permite mantener la pantalla
+  encendida mientras escuchas. La generación e importación siguen siendo de
+  escritorio.
 - La **lectura sincronizada** muestra la frase que suena bajo el reproductor y
   resalta la palabra actual. **Leer y escuchar** abre el capítulo completo con
   todas las frases sincronizadas: toca una frase para saltar a ese punto. En

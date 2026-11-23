@@ -944,7 +944,10 @@
       tabindex="-1"
       aria-label={viewingNote ? "Ver nota" : editingNote ? "Editar nota" : "Nueva nota"}
       onclick={(event) => event.stopPropagation()}
-      onkeydown={(event) => event.stopPropagation()}
+      onkeydown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Escape") closeModal();
+      }}
     >
       <header class="note-head">
         <div class="panel-heading">

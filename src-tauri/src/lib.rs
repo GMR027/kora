@@ -49,7 +49,9 @@ pub fn run() {
 
     #[cfg(target_os = "android")]
     {
-        builder = builder.plugin(tauri_plugin_tts::init());
+        builder = builder
+            .plugin(tauri_plugin_tts::init())
+            .plugin(audiobooks::player::init_mobile_plugin());
     }
 
     builder
@@ -228,6 +230,8 @@ pub fn run() {
             commands::audiobooks::pause_audiobook,
             commands::audiobooks::seek_audiobook,
             commands::audiobooks::set_audiobook_speed,
+            commands::audiobooks::set_audiobook_keep_screen_on,
+            commands::audiobooks::set_audiobook_sleep_timer,
             commands::audiobooks::audiobook_chapters,
             commands::audiobooks::audiobook_characters,
             commands::audiobooks::audiobook_karaoke,
@@ -267,6 +271,8 @@ pub fn run() {
             commands::sync::sync_start,
             commands::sync::list_audit_log,
             commands::sync::export_audit_log,
+            commands::updates::check_app_update,
+            commands::updates::open_external_url,
             commands::accounts::account_status,
             commands::accounts::create_account,
             commands::accounts::get_account,

@@ -33,6 +33,7 @@
     formatBytes,
     formatDate,
     formatDuration,
+    locale,
     t,
     translate,
   } from "../lib/i18n";
@@ -72,6 +73,9 @@
   let models = $state<VoiceModelInfo[]>([]);
   let profiles = $state<VoiceProfile[]>([]);
   let consentText = $state("");
+  let consentLabel = $derived(
+    $locale === "en" ? $t("voice.consent") : consentText || $t("voice.consent"),
+  );
   let loading = $state(true);
   let busy = $state<string | null>(null);
   let progress = $state<Record<string, number>>({});
@@ -85,6 +89,7 @@
 
   let audioPath = $state("");
   let recording = $state(false);
+  let startingRecording = $state(false);
   let recordingSeconds = $state(0);
   let recordedSample = $state<VoiceSample | null>(null);
   let importedPath = $state("");
@@ -105,6 +110,7 @@
   let player: HTMLAudioElement | null = null;
   let unlisten: UnlistenFn | undefined;
   let unlistenVoice: UnlistenFn | undefined;
+  let disposed = false;
   let nameInput = $state<HTMLInputElement | null>(null);
 
   let selectedLanguage = $state("all");
@@ -113,6 +119,8 @@
   let searchQuery = $state("");
   let profileQuery = $state("");
   let playingId = $state<string | null>(null);
+  let previewRequest = 0;
+  let detailsSampleRequest = 0;
   let previewDuration = $state(0);
   let previewRate = $state(1);
   let previewText = $state("");
@@ -165,8 +173,17 @@
   let modelsReadyPercent = $derived(
     models.length > 0 ? Math.round((installedModels / models.length) * 100) : 0,
   );
-  let normalizedQuery = $derived(searchQuery.trim().toLowerCase());
-  let normalizedProfileQuery = $derived(profileQuery.trim().toLowerCase());
+  function normalizeSearch(value: string): string {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase();
+  }
+
+  let normalizedQuery = $derived(normalizeSearch(searchQuery.trim()));
+  let normalizedProfileQuery = $derived(
+    normalizeSearch(profileQuery.trim()),
+  );
   let filteredSystemVoices = $derived(
     systemVoices.filter(
       (voice) =>
@@ -175,7 +192,8 @@
         (!onlyInstalled || voice.installed) &&
         (genderFilter === "all" ||
           (voice.gender ?? "neutral") === genderFilter) &&
-        (!normalizedQuery || voice.name.toLowerCase().includes(normalizedQuery)),
+        (!normalizedQuery ||
+          normalizeSearch(voice.name).includes(normalizedQuery)),
     ),
   );
   let featuredVoice = $derived(
@@ -197,17 +215,24 @@
     profiles.filter(
       (profile) =>
         !normalizedProfileQuery ||
-        profile.name.toLowerCase().includes(normalizedProfileQuery),
+        normalizeSearch(profile.name).includes(normalizedProfileQuery),
     ),
   );
-  let featuredProfile = $derived(
-    filteredProfiles.find((profile) => profile.id === featuredProfileId) ??
-      [...filteredProfiles].sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      )[0] ??
-      null,
-  );
+  let featuredProfile = $derived.by(() => {
+    const explicit = filteredProfiles.find(
+      (profile) => profile.id === featuredProfileId,
+    );
+    if (explicit) return explicit;
+    const ordered = [...filteredProfiles].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    return (
+      ordered.find((profile) => missingModels(profile.language) === 0) ??
+      ordered[0] ??
+      null
+    );
+  });
   let otherProfiles = $derived(
     filteredProfiles.filter((profile) => profile.id !== featuredProfile?.id),
   );
@@ -229,14 +254,34 @@
   let replaceTooLong = $derived(
     replaceDurationMs !== null && replaceDurationMs > 30_000,
   );
+  let replaceMissingModels = $derived(
+    details?.kind === "profile"
+      ? missingModels(details.profile.language)
+      : 0,
+  );
   let replaceReady = $derived(
     replacePath !== "" &&
       replaceReferenceText.trim() !== "" &&
       replaceConsent &&
       !replaceTooShort &&
-      !replaceTooLong,
+      !replaceTooLong &&
+      replaceMissingModels === 0,
   );
   let missingForProfile = $derived(missingModels(profileLanguage));
+  let createReady = $derived(
+    capabilities.cloning &&
+      consent &&
+      audioPath !== "" &&
+      profileName.trim() !== "" &&
+      referenceText.trim() !== "" &&
+      !recording &&
+      !sampleTooShort &&
+      !sampleTooLong &&
+      missingForProfile === 0,
+  );
+  let captureInProgress = $derived(
+    recording || startingRecording || busy === "record",
+  );
   let detailsFeatured = $derived(
     details === null
       ? false
@@ -272,8 +317,11 @@
       latencyHistory = [];
     }
     void load();
-    void initProgress();
+    void initProgress().catch((cause) => {
+      if (!disposed) notifyError(cause);
+    });
     return () => {
+      disposed = true;
       unlisten?.();
       unlistenVoice?.();
       player?.pause();
@@ -281,7 +329,7 @@
       stopDetailsSample();
       stopReplacePlayback();
       stopRecordingTimer();
-      if (recording) void voiceSampleCancel();
+      if (recording || startingRecording) void voiceSampleCancel();
       else if (recordedSample && busy !== "create")
         void voiceSampleDiscard(recordedSample.path);
     };
@@ -321,6 +369,7 @@
   }
 
   function stopDetailsSample() {
+    detailsSampleRequest += 1;
     detailsSamplePlayer?.pause();
     detailsSamplePlayer = null;
     detailsSamplePlaying = false;
@@ -328,15 +377,28 @@
   }
 
   async function toggleDetailsSample(profile: VoiceProfile) {
+    if (busy === `sample-${profile.id}`) return;
     if (detailsSamplePlaying && detailsSampleId === profile.id) {
       stopDetailsSample();
       return;
     }
     stopDetailsSample();
     stopPreview();
+    stopSamplePlayback();
+    stopReplacePlayback();
+    const request = ++detailsSampleRequest;
     busy = `sample-${profile.id}`;
     try {
       const path = await voiceProfileSample(profile.id);
+      if (
+        disposed ||
+        request !== detailsSampleRequest ||
+        !details ||
+        details.kind !== "profile" ||
+        details.profile.id !== profile.id
+      ) {
+        return;
+      }
       const audio = new Audio(convertFileSrc(path));
       detailsSamplePlayer = audio;
       detailsSampleId = profile.id;
@@ -344,11 +406,13 @@
         if (detailsSamplePlayer === audio) stopDetailsSample();
       };
       await audio.play();
+      if (request !== detailsSampleRequest) return;
       detailsSamplePlaying = true;
     } catch (cause) {
-      notifyError(cause);
+      stopDetailsSample();
+      if (!isPlaybackAbort(cause)) notifyError(cause);
     } finally {
-      busy = null;
+      if (busy === `sample-${profile.id}`) busy = null;
     }
   }
 
@@ -369,6 +433,19 @@
 
   function startReplaceSample() {
     if (!capabilities.cloning) return;
+    if (
+      details?.kind === "profile" &&
+      missingModels(details.profile.language) > 0
+    ) {
+      notifyError(
+        new Error(
+          $t("voice.modelsRequired", {
+            language: languageLabel(details.profile.language),
+          }),
+        ),
+      );
+      return;
+    }
     resetReplaceSample();
     stopDetailsSample();
     renamingProfile = false;
@@ -386,8 +463,12 @@
       stopReplacePlayback();
       return;
     }
+    stopPreview();
+    stopSamplePlayback();
+    stopDetailsSample();
     const audio = new Audio(convertFileSrc(replacePath));
     replacePlayer = audio;
+    replacePlaying = true;
     audio.onended = () => {
       if (replacePlayer === audio) {
         replacePlayer = null;
@@ -396,12 +477,9 @@
     };
     void audio
       .play()
-      .then(() => {
-        if (replacePlayer === audio) replacePlaying = true;
-      })
       .catch((cause) => {
         stopReplacePlayback();
-        notifyError(cause);
+        if (!isPlaybackAbort(cause)) notifyError(cause);
       });
   }
 
@@ -420,15 +498,24 @@
 
   async function chooseReplaceAudio() {
     if (busy === "replace") return;
-    const selected = await open({
-      multiple: false,
-      filters: [
-        {
-          name: "Audio",
-          extensions: ["wav", "mp3", "m4a", "flac", "ogg", "opus"],
-        },
-      ],
-    });
+    stopPreview();
+    stopSamplePlayback();
+    stopDetailsSample();
+    let selected: string | string[] | null;
+    try {
+      selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "Audio",
+            extensions: ["wav", "mp3", "m4a", "flac", "ogg", "opus"],
+          },
+        ],
+      });
+    } catch (cause) {
+      notifyError(cause);
+      return;
+    }
     if (typeof selected !== "string") return;
     stopReplacePlayback();
     replacePath = selected;
@@ -437,8 +524,11 @@
   }
 
   async function saveReplaceSample() {
-    if (!details || details.kind !== "profile" || !replaceReady) return;
+    if (!details || details.kind !== "profile" || !replaceReady || busy === "replace") return;
     busy = "replace";
+    stopPreview();
+    stopSamplePlayback();
+    stopReplacePlayback();
     try {
       const updated = await replaceVoiceSample(
         details.profile.id,
@@ -450,7 +540,7 @@
         profile.id === updated.id ? updated : profile,
       );
       details = { kind: "profile", profile: updated };
-      voices = await ttsVoices();
+      await refreshVoices();
       resetReplaceSample();
       notifySuccess($t("voice.sampleReplaced", { name: updated.name }));
       focusDetails();
@@ -470,9 +560,18 @@
 
   function formatLatency(milliseconds: number) {
     if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
-    return `${new Intl.NumberFormat(undefined, {
+    return `${new Intl.NumberFormat($locale, {
       maximumFractionDigits: 2,
     }).format(milliseconds / 1000)} s`;
+  }
+
+  function isPlaybackAbort(cause: unknown): boolean {
+    return (
+      typeof cause === "object" &&
+      cause !== null &&
+      "name" in cause &&
+      (cause as { name?: string }).name === "AbortError"
+    );
   }
 
   function setPreviewRate(rate: number) {
@@ -515,6 +614,11 @@
   }
 
   function openVoiceDetails(voice: VoiceDescriptor, trigger?: EventTarget | null) {
+    if (captureInProgress) return;
+    stopPreview();
+    stopSamplePlayback();
+    stopReplacePlayback();
+    stopDetailsSample();
     detailsTrigger = trigger instanceof HTMLElement ? trigger : null;
     details = { kind: "voice", voice };
     focusDetails();
@@ -524,6 +628,11 @@
     profile: VoiceProfile,
     trigger?: EventTarget | null,
   ) {
+    if (captureInProgress) return;
+    stopPreview();
+    stopSamplePlayback();
+    stopReplacePlayback();
+    stopDetailsSample();
     detailsTrigger = trigger instanceof HTMLElement ? trigger : null;
     details = { kind: "profile", profile };
     focusDetails();
@@ -572,7 +681,7 @@
   }
 
   async function saveRename() {
-    if (!details || details.kind !== "profile") return;
+    if (!details || details.kind !== "profile" || busy === "rename") return;
     const name = renameValue.trim();
     if (!name) return;
     busy = "rename";
@@ -582,7 +691,7 @@
         profile.id === updated.id ? updated : profile,
       );
       details = { kind: "profile", profile: updated };
-      voices = await ttsVoices();
+      await refreshVoices();
       renamingProfile = false;
       notifySuccess($t("voice.renamed", { name: updated.name }));
       focusDetails();
@@ -596,18 +705,75 @@
   async function load() {
     loading = true;
     try {
-      [voices, models, profiles, consentText, capabilities] =
-        await Promise.all([
-          ttsVoices(),
-          voiceModels(),
-          listVoiceProfiles(),
-          voiceConsentText(),
-          voiceCapabilities(),
-        ]);
-    } catch (cause) {
-      notifyError(cause);
+      const [
+        voicesResult,
+        modelsResult,
+        profilesResult,
+        consentResult,
+        capabilitiesResult,
+      ] = await Promise.allSettled([
+        ttsVoices(),
+        voiceModels(),
+        listVoiceProfiles(),
+        voiceConsentText(),
+        voiceCapabilities(),
+      ]);
+      if (disposed) return;
+      if (voicesResult.status === "fulfilled") {
+        voices = voicesResult.value ?? [];
+      }
+      if (modelsResult.status === "fulfilled") {
+        models = modelsResult.value ?? [];
+      }
+      if (profilesResult.status === "fulfilled") {
+        profiles = profilesResult.value ?? [];
+      }
+      if (
+        consentResult.status === "fulfilled" &&
+        typeof consentResult.value === "string"
+      ) {
+        consentText = consentResult.value;
+      }
+      if (
+        capabilitiesResult.status === "fulfilled" &&
+        capabilitiesResult.value
+      ) {
+        capabilities = { ...capabilities, ...capabilitiesResult.value };
+      }
+      const failure = [
+        voicesResult,
+        modelsResult,
+        profilesResult,
+        consentResult,
+        capabilitiesResult,
+      ].find((result) => result.status === "rejected");
+      if (failure) notifyError(failure.reason);
     } finally {
       loading = false;
+    }
+  }
+
+  async function refreshVoices() {
+    try {
+      voices = await ttsVoices();
+    } catch (cause) {
+      notifyError(cause);
+    }
+  }
+
+  async function refreshModels() {
+    try {
+      models = await voiceModels();
+    } catch (cause) {
+      notifyError(cause);
+    }
+  }
+
+  async function refreshProfiles() {
+    try {
+      profiles = await listVoiceProfiles();
+    } catch (cause) {
+      notifyError(cause);
     }
   }
 
@@ -618,8 +784,7 @@
         const next = { ...progress };
         delete next[payload.modelId];
         progress = next;
-        if (payload.error) notifyError(new Error(payload.error));
-        else void load();
+        if (!payload.error) void refreshModels();
       } else if (payload.total > 0) {
         progress = {
           ...progress,
@@ -627,6 +792,11 @@
         };
       }
     });
+    if (disposed) {
+      unlisten();
+      unlisten = undefined;
+      return;
+    }
 
     unlistenVoice = await listen<VoiceDownloadProgress>(
       "tts-download-progress",
@@ -636,8 +806,7 @@
           const next = { ...voiceProgress };
           delete next[payload.voiceId];
           voiceProgress = next;
-          if (payload.error) notifyError(new Error(payload.error));
-          else void load();
+          if (!payload.error) void refreshVoices();
         } else if (payload.total > 0) {
           voiceProgress = {
             ...voiceProgress,
@@ -646,6 +815,10 @@
         }
       },
     );
+    if (disposed) {
+      unlistenVoice();
+      unlistenVoice = undefined;
+    }
   }
 
   function languageLabel(language: string) {
@@ -667,6 +840,22 @@
     return kind;
   }
 
+  function modelLabel(model: VoiceModelInfo) {
+    if (model.id === "encoder") return $t("voice.modelEncoder");
+    if (model.id === "encoder-data") return $t("voice.modelEncoderData");
+    if (model.id === "decoder") return $t("voice.modelDecoder");
+    if (model.id === "backbone-es") return $t("voice.modelBackboneEs");
+    if (model.id === "backbone-en") return $t("voice.modelBackboneEn");
+    return model.label;
+  }
+
+  function modelLicense(model: VoiceModelInfo) {
+    if (model.license.startsWith("NeuTTS Open License")) {
+      return $t("voice.licenseNeuTts");
+    }
+    return model.license;
+  }
+
   function initials(name: string) {
     return name
       .trim()
@@ -686,24 +875,27 @@
   }
 
   async function installVoice(voice: VoiceDescriptor) {
-    if (!capabilities.voiceDownload) return;
+    if (!capabilities.voiceDownload || busy === `voice-${voice.id}`) return;
     busy = `voice-${voice.id}`;
     voiceProgress = { ...voiceProgress, [voice.id]: 0 };
     try {
       await ttsDownloadVoice(voice.id);
-      voices = await ttsVoices();
-      notifySuccess($t("voice.installed"), voice.name);
+      await refreshVoices();
+      notifySuccess($t("voice.voiceDownloaded", { name: voice.name }));
     } catch (cause) {
+      notifyError(cause);
+    } finally {
       const next = { ...voiceProgress };
       delete next[voice.id];
       voiceProgress = next;
-      notifyError(cause);
-    } finally {
       busy = null;
     }
   }
 
   async function previewSystem(voice: VoiceDescriptor) {
+    if (captureInProgress || busy === `preview-${voice.id}`) return;
+    const request = ++previewRequest;
+    const requestTab = tab;
     busy = `preview-${voice.id}`;
     try {
       const started = performance.now();
@@ -713,16 +905,43 @@
         rate: 1,
         pitch: 1,
       });
+      if (
+        disposed ||
+        request !== previewRequest ||
+        tab !== requestTab ||
+        recording
+      ) {
+        return;
+      }
       recordLatency(performance.now() - started);
       playPreview(output, voice.id);
     } catch (cause) {
       notifyError(cause);
     } finally {
-      busy = null;
+      if (busy === `preview-${voice.id}`) busy = null;
     }
   }
 
   async function previewProfile(profile: VoiceProfile) {
+    if (captureInProgress) return;
+    if (!capabilities.cloning) {
+      notifyError(new Error($t("voice.cloningUnavailable")));
+      return;
+    }
+    const missing = missingModels(profile.language);
+    if (missing > 0) {
+      notifyError(
+        new Error(
+          $t("voice.modelsRequired", {
+            language: languageLabel(profile.language),
+          }),
+        ),
+      );
+      return;
+    }
+    if (busy === `preview-${profile.id}`) return;
+    const request = ++previewRequest;
+    const requestTab = tab;
     busy = `preview-${profile.id}`;
     try {
       const started = performance.now();
@@ -730,17 +949,28 @@
         `clone:${profile.id}`,
         previewSentence(profile.language, "profile"),
       );
+      if (
+        disposed ||
+        request !== previewRequest ||
+        tab !== requestTab ||
+        recording
+      ) {
+        return;
+      }
       recordLatency(performance.now() - started);
       playPreview({ ...output, audioBase64: output.audioBase64 }, profile.id);
     } catch (cause) {
       notifyError(cause);
     } finally {
-      busy = null;
+      if (busy === `preview-${profile.id}`) busy = null;
     }
   }
 
   function playPreview(output: SynthesisOutput, id: string) {
     player?.pause();
+    stopSamplePlayback();
+    stopReplacePlayback();
+    stopDetailsSample();
     playingId = id;
     previewDuration = output.durationMs;
     rememberedDurations = { ...rememberedDurations, [id]: output.durationMs };
@@ -753,15 +983,19 @@
         previewDuration = 0;
       }
     };
-    void player.play().catch(() => {
+    void player.play().catch((cause) => {
       if (playingId === id) {
         playingId = null;
         previewDuration = 0;
+      }
+      if (!isPlaybackAbort(cause)) {
+        notifyError(cause);
       }
     });
   }
 
   function stopPreview() {
+    previewRequest += 1;
     player?.pause();
     player = null;
     playingId = null;
@@ -800,17 +1034,38 @@
   }
 
   async function startRecording() {
-    if (!capabilities.recording || busy === "create") return;
+    if (
+      !capabilities.recording ||
+      busy === "create" ||
+      busy === "record" ||
+      busy === "record-stop" ||
+      busy === "record-cancel"
+    ) {
+      return;
+    }
+    busy = "record";
     stopPreview();
     stopSamplePlayback();
+    stopReplacePlayback();
+    stopDetailsSample();
     await discardRecordedSample();
+    if (disposed) {
+      busy = null;
+      return;
+    }
     importedPath = "";
     importedDurationMs = null;
+    audioPath = "";
     sessionPeak = 0;
     inputLevel = 0;
-    busy = "record";
+    startingRecording = true;
     try {
       await voiceSampleStart(selectedDevice || undefined);
+      startingRecording = false;
+      if (disposed) {
+        await voiceSampleCancel();
+        return;
+      }
       recording = true;
       recordingSeconds = 0;
       recordingTimer = setInterval(() => {
@@ -827,6 +1082,7 @@
         }
       }, 120);
     } catch (cause) {
+      startingRecording = false;
       notifyError(cause);
     } finally {
       busy = null;
@@ -840,6 +1096,10 @@
     busy = "record-stop";
     try {
       const sample = await voiceSampleStop();
+      if (disposed) {
+        void voiceSampleDiscard(sample.path);
+        return;
+      }
       recordedSample = sample;
       audioPath = sample.path;
     } catch (cause) {
@@ -889,9 +1149,13 @@
       stopSamplePlayback();
       return;
     }
+    stopPreview();
+    stopReplacePlayback();
+    stopDetailsSample();
 
     const audio = new Audio(convertFileSrc(path));
     samplePlayer = audio;
+    samplePlaying = true;
     audio.onended = () => {
       if (samplePlayer === audio) {
         samplePlayer = null;
@@ -900,46 +1164,64 @@
     };
     void audio
       .play()
-      .then(() => {
-        if (samplePlayer === audio) samplePlaying = true;
-      })
       .catch((cause) => {
         stopSamplePlayback();
-        notifyError(cause);
+        if (!isPlaybackAbort(cause)) notifyError(cause);
       });
   }
 
   function selectTab(next: VoiceTab) {
     if (tab === next) return;
+    if (busy === "record" || startingRecording) return;
     if (recording) void cancelRecording();
+    stopPreview();
+    stopSamplePlayback();
+    stopReplacePlayback();
+    stopDetailsSample();
     tab = next;
   }
 
   async function startClone() {
     if (!capabilities.cloning) return;
-    tab = "cloned";
+    selectTab("cloned");
     await tick();
     nameInput?.focus();
   }
 
   async function importAudio() {
     if (!capabilities.cloning) return;
-    tab = "cloned";
+    selectTab("cloned");
     await tick();
     await chooseAudio();
   }
 
   async function chooseAudio() {
-    if (busy === "create") return;
-    const selected = await open({
-      multiple: false,
-      filters: [
-        {
-          name: "Audio",
-          extensions: ["wav", "mp3", "m4a", "flac", "ogg", "opus"],
-        },
-      ],
-    });
+    if (
+      busy === "create" ||
+      busy === "record" ||
+      busy === "record-stop" ||
+      busy === "record-cancel"
+    ) {
+      return;
+    }
+    stopPreview();
+    stopDetailsSample();
+    stopReplacePlayback();
+    let selected: string | string[] | null;
+    try {
+      selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "Audio",
+            extensions: ["wav", "mp3", "m4a", "flac", "ogg", "opus"],
+          },
+        ],
+      });
+    } catch (cause) {
+      notifyError(cause);
+      return;
+    }
     if (typeof selected === "string") {
       await discardRecordedSample();
       importedPath = selected;
@@ -974,7 +1256,7 @@
   }
 
   async function createProfile() {
-    if (!capabilities.cloning) return;
+    if (!capabilities.cloning || busy === "create") return;
     if (!consent) {
       notifyError(new Error($t("voice.consentRequired")));
       return;
@@ -984,6 +1266,10 @@
       return;
     }
     busy = "create";
+    stopPreview();
+    stopSamplePlayback();
+    stopReplacePlayback();
+    stopDetailsSample();
     const recordedPath = recordedSample?.path;
     try {
       const profile = await createVoiceProfile(
@@ -993,6 +1279,8 @@
         referenceText,
         consent,
       );
+      stopSamplePlayback();
+      profiles = [profile, ...profiles.filter((item) => item.id !== profile.id)];
       notifySuccess($t("voice.profileCreated", { name: profile.name }));
       if (recordedPath) {
         recordedSample = null;
@@ -1005,26 +1293,36 @@
       profileName = "";
       referenceText = "";
       consent = false;
-      voices = await ttsVoices();
-      profiles = await listVoiceProfiles();
-      tab = "cloned";
+      await refreshVoices();
+      await refreshProfiles();
     } catch (cause) {
       notifyError(cause);
     } finally {
+      if (disposed && recordedSample) {
+        void voiceSampleDiscard(recordedSample.path);
+        recordedSample = null;
+      }
       busy = null;
     }
   }
 
   async function exportProfile(profile: VoiceProfile) {
-    const destination = await save({
-      defaultPath: `${profile.name}.koravoice`,
-      filters: [{ name: "Kora Voice", extensions: ["koravoice"] }],
-    });
+    if (busy === `export-${profile.id}` || captureInProgress) return;
+    let destination: string | null;
+    try {
+      destination = await save({
+        defaultPath: `${profile.name}.koravoice`,
+        filters: [{ name: "Kora Voice", extensions: ["koravoice"] }],
+      });
+    } catch (cause) {
+      notifyError(cause);
+      return;
+    }
     if (!destination) return;
     busy = `export-${profile.id}`;
     try {
       await exportVoiceProfile(`clone:${profile.id}`, destination);
-      notifySuccess($t("voice.export"), profile.name);
+      notifySuccess($t("voice.profileExported", { name: profile.name }));
     } catch (cause) {
       notifyError(cause);
     } finally {
@@ -1033,22 +1331,29 @@
   }
 
   async function importProfile() {
+    if (busy === "import" || captureInProgress) return;
     if (!importConsent) {
       notifyError(new Error($t("voice.consentRequired")));
       return;
     }
-    const source = await open({
-      multiple: false,
-      filters: [{ name: "Kora Voice", extensions: ["koravoice"] }],
-    });
+    let source: string | string[] | null;
+    try {
+      source = await open({
+        multiple: false,
+        filters: [{ name: "Kora Voice", extensions: ["koravoice"] }],
+      });
+    } catch (cause) {
+      notifyError(cause);
+      return;
+    }
     if (typeof source !== "string") return;
     busy = "import";
     try {
       const profile = await importVoiceProfile(source, true);
+      profiles = [profile, ...profiles.filter((item) => item.id !== profile.id)];
       notifySuccess($t("voice.profileImported", { name: profile.name }));
-      voices = await ttsVoices();
-      profiles = await listVoiceProfiles();
-      tab = "cloned";
+      await refreshVoices();
+      await refreshProfiles();
     } catch (cause) {
       notifyError(cause);
     } finally {
@@ -1057,16 +1362,25 @@
   }
 
   async function removeProfile(profile: VoiceProfile) {
-    if (!window.confirm(`${translate("voice.delete")} «${profile.name}»?`)) return;
+    if (busy === `delete-${profile.id}` || captureInProgress) return;
+    if (
+      !window.confirm(
+        translate("voice.profileDeleteConfirm", { name: profile.name }),
+      )
+    ) {
+      return;
+    }
     busy = `delete-${profile.id}`;
     try {
+      stopPreview();
       await deleteVoiceProfile(`clone:${profile.id}`);
       if (featuredProfileId === profile.id) {
         featuredProfileId = "";
         localStorage.removeItem(FEATURED_PROFILE_KEY);
       }
-      voices = await ttsVoices();
-      profiles = await listVoiceProfiles();
+      profiles = profiles.filter((item) => item.id !== profile.id);
+      await refreshVoices();
+      await refreshProfiles();
       notifySuccess($t("voice.profileDeleted"));
     } catch (cause) {
       notifyError(cause);
@@ -1076,38 +1390,46 @@
   }
 
   async function downloadModels(language: string) {
-    if (!capabilities.modelDownload) return;
+    if (
+      !capabilities.modelDownload ||
+      busy === `models-${language}` ||
+      captureInProgress
+    ) {
+      return;
+    }
     busy = `models-${language}`;
     try {
       await voiceDownloadModels(language);
-      models = await voiceModels();
+      await refreshModels();
       notifySuccess($t("voice.modelsReady", { language: languageLabel(language) }));
     } catch (cause) {
       notifyError(cause);
+      await refreshModels();
     } finally {
       busy = null;
     }
   }
 
   async function downloadModel(model: VoiceModelInfo) {
-    if (!capabilities.modelDownload) return;
+    if (!capabilities.modelDownload || busy === `model-${model.id}`) return;
     busy = `model-${model.id}`;
     try {
       await voiceDownloadModel(model.id);
-      models = await voiceModels();
-      notifySuccess($t("voice.modelDownloaded", { name: model.label }));
+      await refreshModels();
+      notifySuccess($t("voice.modelDownloaded", { name: modelLabel(model) }));
     } catch (cause) {
       notifyError(cause);
+      await refreshModels();
     } finally {
       busy = null;
     }
   }
 
   async function removeModel(model: VoiceModelInfo) {
-    if (!capabilities.modelDownload) return;
+    if (!capabilities.modelDownload || busy === `model-${model.id}`) return;
     if (
       !window.confirm(
-        translate("voice.modelDeleteConfirm", { name: model.label }),
+        translate("voice.modelDeleteConfirm", { name: modelLabel(model) }),
       )
     ) {
       return;
@@ -1115,8 +1437,8 @@
     busy = `model-${model.id}`;
     try {
       await deleteVoiceModel(model.id);
-      models = await voiceModels();
-      notifySuccess($t("voice.modelDeleted", { name: model.label }));
+      await refreshModels();
+      notifySuccess($t("voice.modelDeleted", { name: modelLabel(model) }));
     } catch (cause) {
       notifyError(cause);
     } finally {
@@ -1125,10 +1447,10 @@
   }
 
   async function repairModel(model: VoiceModelInfo) {
-    if (!capabilities.modelDownload) return;
+    if (!capabilities.modelDownload || busy === `model-${model.id}`) return;
     if (
       !window.confirm(
-        translate("voice.modelRepairConfirm", { name: model.label }),
+        translate("voice.modelRepairConfirm", { name: modelLabel(model) }),
       )
     ) {
       return;
@@ -1137,10 +1459,11 @@
     try {
       await deleteVoiceModel(model.id);
       await voiceDownloadModel(model.id);
-      models = await voiceModels();
-      notifySuccess($t("voice.modelRepaired", { name: model.label }));
+      await refreshModels();
+      notifySuccess($t("voice.modelRepaired", { name: modelLabel(model) }));
     } catch (cause) {
       notifyError(cause);
+      await refreshModels();
     } finally {
       busy = null;
     }
@@ -1191,7 +1514,7 @@
   </div>
 {/snippet}
 
-{#snippet voiceCard(voice: VoiceDescriptor, featured = false)}
+{#snippet voiceCard(voice: VoiceDescriptor, featured = false, explicitFeatured = false)}
   <article class="voice-card" class:featured class:playing={playingId === voice.id}>
     <div class="voice-main">
       <span class="voice-avatar" class:installed={voice.installed}>
@@ -1205,7 +1528,7 @@
           {#if voice.gender}
             <span class="pill">{genderLabel(voice.gender)}</span>
           {/if}
-          {#if featured}
+          {#if explicitFeatured}
             <span class="pill featured-pill">{$t("voice.featured")}</span>
           {/if}
         </div>
@@ -1246,10 +1569,12 @@
           variant="ghost"
           size="small"
           loading={busy === `preview-${voice.id}`}
+          disabled={captureInProgress}
+          title={captureInProgress ? $t("voice.recordingNow") : undefined}
           onclick={() =>
             playingId === voice.id ? stopPreview() : previewSystem(voice)}
         >
-          <Icon name={playingId === voice.id ? "pause" : "play"} size={16} />
+          <Icon name={playingId === voice.id ? "stop" : "play"} size={16} />
           {playingId === voice.id ? $t("voice.pause") : $t("voice.preview")}
         </Button>
       {:else if capabilities.voiceDownload}
@@ -1276,6 +1601,8 @@
       <Button
         variant="ghost"
         size="small"
+        disabled={captureInProgress}
+        title={captureInProgress ? $t("voice.recordingNow") : undefined}
         onclick={(event) => openVoiceDetails(voice, event.currentTarget)}
       >
         <Icon name="expand" size={16} />
@@ -1286,7 +1613,8 @@
   </article>
 {/snippet}
 
-{#snippet profileCard(profile: VoiceProfile, featured = false)}
+{#snippet profileCard(profile: VoiceProfile, featured = false, explicitFeatured = false)}
+  {@const profileModelsMissing = missingModels(profile.language)}
   <article class="voice-card profile-card" class:featured class:playing={playingId === profile.id}>
     <div class="voice-main">
       <span class="voice-avatar installed">
@@ -1298,6 +1626,9 @@
           <h3>{profile.name}</h3>
           <span class="pill language">{languageLabel(profile.language)}</span>
           <span class="pill featured-pill">{$t("voice.voiceClone")}</span>
+          {#if explicitFeatured}
+            <span class="pill featured-pill">{$t("voice.featuredProfileBadge")}</span>
+          {/if}
         </div>
         <p class="voice-desc">{$t("voice.profileDesc")}</p>
         <div class="voice-meta">
@@ -1305,6 +1636,17 @@
           <span>{formatDuration(profile.referenceDurationMs)}</span>
           <span>{profile.engine}</span>
         </div>
+        {#if !capabilities.cloning}
+          <p class="model-warning-inline">
+            {$t("voice.cloningUnavailableShort")}
+          </p>
+        {:else if profileModelsMissing > 0}
+          <p class="model-warning-inline">
+            {$t("voice.modelsRequired", {
+              language: languageLabel(profile.language),
+            })}
+          </p>
+        {/if}
       </div>
     </div>
     <div class="voice-actions">
@@ -1312,15 +1654,27 @@
         variant="ghost"
         size="small"
         loading={busy === `preview-${profile.id}`}
+        disabled={captureInProgress || !capabilities.cloning || profileModelsMissing > 0}
+        title={captureInProgress
+          ? $t("voice.recordingNow")
+          : !capabilities.cloning
+            ? $t("voice.cloningUnavailable")
+            : profileModelsMissing > 0
+              ? $t("voice.modelsRequired", {
+                  language: languageLabel(profile.language),
+                })
+              : undefined}
         onclick={() =>
           playingId === profile.id ? stopPreview() : previewProfile(profile)}
       >
-        <Icon name={playingId === profile.id ? "pause" : "play"} size={16} />
+        <Icon name={playingId === profile.id ? "stop" : "play"} size={16} />
         {playingId === profile.id ? $t("voice.pause") : $t("voice.preview")}
       </Button>
       <Button
         variant="ghost"
         size="small"
+        disabled={captureInProgress}
+        title={captureInProgress ? $t("voice.recordingNow") : undefined}
         onclick={(event) => openProfileDetails(profile, event.currentTarget)}
       >
         <Icon name="expand" size={16} />
@@ -1331,6 +1685,7 @@
           variant="ghost"
           size="small"
           loading={busy === `export-${profile.id}`}
+          disabled={captureInProgress}
           onclick={() => exportProfile(profile)}
         >
           <Icon name="download" size={16} />
@@ -1340,6 +1695,7 @@
           variant="danger"
           size="small"
           loading={busy === `delete-${profile.id}`}
+          disabled={captureInProgress}
           onclick={() => removeProfile(profile)}
         >
           <Icon name="trash" size={16} />
@@ -1356,6 +1712,7 @@
             variant="ghost"
             size="small"
             loading={busy === `export-${profile.id}`}
+            disabled={captureInProgress}
             onclick={() => exportProfile(profile)}
           >
             <Icon name="download" size={16} />
@@ -1365,6 +1722,7 @@
             variant="danger"
             size="small"
             loading={busy === `delete-${profile.id}`}
+            disabled={captureInProgress}
             onclick={() => removeProfile(profile)}
           >
             <Icon name="trash" size={16} />
@@ -1388,12 +1746,18 @@
         <span class="engine-status">
           <span
             class="status-dot"
-            class:on={models.length > 0 && pendingModels === 0}
+            class:on={capabilities.cloning &&
+              models.length > 0 &&
+              pendingModels === 0}
           ></span>
-          {#if models.length === 0}
+          {#if !capabilities.cloning}
+            {$t("voice.cloningUnavailableShort")}
+          {:else if models.length === 0}
             {$t("voice.engineNoModels")}
           {:else if pendingModels === 0}
             {$t("voice.engineActive")}
+          {:else if pendingModels === 1}
+            {$t("voice.enginePendingOne")}
           {:else}
             {$t("voice.enginePending", { count: pendingModels })}
           {/if}
@@ -1455,7 +1819,7 @@
     >
       <Icon name="sliders" size={17} />
       <span>{$t("voice.models")}</span>
-      {#if pendingModels}
+      {#if pendingModels && capabilities.modelDownload}
         <span class="tab-count attention">{pendingModels}</span>
       {:else if models.length}
         <span class="tab-count">{models.length}</span>
@@ -1612,7 +1976,12 @@
       <div class="section-title">
         <h2>{$t("voice.catalogTitle")}</h2>
         <span class="pill count-pill">
-          {$t("voice.catalogCount", { count: filteredSystemVoices.length })}
+          {$t(
+            filteredSystemVoices.length === 1
+              ? "voice.catalogCountOne"
+              : "voice.catalogCount",
+            { count: filteredSystemVoices.length },
+          )}
         </span>
       </div>
       <span class="section-note">{$t("voice.catalogNote")}</span>
@@ -1632,7 +2001,11 @@
           />
         {:else}
           {#if featuredVoice}
-            {@render voiceCard(featuredVoice, true)}
+            {@render voiceCard(
+              featuredVoice,
+              true,
+              featuredVoiceId === featuredVoice.id,
+            )}
           {/if}
           {#each otherSystemVoices as voice (voice.id)}
             {@render voiceCard(voice)}
@@ -1647,7 +2020,11 @@
               <span class="rail-icon"><Icon name="sliders" size={18} /></span>
               <h2>{$t("voice.engineTitle")}</h2>
             </div>
-            <span class="pill">{$t("voice.engineLocal")}</span>
+            <span class="pill">
+              {capabilities.cloning
+                ? $t("voice.engineLocal")
+                : $t("voice.notAvailable")}
+            </span>
           </div>
           <p class="rail-desc">{$t("voice.engineDesc")}</p>
 
@@ -1663,7 +2040,7 @@
                     />
                   </span>
                   <div>
-                    <strong>{model.label}</strong>
+                    <strong>{modelLabel(model)}</strong>
                     <span>
                       {model.languages.map(languageLabel).join(" · ")} ·
                       {formatBytes(model.sizeBytes)}
@@ -1686,7 +2063,7 @@
                     />
                   </span>
                   <div>
-                    <strong>{model.label}</strong>
+                    <strong>{modelLabel(model)}</strong>
                     <span>
                       {kindLabel(model.kind)} · {formatBytes(model.sizeBytes)}
                     </span>
@@ -1777,11 +2154,20 @@
               <h2>{$t("voice.featuredProfile")}</h2>
             </div>
             <span class="section-note">
-              {$t("voice.clonedCount", { count: profiles.length })}
+              {$t(
+                profiles.length === 1
+                  ? "voice.clonedCountOne"
+                  : "voice.clonedCount",
+                { count: profiles.length },
+              )}
             </span>
           </div>
           {#if featuredProfile}
-            {@render profileCard(featuredProfile, true)}
+            {@render profileCard(
+              featuredProfile,
+              true,
+              featuredProfileId === featuredProfile.id,
+            )}
           {/if}
         {/if}
 
@@ -1808,10 +2194,15 @@
               </span>
               <div>
                 <strong>
-                  {$t("voice.modelsMissingTitle", {
-                    count: missingForProfile,
-                    language: languageLabel(profileLanguage),
-                  })}
+                  {$t(
+                    missingForProfile === 1
+                      ? "voice.modelsMissingOne"
+                      : "voice.modelsMissingTitle",
+                    {
+                      count: missingForProfile,
+                      language: languageLabel(profileLanguage),
+                    },
+                  )}
                 </strong>
                 <p>{$t("voice.modelsMissingBody")}</p>
               </div>
@@ -1820,6 +2211,7 @@
                   variant="primary"
                   size="small"
                   loading={busy === `models-${profileLanguage}`}
+                  disabled={captureInProgress}
                   onclick={() => downloadModels(profileLanguage)}
                 >
                   <Icon name="download" size={16} />
@@ -1828,7 +2220,7 @@
                 <Button
                   variant="ghost"
                   size="small"
-                  onclick={() => (tab = "models")}
+                  onclick={() => selectTab("models")}
                 >
                   {$t("voice.goToModels")}
                 </Button>
@@ -1836,12 +2228,12 @@
             </div>
           {/if}
 
-          {#if inputDevices.length > 0}
+          {#if capabilities.recording && inputDevices.length > 0}
             <label class="mic-select">
               <span>{$t("voice.inputDevice")}</span>
               <select
                 value={selectedDevice}
-                disabled={recording || busy === "create"}
+                disabled={captureInProgress || busy === "create"}
                 onchange={(event) => setInputDevice(event.currentTarget.value)}
               >
                 <option value="">{$t("voice.inputDefault")}</option>
@@ -1919,7 +2311,7 @@
                   onclick={toggleSamplePlayback}
                 >
                   <Icon
-                    name={samplePlaying ? "pause" : "play"}
+                    name={samplePlaying ? "stop" : "play"}
                     size={16}
                   />
                   {samplePlaying
@@ -1955,7 +2347,7 @@
                     onclick={toggleSamplePlayback}
                   >
                     <Icon
-                      name={samplePlaying ? "pause" : "play"}
+                      name={samplePlaying ? "stop" : "play"}
                       size={16}
                     />
                     {samplePlaying
@@ -2061,17 +2453,13 @@
 
           <label class="check">
             <input type="checkbox" bind:checked={consent} />
-            <span>{consentText || $t("voice.consent")}</span>
+            <span>{consentLabel}</span>
           </label>
 
           <Button
             variant="primary"
             loading={busy === "create"}
-            disabled={!consent ||
-              sampleTooShort ||
-              sampleTooLong ||
-              recording ||
-              missingForProfile > 0}
+            disabled={!createReady}
             onclick={createProfile}
           >
             <Icon name="mic" size={16} />
@@ -2086,12 +2474,12 @@
             </div>
             <label class="check">
               <input type="checkbox" bind:checked={importConsent} />
-              <span>{consentText || $t("voice.consent")}</span>
+              <span>{consentLabel}</span>
             </label>
             <Button
               variant="ghost"
               loading={busy === "import"}
-              disabled={!importConsent}
+              disabled={!importConsent || captureInProgress}
               onclick={importProfile}
             >
               <Icon name="folder" size={16} />
@@ -2219,8 +2607,10 @@
               <h2>{languageLabel(language)}</h2>
               <span class="pill" class:ok={missing === 0}>
                 {missing === 0
-                  ? $t("voice.installed")
-                  : $t("voice.modelsPending", { count: missing })}
+                  ? $t("voice.modelInstalled")
+                  : missing === 1
+                    ? $t("voice.modelsPendingOne")
+                    : $t("voice.modelsPending", { count: missing })}
               </span>
             </div>
 
@@ -2231,15 +2621,22 @@
             {#each modelsFor(language) as model (model.id)}
               <div class="model-row">
                 <div class="model-copy">
-                  <strong>{model.label}</strong>
+                  <strong>{modelLabel(model)}</strong>
                   <span>
                     {kindLabel(model.kind)} · {formatBytes(model.sizeBytes)} ·
-                    {model.license}
+                    {modelLicense(model)}
                   </span>
                 </div>
                 {#if progress[model.id] !== undefined}
                   <div class="model-progress">
-                    <div class="progress-track">
+                    <div
+                      class="progress-track"
+                      role="progressbar"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      aria-valuenow={Math.round(progress[model.id])}
+                      aria-label={modelLabel(model)}
+                    >
                       <span style={`width: ${progress[model.id]}%`}></span>
                     </div>
                     <small>{Math.round(progress[model.id])}%</small>
@@ -2247,8 +2644,8 @@
                 {:else}
                   <span class="pill" class:ok={model.installed}>
                     {model.installed
-                      ? $t("voice.installed")
-                      : $t("voice.notInstalled")}
+                      ? $t("voice.modelInstalled")
+                      : $t("voice.modelNotInstalled")}
                   </span>
                   {#if capabilities.modelDownload}
                     <div class="model-actions">
@@ -2257,9 +2654,9 @@
                         variant="ghost"
                         size="icon"
                         ariaLabel={$t("voice.repairModel", {
-                          name: model.label,
+                          name: modelLabel(model),
                         })}
-                        title={$t("voice.repairModel", { name: model.label })}
+                        title={$t("voice.repairModel", { name: modelLabel(model) })}
                         loading={busy === `model-${model.id}`}
                         onclick={() => repairModel(model)}
                       >
@@ -2269,9 +2666,9 @@
                         variant="danger"
                         size="icon"
                         ariaLabel={$t("voice.deleteModel", {
-                          name: model.label,
+                          name: modelLabel(model),
                         })}
-                        title={$t("voice.deleteModel", { name: model.label })}
+                        title={$t("voice.deleteModel", { name: modelLabel(model) })}
                         loading={busy === `model-${model.id}`}
                         onclick={() => removeModel(model)}
                       >
@@ -2282,9 +2679,9 @@
                         variant="ghost"
                         size="icon"
                         ariaLabel={$t("voice.installModel", {
-                          name: model.label,
+                          name: modelLabel(model),
                         })}
-                        title={$t("voice.installModel", { name: model.label })}
+                        title={$t("voice.installModel", { name: modelLabel(model) })}
                         loading={busy === `model-${model.id}`}
                         onclick={() => downloadModel(model)}
                       >
@@ -2384,6 +2781,19 @@
       {/if}
       {#if details.kind === "profile" && replacingSample}
         <div class="replace-sample">
+          {#if replaceMissingModels > 0}
+            <p class="hint">
+              {$t(
+                replaceMissingModels === 1
+                  ? "voice.modelsMissingOne"
+                  : "voice.modelsMissingTitle",
+                {
+                  count: replaceMissingModels,
+                  language: languageLabel(details.profile.language),
+                },
+              )}
+            </p>
+          {/if}
           <div class="audio-picker" class:has-file={Boolean(replacePath)}>
             <span class="audio-picker-icon">
               <Icon name="mic" size={18} />
@@ -2408,7 +2818,7 @@
                   size="small"
                   onclick={toggleReplacePlayback}
                 >
-                  <Icon name={replacePlaying ? "pause" : "play"} size={16} />
+                  <Icon name={replacePlaying ? "stop" : "play"} size={16} />
                   {replacePlaying
                     ? $t("voice.pause")
                     : $t("voice.listenSample")}
@@ -2444,7 +2854,7 @@
           ></textarea>
           <label class="check">
             <input type="checkbox" bind:checked={replaceConsent} />
-            <span>{consentText || $t("voice.consent")}</span>
+            <span>{consentLabel}</span>
           </label>
           <div class="replace-actions">
             <Button
@@ -2462,18 +2872,17 @@
           </div>
         </div>
       {/if}
-      <dl class="details-list">
-        {#if details.kind === "voice"}
+      <dl class="details-list">        {#if details.kind === "voice"}
           <div>
             <dt>{$t("common.language")}</dt>
             <dd>{languageLabel(details.voice.language)}</dd>
           </div>
           <div>
-            <dt>{$t("voice.filterGender")}</dt>
+            <dt>{$t("voice.gender")}</dt>
             <dd>{genderLabel(details.voice.gender ?? "neutral")}</dd>
           </div>
           <div>
-            <dt>{$t("voice.engineTitle")}</dt>
+            <dt>{$t("voice.engine")}</dt>
             <dd>{details.voice.engine}</dd>
           </div>
           <div>
@@ -2511,6 +2920,17 @@
           </div>
         {/if}
       </dl>
+      {#if details.kind === "profile" && !capabilities.cloning}
+        <p class="model-warning-inline">
+          {$t("voice.cloningUnavailableShort")}
+        </p>
+      {:else if details.kind === "profile" && replaceMissingModels > 0}
+        <p class="model-warning-inline">
+          {$t("voice.modelsRequired", {
+            language: languageLabel(details.profile.language),
+          })}
+        </p>
+      {/if}
       <footer class="details-actions">
         <div class="details-actions-group">
           <Button
@@ -2528,13 +2948,23 @@
               loading={busy === `sample-${details.profile.id}`}
               onclick={toggleDetailsSampleFromModal}
             >
-              <Icon name={detailsSampleActive ? "pause" : "play"} size={16} />
+              <Icon name={detailsSampleActive ? "stop" : "play"} size={16} />
               {detailsSampleActive
                 ? $t("voice.pause")
                 : $t("voice.listenOriginal")}
             </Button>
             {#if capabilities.cloning}
-              <Button variant="ghost" size="small" onclick={startReplaceSample}>
+              <Button
+                variant="ghost"
+                size="small"
+                disabled={replaceMissingModels > 0}
+                title={replaceMissingModels > 0
+                  ? $t("voice.modelsRequired", {
+                      language: languageLabel(details.profile.language),
+                    })
+                  : undefined}
+                onclick={startReplaceSample}
+              >
                 <Icon name="mic" size={16} />
                 {$t("voice.replaceSample")}
               </Button>
@@ -3241,6 +3671,16 @@
     gap: 0.25rem 0.7rem;
     color: var(--muted);
     font-size: 0.67rem;
+  }
+
+  .model-warning-inline {
+    margin: 0;
+    padding: 0.3rem 0.45rem;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    color: color-mix(in srgb, var(--warn) 82%, var(--text));
+    font-size: 0.69rem;
+    line-height: 1.4;
   }
 
   .voice-meta span {
@@ -4405,11 +4845,15 @@
       border-radius: 0;
       background: transparent;
       box-shadow: none;
+      flex-wrap: wrap;
+      overflow: visible;
     }
 
     .studio-tabs button {
-      flex: 0 0 auto;
+      flex: 1 1 auto;
+      justify-content: center;
       min-height: 40px;
+      padding: 0.5rem 0.625rem;
       background: var(--surface-2);
     }
 

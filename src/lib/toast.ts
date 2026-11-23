@@ -1,5 +1,10 @@
 import { writable } from "svelte/store";
 import { errorKey, translate } from "./i18n";
+import {
+  pushNotification,
+  type NotificationAction,
+  type NotificationKind,
+} from "./notifications";
 
 export type ToastKind = "info" | "success" | "error" | "warning";
 
@@ -14,7 +19,7 @@ export const toasts = writable<Toast[]>([]);
 
 let nextId = 1;
 
-export function notify(
+function showToast(
   kind: ToastKind,
   title: string,
   description: string | null = null,
@@ -26,6 +31,34 @@ export function notify(
     setTimeout(() => dismiss(id), timeout);
   }
   return id;
+}
+
+export function notify(
+  kind: ToastKind,
+  title: string,
+  description: string | null = null,
+  timeout = 6000,
+) {
+  return showToast(kind, title, description, timeout);
+}
+
+/// Muestra el aviso y además lo guarda en el centro de notificaciones.
+export function notifyImportant(
+  kind: NotificationKind,
+  title: string,
+  description: string | null = null,
+  action?: NotificationAction,
+) {
+  pushNotification({ kind, title, description, action });
+  const toastKind: ToastKind =
+    kind === "error"
+      ? "error"
+      : kind === "warning"
+        ? "warning"
+        : kind === "success"
+          ? "success"
+          : "info";
+  return showToast(toastKind, title, description, 6000);
 }
 
 export function dismiss(id: number) {
@@ -44,14 +77,12 @@ export function notifyError(error: unknown) {
       : error instanceof Error
         ? error.message
         : String(error);
-  return notify(
-    "error",
-    translate(errorKey(code)),
-    detail || translate("error.generic"),
-    9000,
-  );
+  const title = translate(errorKey(code));
+  const description = detail || translate("error.generic");
+  pushNotification({ kind: "error", title, description });
+  return showToast("error", title, description, 9000);
 }
 
 export function notifySuccess(title: string, description: string | null = null) {
-  return notify("success", title, description, 4500);
+  return showToast("success", title, description, 4500);
 }

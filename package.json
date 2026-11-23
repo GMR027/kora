@@ -1,11 +1,12 @@
 {
   "name": "kora",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "node scripts/copy-pdfjs.mjs && vite",
     "predev": "node scripts/copy-pdfjs.mjs && pnpm build:helper",
     "build": "tsc --noEmit && vite build",
     "build:helper": "cargo build -p kora-neutts && node scripts/copy-helper.mjs",

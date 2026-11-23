@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kora",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "identifier": "dev.kora.reader",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -45,12 +45,33 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["espeak-ng"]
+        "depends": [
+          "espeak-ng",
+          "libasound2 | libasound2t64",
+          "libgomp1",
+          "liblept5",
+          "libsecret-1-0",
+          "libsqlite3-0",
+          "libtesseract5"
+        ],
+        "recommends": ["ffmpeg", "tesseract-ocr-spa", "tesseract-ocr-eng"]
+      },
+      "rpm": {
+        "depends": [
+          "espeak-ng",
+          "alsa-lib",
+          "libgomp",
+          "leptonica",
+          "libsecret",
+          "sqlite-libs",
+          "tesseract-libs"
+        ],
+        "recommends": ["ffmpeg", "tesseract-langpack-spa", "tesseract-langpack-eng"]
       }
     },
     "android": {
       "minSdkVersion": 24,
-      "versionCode": 1
+      "versionCode": 3
     }
   }
 }

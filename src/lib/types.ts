@@ -21,6 +21,17 @@ export interface AppInfo {
   storage: StorageLayout;
 }
 
+export interface UpdateCheck {
+  available: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  notes: string | null;
+  url: string | null;
+  sha256: string | null;
+  publishedAt: string | null;
+  manifestUrl: string;
+}
+
 export type BookOrigin = "imported" | "generated" | "transcribed" | "tejido";
 
 export interface BookSummary {
@@ -1071,6 +1082,8 @@ export interface AudiobookInfo {
 
 export interface AudiobookCapabilities {
   platformSupported: boolean;
+  playbackSupported: boolean;
+  backgroundPlayback: boolean;
   ffmpeg: boolean;
   whisperBase: boolean;
 }

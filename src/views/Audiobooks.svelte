@@ -60,6 +60,8 @@
     sessionEnd,
     sessionStart,
     setAudiobookSpeed,
+    setAudiobookKeepScreenOn,
+    setAudiobookSleepTimer,
     startShare,
     startVoiceMarkerListening,
     stopAudiobook,
@@ -237,6 +239,7 @@
   let sleepMinutes = $state(0);
   let sleepRemaining = $state(0);
   let sleepTimer: ReturnType<typeof setInterval> | undefined;
+  let keepScreenOn = $state(false);
 
   let hiddenProgress = $state(false);
   let activeTaskStartedAt = $state<number | null>(null);
@@ -254,6 +257,7 @@
       : $t("audiobooks.engineUnavailable"),
   );
   let platformSupported = $derived(capabilities?.platformSupported ?? true);
+  let backgroundPlayback = $derived(capabilities?.backgroundPlayback ?? false);
   let ffmpegReady = $derived(capabilities?.ffmpeg ?? true);
   let whisperBase = $derived(
     whisperModels.find((model) => model.id === "base") ?? null,
@@ -479,11 +483,24 @@
   );
 
   onMount(() => {
+    try {
+      keepScreenOn = localStorage.getItem("kora.audiobook.keepScreenOn") === "true";
+    } catch {
+      keepScreenOn = false;
+    }
+    if (keepScreenOn) {
+      void setAudiobookKeepScreenOn(true).catch(() => undefined);
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void pollPlayback();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     void load();
     void initProgress().catch((cause) => {
       error = errorMessage(cause);
     });
     return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
       unlisten?.();
       unlistenDownload?.();
       unlistenQueue?.();
@@ -770,6 +787,7 @@
     cancelling = true;
     try {
       applyGenerationState(await cancelAudiobookGeneration());
+      await load();
     } catch (cause) {
       cancelling = false;
       error = errorMessage(cause);
@@ -1012,6 +1030,7 @@
     clearInterval(sleepTimer);
     sleepMinutes = minutes;
     sleepRemaining = 0;
+    void setAudiobookSleepTimer(minutes).catch(() => undefined);
     if (!minutes) return;
     const end = Date.now() + minutes * 60_000;
     sleepRemaining = minutes * 60;
@@ -1022,7 +1041,13 @@
         clearInterval(sleepTimer);
         sleepMinutes = 0;
         sleepRemaining = 0;
-        void stopPlayback();
+        // En Android el servicio pausa por su cuenta; el temporizador JS solo
+        // actualiza la vista al volver a primer plano.
+        if (backgroundPlayback) {
+          void pollPlayback();
+        } else {
+          void stopPlayback();
+        }
         notice = translate("audiobooks.sleepDone");
       }
     }, 1000);
@@ -1074,6 +1099,21 @@
     } catch (cause) {
       error = errorMessage(cause);
     }
+  }
+
+  function toggleKeepScreenOn() {
+    keepScreenOn = !keepScreenOn;
+    try {
+      localStorage.setItem(
+        "kora.audiobook.keepScreenOn",
+        String(keepScreenOn),
+      );
+    } catch {
+      // El ajuste es local; si el WebView no permite almacenamiento se ignora.
+    }
+    void setAudiobookKeepScreenOn(keepScreenOn).catch((cause) => {
+      error = errorMessage(cause);
+    });
   }
 
   async function openItemText(item: AudiobookInfo) {
@@ -1277,6 +1317,9 @@
       applyGenerationState(view);
       generateOpen = false;
       notice = translate("audiobooks.queuedNotice", { title });
+      // El backend crea el registro en estado pendiente antes de sintetizar.
+      // Recargamos para que aparezca en el filtro «En proceso».
+      await load();
     } catch (cause) {
       error = errorMessage(cause);
     } finally {
@@ -1504,7 +1547,7 @@
         seekValue = current?.positionMs ?? 0;
       }
       if (
-        current?.playing &&
+        current &&
         audiobooks.some((item) => item.id === current.audiobookId)
       ) {
         const percent =
@@ -1572,6 +1615,10 @@
 
   async function stopPlayback() {
     try {
+      clearInterval(sleepTimer);
+      sleepMinutes = 0;
+      sleepRemaining = 0;
+      void setAudiobookSleepTimer(0).catch(() => undefined);
       playback = await stopAudiobook();
       applyPlayback(playback);
       waveform = null;
@@ -1601,6 +1648,11 @@
       return;
     }
     try {
+      if (generationActive?.audiobookId === item.id) {
+        applyGenerationState(await cancelAudiobookGeneration());
+      } else if (queue.some((entry) => entry.id === item.id)) {
+        applyGenerationState(await removeQueuedAudiobook(item.id));
+      }
       if (playback?.audiobookId === item.id) {
         await stopAudiobook().catch(() => undefined);
         await stopVoiceIfListening();
@@ -2297,6 +2349,19 @@
                 title={$t("audiobooks.share")}
               >
                 <Icon name="share" size={15} />
+              </button>
+            {/if}
+            {#if backgroundPlayback}
+              <button
+                class="voice-marks-button icon-only"
+                class:favorite-active={keepScreenOn}
+                type="button"
+                onclick={toggleKeepScreenOn}
+                aria-pressed={keepScreenOn}
+                aria-label={$t("audiobooks.keepScreenOn")}
+                title={$t("audiobooks.keepScreenOn")}
+              >
+                <Icon name="sun" size={15} />
               </button>
             {/if}
             <button
@@ -4306,6 +4371,8 @@
     flex-wrap: wrap;
     align-items: flex-end;
     gap: 9px;
+    min-width: 0;
+    max-width: 100%;
   }
 
   label {
@@ -4324,6 +4391,9 @@
 
   label input,
   label select {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     min-height: 40px;
     padding: 0.45rem 0.55rem;
     border: 1px solid var(--border);
@@ -4332,6 +4402,7 @@
     color: var(--text);
     font: inherit;
     font-size: 0.8rem;
+    text-overflow: ellipsis;
   }
 
   .extracts {
@@ -4372,6 +4443,7 @@
   }
 
   .extract-book {
+    overflow-wrap: anywhere;
     color: var(--accent);
     font-size: 0.64rem;
     font-weight: 700;
@@ -4380,6 +4452,7 @@
   }
 
   .extract-text {
+    overflow-wrap: anywhere;
     color: var(--text);
     font-family: var(--font-reading);
     font-size: 0.82rem;
@@ -4387,6 +4460,7 @@
   }
 
   .note {
+    overflow-wrap: anywhere;
     color: var(--muted);
     font-size: 0.7rem;
   }
@@ -4461,6 +4535,54 @@
   @media (max-width: 900px) {
     .player-dock {
       bottom: calc(78px + env(safe-area-inset-bottom));
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.5rem;
+      max-height: min(44vh, 340px);
+      padding: 0.7rem 0.75rem;
+      overflow-y: auto;
+      border-radius: 16px;
+    }
+
+    .player-cover {
+      display: none;
+    }
+
+    .player-head {
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .player-titles strong,
+    .player-titles span {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .player-actions {
+      width: 100%;
+      flex-wrap: nowrap;
+      justify-content: flex-start;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: none;
+    }
+
+    .player-actions::-webkit-scrollbar {
+      display: none;
+    }
+
+    .player-actions > :global(*) {
+      flex: 0 0 auto;
+    }
+
+    .player-dock .karaoke-lines,
+    .player-dock .chapter-drawer {
+      display: none;
+    }
+
+    .player-dock .karaoke-panel {
+      padding: 7px 9px;
     }
 
     .active-task {
@@ -4562,22 +4684,6 @@
 
     .weave-form :global(.ui-button) {
       width: 100%;
-    }
-
-    .player-dock {
-      grid-template-columns: 56px minmax(0, 1fr);
-      gap: 0.75rem;
-      padding: 0.75rem;
-      border-radius: 16px;
-    }
-
-    .player-cover {
-      width: 56px;
-    }
-
-    .player-actions {
-      width: 100%;
-      justify-content: space-between;
     }
 
     .time {

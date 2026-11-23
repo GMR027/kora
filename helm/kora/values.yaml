@@ -1,0 +1,37 @@
+# ===========================================================================
+# values.yaml — valores por defecto del chart kora
+#
+# Despliegue normal (lo automatiza deploy.sh):
+#
+#   helm upgrade --install kora ./helm/kora \
+#     -n kora --create-namespace \
+#     -f helm/kora/values.yaml \
+#     --set-string image.tag=1
+# ===========================================================================
+
+replicaCount: 1
+
+image:
+  repository: gmr27/kora
+  tag: "1"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+app:
+  name: Kora
+  host: kora.iguzman.com.mx
+  url: https://kora.iguzman.com.mx
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+
+ingress:
+  className: public
+  clusterIssuer: letsencrypt-prod
+  tlsSecret: kora-cert

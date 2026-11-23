@@ -18,4 +18,5 @@ pub mod storage;
 pub mod sync;
 pub mod tejido;
 pub mod tts;
+pub mod updates;
 pub mod voice;

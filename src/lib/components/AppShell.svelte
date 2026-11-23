@@ -10,7 +10,17 @@
     playAudiobook,
     seekAudiobook,
   } from "../api";
-  import { t, formatDuration, type MessageKey } from "../i18n";
+  import { t, formatDuration, locale, type MessageKey } from "../i18n";
+  import {
+    notifications,
+    unreadCount,
+    markAllNotificationsRead,
+    clearNotifications,
+    markNotificationRead,
+    formatNotificationTime,
+    type AppNotification,
+  } from "../notifications";
+  import { openUpdatesRequest } from "../updates";
   import type { AppTab } from "../navigation";
   import type { LibraryOverview, PlaybackSnapshot } from "../types";
   import Icon from "./Icon.svelte";
@@ -46,6 +56,7 @@
   } = $props();
 
   let moreOpen = $state(false);
+  let notificationsOpen = $state(false);
   let overview = $state<LibraryOverview | null>(null);
   let playback = $state<PlaybackSnapshot | null>(null);
   let playerBusy = $state(false);
@@ -141,8 +152,15 @@
     void loadPlayback();
 
     const refreshShelf = () => void loadShelf();
+    const refreshPlayback = () => {
+      if (document.visibilityState === "visible") void loadPlayback();
+    };
     window.addEventListener("kora:library-changed", refreshShelf);
-    return () => window.removeEventListener("kora:library-changed", refreshShelf);
+    document.addEventListener("visibilitychange", refreshPlayback);
+    return () => {
+      window.removeEventListener("kora:library-changed", refreshShelf);
+      document.removeEventListener("visibilitychange", refreshPlayback);
+    };
   });
 
   // Solo se sondea mientras hay audio reproduciéndose. En pausa o en reposo
@@ -171,6 +189,7 @@
 
   function go(id: AppTab) {
     moreOpen = false;
+    notificationsOpen = false;
     if (isStack(id) && !isStack(tab)) {
       stackReturnTab = tab;
     }
@@ -179,6 +198,17 @@
 
   function closeStack() {
     go(stackReturnTab);
+  }
+
+  function openNotification(item: AppNotification) {
+    markNotificationRead(item.id);
+    notificationsOpen = false;
+    if (item.action === "updates") {
+      go("settings");
+      openUpdatesRequest.update((value) => value + 1);
+    } else if (item.action) {
+      go(item.action);
+    }
   }
 
   function label(id: AppTab) {
@@ -201,6 +231,12 @@
 </script>
 
 <ComfortHost />
+
+<svelte:window
+  onkeydown={(event) => {
+    if (event.key === "Escape") notificationsOpen = false;
+  }}
+/>
 
 <a class="skip-link" href="#main-content">{$t("nav.skipToContent")}</a>
 <div
@@ -380,6 +416,20 @@
           <Icon name="search" size={20} />
         </button>
         <button
+          class="topbar-icon notification-bell"
+          aria-label={$t("notifications.title")}
+          aria-haspopup="dialog"
+          aria-expanded={notificationsOpen}
+          onclick={() => (notificationsOpen = !notificationsOpen)}
+        >
+          <Icon name="bell" size={19} />
+          {#if $unreadCount > 0}
+            <span class="notification-badge" aria-hidden="true">
+              {$unreadCount > 9 ? "9+" : $unreadCount}
+            </span>
+          {/if}
+        </button>
+        <button
           class="topbar-icon sync-shortcut"
           aria-label={$t("nav.sync")}
           onclick={() => go("sync")}
@@ -504,6 +554,89 @@
           <span>{$t("nav.account")}</span>
         </button>
       </div>
+    </div>
+  {/if}
+
+  {#if notificationsOpen}
+    <button
+      class="notifications-backdrop"
+      aria-label={$t("notifications.close")}
+      onclick={() => (notificationsOpen = false)}
+    ></button>
+    <div
+      class="notifications-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-label={$t("notifications.title")}
+      in:fly={{ y: -8, duration: 160 }}
+    >
+      <header class="notifications-head">
+        <div>
+          <strong>{$t("notifications.title")}</strong>
+          {#if $unreadCount > 0}
+            <small>{$t("notifications.unread", { count: $unreadCount })}</small>
+          {/if}
+        </div>
+        <button
+          class="notifications-close"
+          aria-label={$t("notifications.close")}
+          onclick={() => (notificationsOpen = false)}
+        >
+          <Icon name="close" size={16} />
+        </button>
+      </header>
+
+      {#if $notifications.length === 0}
+        <div class="notifications-empty">
+          <Icon name="bell" size={24} />
+          <strong>{$t("notifications.empty")}</strong>
+          <p>{$t("notifications.emptyHelp")}</p>
+        </div>
+      {:else}
+        <div class="notifications-list">
+          {#each $notifications as item (item.id)}
+            <button
+              class="notification-item"
+              class:unread={!item.read}
+              onclick={() => openNotification(item)}
+            >
+              <span class="notification-icon {item.kind}">
+                <Icon
+                  name={item.kind === "success"
+                    ? "check"
+                    : item.kind === "error"
+                      ? "close"
+                      : item.kind === "warning"
+                        ? "alert"
+                        : item.kind === "update"
+                          ? "download"
+                          : "info"}
+                  size={16}
+                />
+              </span>
+              <span class="notification-copy">
+                <strong>{item.title}</strong>
+                {#if item.description}
+                  <span>{item.description}</span>
+                {/if}
+                <small>{formatNotificationTime(item.createdAt, $locale)}</small>
+              </span>
+              {#if !item.read}
+                <i class="notification-dot" aria-hidden="true"></i>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      {#if $notifications.length > 0}
+        <footer class="notifications-foot">
+          <button onclick={markAllNotificationsRead}>
+            {$t("notifications.markAll")}
+          </button>
+          <button onclick={clearNotifications}>{$t("notifications.clear")}</button>
+        </footer>
+      {/if}
     </div>
   {/if}
 </div>
@@ -933,6 +1066,7 @@
     width: 31px;
     min-width: 31px;
     height: 31px;
+    min-height: 31px;
     padding: 0;
     border: 0;
     border-radius: 50%;
@@ -1064,6 +1198,248 @@
     color: var(--text);
   }
 
+  .notification-bell {
+    position: relative;
+  }
+
+  .notification-badge {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    display: grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border: 2px solid var(--surface);
+    border-radius: 999px;
+    background: var(--danger, #b42318);
+    color: #fff;
+    font-size: 0.55rem;
+    font-weight: 750;
+    line-height: 1;
+  }
+
+  .notifications-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 74;
+    border: 0;
+    background: transparent;
+  }
+
+  .notifications-panel {
+    position: fixed;
+    top: calc(66px + env(safe-area-inset-top));
+    right: 12px;
+    z-index: 75;
+    display: flex;
+    flex-direction: column;
+    width: min(370px, calc(100vw - 24px));
+    max-height: min(70vh, 540px);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: 0 22px 55px -24px color-mix(in srgb, #000 45%, transparent);
+  }
+
+  .notifications-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 13px 14px 11px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .notifications-head > div {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .notifications-head strong {
+    font-size: 0.9rem;
+  }
+
+  .notifications-head small {
+    color: var(--accent);
+    font-size: 0.66rem;
+    font-weight: 600;
+  }
+
+  .notifications-close {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+
+  .notifications-list {
+    overflow-y: auto;
+    padding: 6px;
+  }
+
+  .notification-item {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 10px;
+    border: 0;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+  }
+
+  .notification-item:hover {
+    background: var(--surface-2);
+  }
+
+  .notification-item.unread {
+    background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  }
+
+  .notification-icon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+
+  .notification-icon.success {
+    background: color-mix(in srgb, var(--ok) 14%, var(--surface));
+    color: var(--ok);
+  }
+
+  .notification-icon.error {
+    background: color-mix(in srgb, var(--danger, #b42318) 14%, var(--surface));
+    color: var(--danger, #b42318);
+  }
+
+  .notification-icon.warning {
+    background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+    color: var(--warn);
+  }
+
+  .notification-icon.update {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .notification-copy {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .notification-copy strong {
+    overflow: hidden;
+    font-size: 0.77rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .notification-copy span {
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.7rem;
+    line-height: 1.35;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .notification-copy small {
+    color: var(--muted);
+    font-size: 0.6rem;
+    opacity: 0.8;
+  }
+
+  .notification-dot {
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .notifications-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 28px 20px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  .notifications-empty strong {
+    color: var(--text);
+    font-size: 0.84rem;
+  }
+
+  .notifications-empty p {
+    max-width: 260px;
+    margin: 0;
+    font-size: 0.72rem;
+    line-height: 1.45;
+  }
+
+  .notifications-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .notifications-foot button {
+    min-height: 32px;
+    padding: 0.25rem 0.4rem;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.68rem;
+    font-weight: 600;
+  }
+
+  .notifications-foot button:hover {
+    background: var(--surface-2);
+  }
+
+  @media (max-width: 900px) {
+    .notifications-panel {
+      top: calc(70px + env(safe-area-inset-top));
+      right: 10px;
+      left: 10px;
+      width: auto;
+      max-height: min(68vh, 520px);
+    }
+  }
+
   .topbar-avatar {
     display: grid;
     place-items: center;
@@ -1151,6 +1527,16 @@
 
     .topbar-account-name {
       display: none;
+    }
+
+    .topbar-account {
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      min-width: 40px;
+      min-height: 40px;
+      padding: 0;
+      border-radius: 50%;
     }
   }
 
@@ -1486,8 +1872,10 @@
     .mobile-player-toggle {
       display: grid;
       place-items: center;
-      min-width: 32px;
-      height: 32px;
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      min-height: 44px;
       padding: 0;
       border: 0;
       border-radius: 50%;
@@ -1560,8 +1948,10 @@
     .mobile-stack-bar button {
       display: grid;
       place-items: center;
-      width: 36px;
-      height: 36px;
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      min-height: 44px;
       padding: 0;
       border: 0;
       border-radius: 50%;

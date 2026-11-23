@@ -13,6 +13,7 @@
     TEXTURES,
     customThemeDefinition,
   } from "../lib/appearance";
+  import { discardImportSource, stageImportSource } from "../lib/importSource";
   import {
     setLocale,
     t,
@@ -178,13 +179,16 @@
     if (!path.trim()) return;
     importing = true;
     error = null;
+    let staged = path.trim();
     try {
-      imported = await libraryImport(path.trim());
+      staged = stageImportSource(staged);
+      imported = await libraryImport(staged);
       notifySuccess($t("library.import"), imported.title);
       pathValue = "";
     } catch (cause) {
       notifyError(cause);
     } finally {
+      if (staged !== path.trim()) discardImportSource(staged);
       importing = false;
     }
   }

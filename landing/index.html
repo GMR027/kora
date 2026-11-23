@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#fbf9f5" />
+    <title>Kora — Tus libros, tu voz, tu biblioteca</title>
+    <meta
+      name="description"
+      content="Kora es un lector EPUB y PDF local-first con voces naturales, clonación de voz, audiolibros M4B, OCR, IA local y sincronización en tu red. Gratis para Linux y Android."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Kora — Tus libros, tu voz, tu biblioteca" />
+    <meta
+      property="og:description"
+      content="Lee, escucha y comparte tus libros sin pasar por la nube. Lector EPUB/PDF, audiolibros, voz clonada y sync LAN. Linux y Android."
+    />
+    <meta property="og:image" content="assets/logo.png" />
+    <link rel="icon" type="image/png" href="assets/logo-128.png" />
+    <link rel="apple-touch-icon" href="assets/logo.png" />
+    <link rel="preload" href="assets/fonts/Fraunces.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="assets/fonts/Fraunces-Italic.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="assets/fonts/Inter.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="assets/fonts/Newsreader.ttf" as="font" type="font/ttf" crossorigin />
+    <script>
+      (() => {
+        let saved = null;
+        try {
+          saved = localStorage.getItem("kora-theme");
+        } catch {
+          /* almacenamiento no disponible */
+        }
+        const dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.classList.add("js");
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+
+    <svg class="icon-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6C10 4.5 7.5 4 5 4v14c2.5 0 5 .5 7 2 2-1.5 4.5-2 7-2V4c-2.5 0-5 .5-7 2Zm0 0v14" /></symbol>
+      <symbol id="i-headphones" viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2" /><rect x="3" y="13" width="4" height="7" rx="2" /><rect x="17" y="13" width="4" height="7" rx="2" /></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 12v-1m4 1V8m4 4V5m4 7V9m4 3v-1M7 13v-3m4 3v5m4-5v3m4-3v3" /></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z" /></symbol>
+      <symbol id="i-cloud-off" viewBox="0 0 24 24"><path d="M3 3l18 18M7 18a4 4 0 0 1-.6-8A6 6 0 0 1 17 7.5a4.5 4.5 0 0 1 4 4.4M17 18H7" /></symbol>
+      <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 16l9 5 9-5" /></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4" /></symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 1v3m6-3v3M9 20v3m6-3v3M1 9h3m-3 6h3m16-6h3m-3 6h3M10 10h4v4h-4z" /></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3" /><path d="M5 10a7 7 0 0 0 14 0M12 17v4m-4 0h8" /></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" /></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5" /><path d="M11 18h2" /></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8m-4-4v4" /></symbol>
+      <symbol id="i-package" viewBox="0 0 24 24"><path d="m12 3 9 5v8l-9 5-9-5V8l9-5ZM3 8l9 5 9-5M12 13v8" /></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2" /><path d="m6 9 3 3-3 3m6 0h6" /></symbol>
+      <symbol id="i-code" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6" /></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="m9 12 2 2 4-4" /></symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.8 5.6 6.2.9-4.5 4.4 1.1 6.1-5.6-2.9-5.6 2.9 1.1-6.1L3 9.5l6.2-.9L12 3Z" /></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24"><path d="M4 8v12h16V8M2 3h20v5H2V3Zm8 9h4" /></symbol>
+      <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M3 8.5a15 15 0 0 1 18 0M6 12a10.5 10.5 0 0 1 12 0M9 15.5a5.5 5.5 0 0 1 6 0M12 19h.01" /></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M18 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+      <symbol id="i-android" viewBox="0 0 24 24"><path d="M6 10v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-8M8 10a4 4 0 0 1 8 0M8 6l-1.5-2M16 6l1.5-2M4 11v6m16-6v6" /><circle cx="9.5" cy="8" r=".6" fill="currentColor" stroke="none" /><circle cx="14.5" cy="8" r=".6" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 5.6a5.5 5.5 0 0 0-7.8 0L12 6.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 22l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z" /></symbol>
+    </svg>
+
+    <header class="site-header" id="top">
+      <div class="container nav">
+        <a class="brand" href="#top" aria-label="Kora, inicio">
+          <img src="assets/logo-128.png" alt="" width="34" height="34" />
+          <span>Kora</span>
+          <span class="brand-version">v0.1.2</span>
+        </a>
+
+        <nav class="nav-links" id="nav-links" aria-label="Navegación principal">
+          <a href="#funciones">Funciones</a>
+          <a href="#herramientas">Herramientas</a>
+          <a href="#privacidad">Privacidad</a>
+          <a href="#descargas">Descargas</a>
+          <a href="#preguntas">Preguntas</a>
+        </nav>
+
+        <div class="nav-actions">
+          <button class="icon-btn theme-toggle" type="button" aria-label="Cambiar tema" title="Cambiar tema">
+            <svg class="icon icon-sun" aria-hidden="true"><use href="#i-sun" /></svg>
+            <svg class="icon icon-moon" aria-hidden="true"><use href="#i-moon" /></svg>
+          </button>
+          <a class="btn btn-primary btn-sm nav-cta" href="#descargas">
+            Descargar gratis
+            <svg class="icon" aria-hidden="true"><use href="#i-download" /></svg>
+          </a>
+          <button class="icon-btn menu-btn" type="button" aria-expanded="false" aria-controls="nav-links" aria-label="Abrir menú">
+            <svg class="icon icon-open" aria-hidden="true"><use href="#i-menu" /></svg>
+            <svg class="icon icon-close" aria-hidden="true"><use href="#i-close" /></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main id="contenido">
+      <!-- HERO -->
+      <section class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-dot"></span> Lector EPUB + PDF · Linux y Android</p>
+            <h1>
+              Tus libros.<br />
+              Tu voz.<br />
+              <em>Tu biblioteca.</em>
+            </h1>
+            <p class="lede">
+              Kora reúne lectura, audio y biblioteca en una sola app que vive en tu equipo.
+              Sin cuentas en la nube, sin suscripciones y sin enviar tus libros a ningún sitio.
+            </p>
+            <div class="hero-actions">
+              <a class="btn btn-primary btn-lg" href="#descargas">
+                Descargar Kora
+                <svg class="icon" aria-hidden="true"><use href="#i-arrow" /></svg>
+              </a>
+              <a class="btn btn-ghost btn-lg" href="#funciones">
+                Ver todo lo que hace
+              </a>
+            </div>
+            <ul class="hero-meta" aria-label="Características principales">
+              <li><svg class="icon" aria-hidden="true"><use href="#i-check" /></svg> 100 % local</li>
+              <li><svg class="icon" aria-hidden="true"><use href="#i-check" /></svg> Código abierto</li>
+              <li><svg class="icon" aria-hidden="true"><use href="#i-check" /></svg> Sin registro</li>
+            </ul>
+          </div>
+
+          <div class="hero-art" aria-hidden="true">
+            <div class="art-halo"></div>
+
+            <div class="app-window">
+              <div class="app-bar">
+                <span class="traffic"><i></i><i></i><i></i></span>
+                <span class="app-bar-title">Kora <span>/ Biblioteca</span></span>
+                <span class="app-search"><svg class="icon"><use href="#i-search" /></svg> Buscar libros…</span>
+              </div>
+              <div class="app-body">
+                <aside class="app-side">
+                  <div class="app-side-brand"><span class="brand-mark">K</span><span>Kora</span></div>
+                  <div class="side-nav">
+                    <span class="side-item active"><svg class="icon"><use href="#i-book" /></svg> Biblioteca</span>
+                    <span class="side-item"><svg class="icon"><use href="#i-headphones" /></svg> Audiolibros</span>
+                    <span class="side-item"><svg class="icon"><use href="#i-pen" /></svg> Notas</span>
+                    <span class="side-item"><svg class="icon"><use href="#i-list" /></svg> Diario</span>
+                  </div>
+                  <p class="side-label">Leyendo ahora</p>
+                  <div class="side-books">
+                    <div class="side-book"><span class="mini-cover cover-1"></span><span>La luz de los días</span></div>
+                    <div class="side-book"><span class="mini-cover cover-2"></span><span>El jardín de invierno</span></div>
+                    <div class="side-book"><span class="mini-cover cover-3"></span><span>Cartas al norte</span></div>
+                  </div>
+                  <div class="side-storage">
+                    <div class="side-storage-row"><span>Tu semana</span><strong>64 %</strong></div>
+                    <div class="storage-bar"><i></i></div>
+                    <small>3 h 40 min de lectura</small>
+                  </div>
+                </aside>
+
+                <div class="app-reader">
+                  <div class="reader-head">
+                    <span class="reader-breadcrumb">La luz de los días</span>
+                    <span class="reader-pill">Cap. 7 · 64 %</span>
+                  </div>
+                  <div class="reader-page">
+                    <p class="reader-kicker">Capítulo siete</p>
+                    <h3>El jardín de las horas</h3>
+                    <p class="reader-byline">Elena Márquez</p>
+                    <p class="reader-copy">La casa olía a madera y a lluvia. Afuera, el jardín parecía guardar las horas en los pliegues de las hojas.</p>
+                    <p class="reader-copy">
+                      <mark>«No era el silencio lo que recordaba, sino la forma en que la luz se posaba sobre las cosas.»</mark>
+                      Cerró el libro y dejó que la tarde terminara de entrar por la ventana.
+                    </p>
+                    <span class="reader-note"><svg class="icon"><use href="#i-pen" /></svg> Nota guardada · hace 2 min</span>
+                  </div>
+                  <div class="reader-tts">
+                    <span class="tts-play"><svg class="icon"><use href="#i-play" /></svg></span>
+                    <span class="tts-meta"><strong>Leyendo en voz alta</strong><small>Español · Elena · 1.25×</small></span>
+                    <span class="tts-wave" aria-hidden="true">
+                      <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="float-card float-voice">
+              <div class="voice-head">
+                <span class="voice-avatar">EM</span>
+                <span class="voice-copy"><strong>Voz clonada</strong><small>Elena · 12 s de muestra</small></span>
+                <span class="live-dot"></span>
+              </div>
+              <span class="voice-wave"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <div class="voice-tags"><span>Natural</span><span>Local</span></div>
+            </div>
+
+            <div class="float-card float-sync">
+              <div class="sync-row">
+                <span class="sync-device"><svg class="icon"><use href="#i-monitor" /></svg></span>
+                <span class="sync-line"></span>
+                <span class="sync-device"><svg class="icon"><use href="#i-phone" /></svg></span>
+                <span class="sync-check"><svg class="icon"><use href="#i-check" /></svg></span>
+              </div>
+              <strong>Sincronizado</strong>
+              <small>2 dispositivos · tu red</small>
+            </div>
+
+            <div class="phone-mock">
+              <div class="phone-screen">
+                <div class="phone-top"><span>9:41</span><span class="phone-notch"></span><span class="phone-battery"></span></div>
+                <div class="phone-app"><span class="phone-brand">Kora</span><span class="phone-live">EN VIVO</span></div>
+                <div class="phone-cover cover-2"><span>El jardín<br />de invierno</span></div>
+                <div class="phone-title">El jardín de invierno</div>
+                <div class="phone-sub">Capítulo 4 · 12 min restantes</div>
+                <div class="phone-progress"><i></i></div>
+                <div class="phone-controls">
+                  <span>−15</span>
+                  <span class="phone-play"><svg class="icon"><use href="#i-play" /></svg></span>
+                  <span>+15</span>
+                </div>
+              </div>
+            </div>
+
+            <span class="art-chip chip-a"><svg class="icon"><use href="#i-spark" /></svg> OCR local</span>
+            <span class="art-chip chip-b"><svg class="icon"><use href="#i-wave" /></svg> M4B</span>
+          </div>
+        </div>
+
+        <div class="container">
+          <div class="trust-strip">
+            <div class="trust-item">
+              <span class="trust-icon"><svg class="icon"><use href="#i-cloud-off" /></svg></span>
+              <div><strong>Sin nube</strong><span>Tus libros no salen de tu red.</span></div>
+            </div>
+            <div class="trust-item">
+              <span class="trust-icon"><svg class="icon"><use href="#i-layers" /></svg></span>
+              <div><strong>SQLite + SHA-256</strong><span>Biblioteca deduplicada y verificable.</span></div>
+            </div>
+            <div class="trust-item">
+              <span class="trust-icon"><svg class="icon"><use href="#i-shield" /></svg></span>
+              <div><strong>QUIC + TLS</strong><span>Sync cifrada entre tus dispositivos.</span></div>
+            </div>
+            <div class="trust-item">
+              <span class="trust-icon"><svg class="icon"><use href="#i-code" /></svg></span>
+              <div><strong>Código abierto</strong><span>Rust, Tauri y Svelte. Sin cajas negras.</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- FUNCIONES -->
+      <section class="section" id="funciones">
+        <div class="container">
+          <div class="section-head reveal">
+            <p class="eyebrow">01 · Funciones</p>
+            <h2>Todo lo que necesitas para <em>leer, escuchar y recordar.</em></h2>
+            <p class="section-lede">
+              Kora no es solo un visor. Es una biblioteca, un estudio de audio y un cuaderno de lectura
+              que trabajan juntos, incluso cuando no hay internet.
+            </p>
+          </div>
+
+          <div class="bento">
+            <article class="feature feature-wide reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-layers" /></svg></span>
+                <h3>Una biblioteca que se ordena sola</h3>
+                <p>
+                  Arrastra tus EPUB y PDF. Kora calcula su SHA-256, extrae metadatos y portada,
+                  detecta duplicados y te propone categorías sin tocar tus archivos.
+                </p>
+                <div class="tags">
+                  <span>EPUB + PDF</span><span>Duplicados</span><span>Categorías con IA</span><span>Copias ZIP</span>
+                </div>
+              </div>
+              <div class="feature-visual">
+                <div class="book-shelf">
+                  <div class="book-tile cover-1"><span>La luz<br />de los días</span></div>
+                  <div class="book-tile cover-2"><span>El jardín<br />de invierno</span></div>
+                  <div class="book-tile cover-3"><span>Cartas<br />al norte</span></div>
+                  <div class="book-tile cover-4"><span>Mapas<br />del silencio</span></div>
+                </div>
+                <div class="shelf-meta">
+                  <span class="shelf-pill"><svg class="icon"><use href="#i-check" /></svg> 128 libros</span>
+                  <span class="shelf-pill">0 duplicados</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="feature feature-narrow reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-book" /></svg></span>
+                <h3>Lee a tu manera</h3>
+                <p>
+                  Tipografía, márgenes, temas y texturas por libro. Scroll o paginado.
+                  En PDF, zoom, búsqueda y progreso por página.
+                </p>
+                <div class="tags">
+                  <span>4 temas</span><span>10 texturas</span><span>PDF.js</span>
+                </div>
+              </div>
+              <div class="feature-visual theme-visual">
+                <span class="theme-dot theme-cream"></span>
+                <span class="theme-dot theme-sepia"></span>
+                <span class="theme-dot theme-dark"></span>
+                <span class="theme-dot theme-forest"></span>
+                <div class="texture-tile texture-paper"></div>
+                <div class="texture-tile texture-lines"></div>
+                <div class="texture-tile texture-dots"></div>
+                <div class="texture-tile texture-wave"></div>
+              </div>
+            </article>
+
+            <article class="feature feature-narrow reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-mic" /></svg></span>
+                <h3>Tu voz, en cada página</h3>
+                <p>
+                  Voces Piper naturales, velocidad de 0.5× a 3× y resaltado frase a frase.
+                  Detecta personajes y les da una voz distinta.
+                </p>
+                <div class="tags">
+                  <span>Piper TTS</span><span>Multivot</span><span>Clonación</span>
+                </div>
+              </div>
+              <div class="feature-visual voice-visual">
+                <div class="voice-card">
+                  <span class="voice-card-avatar">G</span>
+                  <span class="voice-card-info"><strong>Gabriel</strong><small>Voz clonada · 24 s</small></span>
+                  <span class="voice-mini-wave"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+                </div>
+                <div class="voice-speed">1.25×</div>
+              </div>
+            </article>
+
+            <article class="feature feature-wide feature-dark reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-headphones" /></svg></span>
+                <h3>Audiolibros que puedes llevar</h3>
+                <p>
+                  Genera M4B por capítulo, selección o libro completo. Capítulos, karaoke,
+                  temporizador y reproducción en segundo plano en Android.
+                </p>
+                <div class="tags">
+                  <span>M4B + AAC</span><span>Karaoke</span><span>Cola persistente</span><span>LUFS</span>
+                </div>
+              </div>
+              <div class="feature-visual audiobook-visual">
+                <div class="ab-card">
+                  <div class="ab-cover cover-4"></div>
+                  <div class="ab-copy">
+                    <strong>Mapas del silencio</strong>
+                    <small>Capítulo 3 de 12</small>
+                    <div class="ab-progress"><i></i></div>
+                    <div class="ab-controls"><span>−15</span><span class="ab-play"><svg class="icon"><use href="#i-play" /></svg></span><span>+15</span></div>
+                  </div>
+                </div>
+                <div class="ab-chapters">
+                  <span class="ab-chapter active"><i></i> 03 · La casa vacía</span>
+                  <span class="ab-chapter"><i></i> 04 · El otro lado</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="feature feature-half reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-pen" /></svg></span>
+                <h3>Anotaciones que no se pierden</h3>
+                <p>
+                  Resaltados, subrayados, notas ricas, notas de voz, extractos y reacciones.
+                  Todo buscable y exportable.
+                </p>
+                <div class="tags">
+                  <span>Quill</span><span>Notas Opus</span><span>Reacciones</span>
+                </div>
+              </div>
+              <div class="feature-visual note-visual">
+                <div class="note-card">
+                  <span class="note-quote">«La luz se posaba sobre las cosas.»</span>
+                  <span class="note-body">Releer este pasaje. Tiene la misma calma que el final del capítulo 2.</span>
+                  <span class="note-meta"><svg class="icon"><use href="#i-mic" /></svg> Nota de voz · 0:18</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="feature feature-half reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-wifi" /></svg></span>
+                <h3>Sincroniza sin pasar por la nube</h3>
+                <p>
+                  Descubre tus dispositivos por mDNS y transfiere por QUIC con TLS mutuo.
+                  Anotaciones CRDT, shares con PIN y lectura en espejo.
+                </p>
+                <div class="tags">
+                  <span>mDNS + QUIC</span><span>CRDT</span><span>QR / SAS</span>
+                </div>
+              </div>
+              <div class="feature-visual sync-visual">
+                <div class="sync-device-card"><svg class="icon"><use href="#i-monitor" /></svg><span>Escritorio</span></div>
+                <span class="sync-bridge"><i></i><i></i><i></i></span>
+                <div class="sync-device-card"><svg class="icon"><use href="#i-phone" /></svg><span>Android</span></div>
+                <span class="sync-shield"><svg class="icon"><use href="#i-lock" /></svg></span>
+              </div>
+              <p class="sync-caption"><span class="live-dot"></span> Conexión directa · sin servidores</p>
+            </article>
+
+            <article class="feature feature-half reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-cpu" /></svg></span>
+                <h3>IA que vive en tu equipo</h3>
+                <p>
+                  Conecta Ollama o llama.cpp para resumir escenas, explicar términos o conversar
+                  con el capítulo. Nada sale de tu red.
+                </p>
+                <div class="tags">
+                  <span>Ollama</span><span>llama.cpp</span><span>Búsqueda semántica</span><span>Clasificación</span>
+                </div>
+              </div>
+              <div class="feature-visual ai-visual">
+                <div class="ai-chat">
+                  <div class="ai-bubble ai-user">¿Quién es el narrador de este capítulo?</div>
+                  <div class="ai-bubble ai-bot">
+                    <span class="ai-badge"><svg class="icon"><use href="#i-spark" /></svg> Local</span>
+                    Es un narrador testigo: conoce la casa, pero no participa en la escena.
+                  </div>
+                  <div class="ai-bubble ai-user">Dame tres temas clave.</div>
+                  <div class="ai-bubble ai-bot">
+                    <span class="ai-badge"><svg class="icon"><use href="#i-spark" /></svg> Local</span>
+                    La casa, la memoria y la forma en que la luz cambia.
+                  </div>
+                </div>
+                <div class="ai-status">
+                  <span class="live-dot"></span> Ollama o llama.cpp
+                  <span>En tu equipo</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="feature feature-half reveal">
+              <div class="feature-copy">
+                <span class="feature-icon"><svg class="icon"><use href="#i-star" /></svg></span>
+                <h3>Construye el hábito</h3>
+                <p>
+                  El diario registra tus sesiones, pinta un heatmap y desbloquea 22 logros.
+                  Pomodoro configurable y exportación mensual.
+                </p>
+                <div class="tags">
+                  <span>Heatmap</span><span>22 logros</span><span>Pomodoro</span>
+                </div>
+              </div>
+              <div class="feature-visual heatmap-visual">
+                <div class="heatmap" aria-hidden="true">
+                  <i data-l="0"></i><i data-l="1"></i><i data-l="2"></i><i data-l="1"></i><i data-l="0"></i><i data-l="3"></i><i data-l="2"></i>
+                  <i data-l="1"></i><i data-l="3"></i><i data-l="4"></i><i data-l="2"></i><i data-l="1"></i><i data-l="4"></i><i data-l="3"></i>
+                  <i data-l="2"></i><i data-l="4"></i><i data-l="3"></i><i data-l="2"></i><i data-l="3"></i><i data-l="4"></i><i data-l="2"></i>
+                  <i data-l="1"></i><i data-l="2"></i><i data-l="4"></i><i data-l="3"></i><i data-l="2"></i><i data-l="3"></i><i data-l="1"></i>
+                </div>
+                <div class="heatmap-legend"><span>Menos</span><i data-l="0"></i><i data-l="1"></i><i data-l="2"></i><i data-l="3"></i><i data-l="4"></i><span>Más</span></div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- DECLARACIÓN -->
+      <section class="statement">
+        <div class="container statement-inner reveal">
+          <p class="eyebrow eyebrow-light">La diferencia Kora</p>
+          <blockquote>
+            La nube es opcional.<br />
+            <em>Tu biblioteca, no.</em>
+          </blockquote>
+          <p class="statement-copy">
+            Lectura, OCR, búsqueda semántica, voz, audiolibros y sincronización funcionan sin internet.
+            Solo descargas los modelos que quieras usar, cuando quieras usarlos.
+          </p>
+          <div class="statement-stats">
+            <div><strong>0</strong><span>datos enviados a la nube</span></div>
+            <div><strong>30+</strong><span>herramientas integradas</span></div>
+            <div><strong>22</strong><span>logros de lectura</span></div>
+            <div><strong>100 %</strong><span>offline cuando lo necesitas</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- HERRAMIENTAS -->
+      <section class="section" id="herramientas">
+        <div class="container">
+          <div class="section-head reveal">
+            <p class="eyebrow">02 · Herramientas</p>
+            <h2>Pequeñas herramientas, <em>grandes diferencias.</em></h2>
+            <p class="section-lede">
+              Cada función está pensada para quitar fricción: convertir, buscar, ordenar, escuchar
+              y recuperar. Estas son todas las que encontrarás dentro de Kora.
+            </p>
+          </div>
+
+          <div class="tools-grid">
+            <article class="tool-group reveal">
+              <div class="tool-group-head">
+                <span class="tool-group-icon"><svg class="icon"><use href="#i-book" /></svg></span>
+                <div><h3>Lectura y biblioteca</h3><span>11 herramientas</span></div>
+              </div>
+              <ul>
+                <li><span class="tool-check"></span><div><strong>Importación inteligente</strong><small>EPUB/PDF por SHA-256, portada y metadatos.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>OCR local</strong><small>Tesseract en español e inglés para PDFs escaneados.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Auto-índice</strong><small>Bookmarks nativos o heurística de capítulos.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>PDF → EPUB</strong><small>Conserva notas, reacciones y progreso.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Búsqueda semántica</strong><small>multilingual-e5-small, 100 % offline.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Clasificación asistida</strong><small>Reglas, embeddings e IA con sugerencias.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Favoritos y categorías</strong><small>Filtros, colores y orden personalizado.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Papelera</strong><small>Restaura libros con sus notas y assets.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Copias ZIP</strong><small>Base de datos, portadas, audiolibros y notas; restauración verificada.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Temas y tipografía</strong><small>Por libro, temas por cuenta y fuentes accesibles.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Idioma y accesibilidad</strong><small>Español/inglés, foco visible y fuentes OpenDyslexic.</small></div></li>
+              </ul>
+            </article>
+
+            <article class="tool-group reveal">
+              <div class="tool-group-head">
+                <span class="tool-group-icon"><svg class="icon"><use href="#i-headphones" /></svg></span>
+                <div><h3>Voz y audio</h3><span>11 herramientas</span></div>
+              </div>
+              <ul>
+                <li><span class="tool-check"></span><div><strong>Piper TTS</strong><small>Voces es_ES, es_MX y en_US.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Velocidad y tono</strong><small>De 0.5× a 3× en tiempo real.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Multi-voz</strong><small>Una voz por personaje; narrador fijo.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Clonación de voz</strong><small>3–30 s, consentimiento y marca de agua.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Perfiles .koravoice</strong><small>Exporta e importa voces con manifiesto SHA-256.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Audiolibros M4B</strong><small>Capítulos, carátula y metadata.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Karaoke</strong><small>Resaltado sincronizado con el audio.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Marcadores de voz</strong><small>«Kora, marca esto» con Whisper.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Modo ensayo</strong><small>Graba, transcribe y compara tu lectura.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Cola de generación</strong><small>Pausa, reanuda, reordena y reintenta.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Tratamiento de audio</strong><small>Normalización LUFS y ecualización.</small></div></li>
+              </ul>
+            </article>
+
+            <article class="tool-group reveal">
+              <div class="tool-group-head">
+                <span class="tool-group-icon"><svg class="icon"><use href="#i-shield" /></svg></span>
+                <div><h3>Datos y privacidad</h3><span>11 herramientas</span></div>
+              </div>
+              <ul>
+                <li><span class="tool-check"></span><div><strong>Cuenta local</strong><small>PIN Argon2id y claves Ed25519.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Emparejamiento</strong><small>QR, clave de conexión y SAS de 6 dígitos.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Shares</strong><small>Permiso, caducidad, usos y revocación.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Sync selectiva</strong><small>Solo las categorías que elijas por dispositivo.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Handoff</strong><small>Retoma en otro equipo donde lo dejaste.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Lectura en espejo</strong><small>Misma página y TTS en dos dispositivos.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Auditoría</strong><small>Registro de actividad y exportación JSON.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Exportar notas</strong><small>Markdown o JSON con citas.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Diario exportable</strong><small>EPUB mensual/anual y M4B opcional.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Foto de perfil</strong><small>Recorte circular y avatar local por cuenta.</small></div></li>
+                <li><span class="tool-check"></span><div><strong>Privacidad por diseño</strong><small>Sin telemetría, sin nube, sin trackers.</small></div></li>
+              </ul>
+            </article>
+          </div>
+
+          <p class="tools-footnote reveal">
+            ¿Quieres el detalle técnico de cada comando?
+            <a class="text-link" href="https://github.com/GMR027/kora#comandos-ipc" target="_blank" rel="noreferrer">Consulta la documentación en GitHub <svg class="icon"><use href="#i-external" /></svg></a>
+          </p>
+        </div>
+      </section>
+
+      <!-- PRIVACIDAD -->
+      <section class="privacy" id="privacidad">
+        <div class="container">
+          <div class="section-head section-head-dark reveal">
+            <p class="eyebrow eyebrow-light">03 · Privacidad</p>
+            <h2>Tus libros son tuyos. <em>Punto.</em></h2>
+            <p class="section-lede">
+              Kora está diseñada al revés que la mayoría: primero guarda, después sincroniza,
+              y solo comparte cuando tú lo pides. No hay servidor de Kora en medio.
+            </p>
+          </div>
+
+          <div class="privacy-grid">
+            <article class="privacy-card reveal">
+              <span class="privacy-icon"><svg class="icon"><use href="#i-cloud-off" /></svg></span>
+              <h3>Todo se queda en casa</h3>
+              <p>
+                La base SQLite y tus assets viven en el almacenamiento privado de la app.
+                En Linux, en <code>~/.local/share/dev.kora.reader/</code>. Nada viaja a un servidor.
+              </p>
+            </article>
+            <article class="privacy-card reveal">
+              <span class="privacy-icon"><svg class="icon"><use href="#i-lock" /></svg></span>
+              <h3>Cifrado de verdad</h3>
+              <p>
+                PIN Argon2id, identidad Ed25519 y sync por QUIC con certificados de cliente y servidor.
+                La confianza se verifica contra la huella de cada dispositivo.
+              </p>
+            </article>
+            <article class="privacy-card reveal">
+              <span class="privacy-icon"><svg class="icon"><use href="#i-share" /></svg></span>
+              <h3>Tú decides qué compartir</h3>
+              <p>
+                Shares con permiso de lectura o copia, caducidad y número máximo de usos.
+                Cada cambio queda en el registro de auditoría.
+              </p>
+            </article>
+            <article class="privacy-card reveal">
+              <span class="privacy-icon"><svg class="icon"><use href="#i-cpu" /></svg></span>
+              <h3>IA sin intermediarios</h3>
+              <p>
+                Conecta tu propio Ollama o llama.cpp. Los libros, las notas y las preguntas
+                se procesan en tu equipo, no en la nube de nadie.
+              </p>
+            </article>
+          </div>
+
+          <div class="never reveal">
+            <span class="never-title">Lo que Kora nunca hace</span>
+            <ul>
+              <li><svg class="icon"><use href="#i-close" /></svg> Subir tus libros</li>
+              <li><svg class="icon"><use href="#i-close" /></svg> Crear cuentas remotas</li>
+              <li><svg class="icon"><use href="#i-close" /></svg> Vender tus datos</li>
+              <li><svg class="icon"><use href="#i-close" /></svg> Pedirte una suscripción</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- DESCARGAS -->
+      <section class="downloads" id="descargas">
+        <div class="container">
+          <div class="section-head reveal">
+            <p class="eyebrow">04 · Descargas</p>
+            <h2>Lleva Kora <em>contigo.</em></h2>
+            <p class="section-lede">
+              Empieza en Android o en Linux. Tus datos se quedan en el dispositivo y puedes
+              moverlos con una copia de seguridad cuando quieras.
+            </p>
+          </div>
+
+          <div class="download-grid">
+            <article class="download-card reveal" data-platform="android">
+              <div class="download-top">
+                <span class="platform-icon"><svg class="icon"><use href="#i-android" /></svg></span>
+                <span class="platform-badge">Para tu móvil</span>
+              </div>
+              <div>
+                <p class="platform-name">Android</p>
+                <h3>Kora para Android</h3>
+                <p class="file-meta">v0.1.2 · APK universal · 99 MB</p>
+              </div>
+              <ul class="download-list">
+                <li><svg class="icon"><use href="#i-check" /></svg> Lector EPUB y PDF con TTS nativo</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Audiolibros en segundo plano con Media3</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Notas, sync LAN y mini-reproductor</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Android 7.0 o superior</li>
+              </ul>
+              <a class="btn btn-primary btn-download" href="downloads/Kora-0.1.2-android.apk" download data-file="downloads/Kora-0.1.2-android.apk">
+                Descargar APK
+                <svg class="icon"><use href="#i-download" /></svg>
+              </a>
+              <p class="download-note">APK firmado. Al abrirlo, permite «Instalar apps desconocidas» si Android lo solicita.</p>
+            </article>
+
+            <article class="download-card reveal" data-platform="debian">
+              <div class="download-top">
+                <span class="platform-icon"><svg class="icon"><use href="#i-package" /></svg></span>
+                <span class="platform-badge">Ubuntu · Debian · Zorin</span>
+              </div>
+              <div>
+                <p class="platform-name">Linux · Debian</p>
+                <h3>Kora para Linux</h3>
+                <p class="file-meta">v0.1.2 · .deb · amd64</p>
+              </div>
+              <ul class="download-list">
+                <li><svg class="icon"><use href="#i-check" /></svg> La app completa de escritorio</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> OCR, IA local y clonación de voz</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Generación de audiolibros M4B</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Sync QUIC y copias ZIP</li>
+              </ul>
+              <a class="btn btn-primary btn-download" href="downloads/Kora_0.1.2_amd64.deb" download data-file="downloads/Kora_0.1.2_amd64.deb">
+                Descargar .deb
+                <svg class="icon"><use href="#i-download" /></svg>
+              </a>
+              <div class="install-box">
+                <code>sudo apt install ./Kora_0.1.2_amd64.deb</code>
+                <button class="copy-btn" type="button" data-copy="sudo apt install ./Kora_0.1.2_amd64.deb" aria-label="Copiar comando de instalación">
+                  <svg class="icon"><use href="#i-copy" /></svg>
+                </button>
+              </div>
+              <p class="download-note">También disponible el paquete RPM para Fedora y derivados.</p>
+            </article>
+
+            <article class="download-card reveal" data-platform="fedora">
+              <div class="download-top">
+                <span class="platform-icon"><svg class="icon"><use href="#i-terminal" /></svg></span>
+                <span class="platform-badge">Fedora · RHEL</span>
+              </div>
+              <div>
+                <p class="platform-name">Linux · RPM</p>
+                <h3>Kora para Fedora</h3>
+                <p class="file-meta">v0.1.2 · .rpm · x86_64</p>
+              </div>
+              <ul class="download-list">
+                <li><svg class="icon"><use href="#i-check" /></svg> Las mismas funciones de escritorio</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Integración nativa con Fedora</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Paquete nativo para Fedora</li>
+                <li><svg class="icon"><use href="#i-check" /></svg> Instalación con una línea</li>
+              </ul>
+              <a class="btn btn-primary btn-download" href="downloads/Kora-0.1.2-1.x86_64.rpm" download data-file="downloads/Kora-0.1.2-1.x86_64.rpm">
+                Descargar .rpm
+                <svg class="icon"><use href="#i-download" /></svg>
+              </a>
+              <div class="install-box">
+                <code>sudo dnf install ./Kora-0.1.2-1.x86_64.rpm</code>
+                <button class="copy-btn" type="button" data-copy="sudo dnf install ./Kora-0.1.2-1.x86_64.rpm" aria-label="Copiar comando de instalación">
+                  <svg class="icon"><use href="#i-copy" /></svg>
+                </button>
+              </div>
+              <p class="download-note">Recomendado Fedora 42 o superior. Paquete nativo para x86_64.</p>
+            </article>
+          </div>
+
+          <div class="download-extras reveal">
+            <div class="extra-card">
+              <span class="extra-icon"><svg class="icon"><use href="#i-terminal" /></svg></span>
+              <div>
+                <strong>¿Prefieres compilarlo tú?</strong>
+                <p>El código está en GitHub. Genera los paquetes con <code>pnpm tauri build</code>; también se produce un AppImage.</p>
+              </div>
+              <a class="text-link" href="https://github.com/GMR027/kora" target="_blank" rel="noreferrer">Ver repositorio <svg class="icon"><use href="#i-external" /></svg></a>
+            </div>
+            <div class="extra-card">
+              <span class="extra-icon"><svg class="icon"><use href="#i-file" /></svg></span>
+              <div>
+                <strong>Dependencias opcionales</strong>
+                <p><code>ffmpeg</code> para M4B, Tesseract para OCR y PDFium para texto/OCR de PDF. Kora funciona sin ellas.</p>
+              </div>
+              <a class="text-link" href="https://github.com/GMR027/kora/blob/main/docs/INSTALACION.md" target="_blank" rel="noreferrer">Guía de instalación <svg class="icon"><use href="#i-external" /></svg></a>
+            </div>
+          </div>
+
+          <p class="download-footnote reveal">
+            Versión 0.1.2 · Licencia MIT · Sin telemetría. Si un paquete aún no aparece en tu copia,
+            puedes generarlo desde el código o abrir un issue en GitHub.
+          </p>
+        </div>
+      </section>
+
+      <!-- EMPEZAR -->
+      <section class="section steps-section" id="empezar">
+        <div class="container">
+          <div class="section-head reveal">
+            <p class="eyebrow">05 · Primeros pasos</p>
+            <h2>De la descarga a tu primera página en <em>tres pasos.</em></h2>
+          </div>
+
+          <div class="steps">
+            <article class="step reveal">
+              <span class="step-number">01</span>
+              <h3>Descarga e instala</h3>
+              <p>Elige el APK para Android o el paquete .deb/.rpm para Linux. En escritorio, todo se instala con un comando.</p>
+              <span class="step-detail"><svg class="icon"><use href="#i-download" /></svg> ~99 MB, sin cuenta</span>
+            </article>
+            <article class="step reveal">
+              <span class="step-number">02</span>
+              <h3>Importa tu biblioteca</h3>
+              <p>Arrastra tus EPUB y PDF. Kora calcula el hash, extrae portada y metadatos, y detecta duplicados automáticamente.</p>
+              <span class="step-detail"><svg class="icon"><use href="#i-layers" /></svg> SHA-256 y deduplicación</span>
+            </article>
+            <article class="step reveal">
+              <span class="step-number">03</span>
+              <h3>Hazlo tuyo</h3>
+              <p>Elige tema, tipografía y voz. Conecta Ollama si quieres IA local, o empareja tus dispositivos para sync.</p>
+              <span class="step-detail"><svg class="icon"><use href="#i-spark" /></svg> Todo opcional, todo local</span>
+            </article>
+          </div>
+
+          <div class="steps-cta reveal">
+            <a class="btn btn-primary" href="#descargas">Empezar ahora <svg class="icon"><use href="#i-arrow" /></svg></a>
+            <a class="btn btn-ghost" href="https://github.com/GMR027/kora/blob/main/docs/GUIA_DE_USO.md" target="_blank" rel="noreferrer">Leer la guía de uso</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="section faq-section" id="preguntas">
+        <div class="container faq-layout">
+          <div class="section-head reveal">
+            <p class="eyebrow">06 · Preguntas</p>
+            <h2>Lo que suele preguntarse antes de <em>empezar.</em></h2>
+            <p class="section-lede">
+              Si tu duda no está aquí, abre un issue en GitHub.
+              <a class="text-link" href="https://github.com/GMR027/kora/issues" target="_blank" rel="noreferrer">Hablamos <svg class="icon"><use href="#i-external" /></svg></a>
+            </p>
+          </div>
+
+          <div class="faq-list reveal">
+            <details>
+              <summary><span>¿Kora es gratis?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>Sí. Kora es código abierto con licencia MIT. No hay suscripción, compras dentro de la app ni versión «pro» oculta.</p>
+            </details>
+            <details>
+              <summary><span>¿Necesito internet para usarla?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>Solo para descargar la app y los modelos opcionales (voces Piper, Whisper, embeddings). Leer, escuchar, buscar y sincronizar en tu red funciona completamente offline.</p>
+            </details>
+            <details>
+              <summary><span>¿Dónde guarda mis libros y notas?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>En Linux, dentro de <code>~/.local/share/dev.kora.reader/</code>. En Android, en el almacenamiento privado de la aplicación. Puedes generar una copia ZIP con base de datos, libros, portadas, notas, audiolibros y voces.</p>
+            </details>
+            <details>
+              <summary><span>¿Cómo sincronizo dos dispositivos?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>Pon ambos en la misma red, activa Sync y empareja con QR o con el código SAS de 6 dígitos. La transferencia va directa por QUIC con TLS mutuo; no pasa por ningún servidor externo.</p>
+            </details>
+            <details>
+              <summary><span>¿La clonación de voz es segura?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>Kora exige consentimiento explícito y solo deberías clonar tu propia voz o voces con permiso. Los perfiles se guardan localmente, los WAV llevan marca de agua y puedes exportarlos como <code>.koravoice</code>.</p>
+            </details>
+            <details>
+              <summary><span>¿Qué funciones son solo de escritorio?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>La generación, importación y transcripción de audiolibros, el OCR, la clonación de voz, la búsqueda semántica y el modo ensayo están en escritorio. Android incluye lectura, TTS nativo, audiolibros en segundo plano, notas y sync.</p>
+            </details>
+            <details>
+              <summary><span>¿Puedo usar mis propios modelos de IA?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>Sí. Kora se conecta a un servidor Ollama local o a uno compatible con OpenAI, como llama.cpp. Los modelos no se descargan desde Kora: usas los que ya tengas.</p>
+            </details>
+            <details>
+              <summary><span>¿Cómo actualizo sin perder datos?</span><span class="faq-icon"><svg class="icon"><use href="#i-chevron" /></svg></span></summary>
+              <p>Descarga el paquete nuevo e instálalo encima. La base SQLite y las migraciones se aplican de forma transaccional; tus libros, notas y progreso se conservan.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-grid">
+        <div class="footer-brand">
+          <a class="brand brand-footer" href="#top">
+            <img src="assets/logo-128.png" alt="" width="36" height="36" />
+            <span>Kora</span>
+          </a>
+          <p>Lectura, voz y biblioteca local-first.<br />Hecho con Rust, Tauri y Svelte.</p>
+          <span class="footer-badge"><span class="live-dot"></span> Sin cookies ni trackers</span>
+        </div>
+
+        <div class="footer-col">
+          <h3>Producto</h3>
+          <a href="#funciones">Funciones</a>
+          <a href="#herramientas">Herramientas</a>
+          <a href="#descargas">Descargas</a>
+          <a href="#preguntas">Preguntas frecuentes</a>
+        </div>
+
+        <div class="footer-col">
+          <h3>Recursos</h3>
+          <a href="https://github.com/GMR027/kora" target="_blank" rel="noreferrer">Repositorio</a>
+          <a href="https://github.com/GMR027/kora#readme" target="_blank" rel="noreferrer">Documentación</a>
+          <a href="https://github.com/GMR027/kora/blob/main/docs/GUIA_DE_USO.md" target="_blank" rel="noreferrer">Guía de uso</a>
+          <a href="https://github.com/GMR027/kora/blob/main/docs/INSTALACION.md" target="_blank" rel="noreferrer">Instalación</a>
+        </div>
+
+        <div class="footer-col">
+          <h3>Proyecto</h3>
+          <a href="https://github.com/GMR027/kora/blob/main/LICENSE" target="_blank" rel="noreferrer">Licencia MIT</a>
+          <a href="https://github.com/GMR027/kora/issues" target="_blank" rel="noreferrer">Reportar un issue</a>
+          <a href="#privacidad">Privacidad</a>
+          <a href="#top">Volver arriba</a>
+        </div>
+      </div>
+
+      <div class="container footer-bottom">
+        <span>© 2026 Kora. Todos los derechos reservados.</span>
+        <span class="footer-version">v0.1.2 · Linux y Android</span>
+      </div>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <script src="main.js"></script>
+  </body>
+</html>

@@ -14,6 +14,9 @@
       | "settings"
       | "more"
       | "search"
+      | "bell"
+      | "alert"
+      | "info"
       | "sun"
       | "moon"
       | "grid"
@@ -99,6 +102,15 @@
   {:else if name === "search"}
     <circle cx="11" cy="11" r="7" />
     <path d="m16 16 5 5" />
+  {:else if name === "bell"}
+    <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+    <path d="M10.3 21a2 2 0 0 0 3.4 0" />
+  {:else if name === "alert"}
+    <path d="M12 3 2 20h20L12 3Z" />
+    <path d="M12 9v5M12 18h.01" />
+  {:else if name === "info"}
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5M12 8h.01" />
   {:else if name === "sun"}
     <circle cx="12" cy="12" r="4" />
     <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />

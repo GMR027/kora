@@ -126,7 +126,7 @@
     ).size,
   );
   let castLabel = $derived(
-    item.cast.length > 0
+    item.cast.length > 0 && castVoiceCount > 1
       ? $t("audiobooks.castBadge", { count: castVoiceCount })
       : null,
   );
@@ -358,8 +358,10 @@
     z-index: 2;
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
     padding: 0;
     border: 1px solid color-mix(in srgb, #fff 30%, transparent);
     border-radius: 50%;
@@ -826,7 +828,14 @@
 
     .progress-head,
     .progress-foot {
+      flex-wrap: wrap;
       font-size: 0.61rem;
+    }
+
+    .card-actions {
+      width: 100%;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
 
     .icon-action {

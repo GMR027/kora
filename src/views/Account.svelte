@@ -5,6 +5,7 @@
   import { onMount } from "svelte";
   import Icon from "../lib/components/Icon.svelte";
   import { formatDate as formatI18nDate, t, translate } from "../lib/i18n";
+  import { notifyImportant } from "../lib/toast";
   import {
     acceptShare,
     changePin,
@@ -119,6 +120,14 @@
     unlisten.push(
       await listen<AccountPairResult>("accounts::paired", (event) => {
         notice = `Emparejado con ${event.payload.deviceName} · SAS ${event.payload.sas}`;
+        notifyImportant(
+          "success",
+          translate("notifications.paired"),
+          translate("notifications.pairedBody", {
+            peer: event.payload.deviceName,
+          }),
+          "account",
+        );
         pairing = null;
         sasInput = "";
         void load();

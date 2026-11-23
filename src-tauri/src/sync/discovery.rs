@@ -130,7 +130,10 @@ impl MdnsDiscovery {
             service.port,
             &properties[..],
         )
-        .map_err(|error| KoraError::InvalidInput(format!("servicio mDNS: {error}")))?;
+        .map_err(|error| KoraError::InvalidInput(format!("servicio mDNS: {error}")))?
+        // Sin esto el servicio se anuncia sin registros A/AAAA y los demás
+        // equipos no pueden resolverlo ni conectarse a su puerto QUIC.
+        .enable_addr_auto();
 
         let fullname = info.get_fullname().to_string();
         daemon

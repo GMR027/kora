@@ -269,11 +269,301 @@ mod desktop {
 #[cfg(target_os = "android")]
 mod android {
     use std::path::Path;
+    use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use anyhow::{Result, bail};
+    use anyhow::{Context, Result, anyhow};
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+    use tauri::ipc::{Channel, InvokeResponseBody};
+    use tauri::plugin::{Builder, PluginHandle, TauriPlugin};
+    use tauri::{AppHandle, Manager, Wry};
 
     use super::PlaybackSnapshot;
     use crate::audiobooks::manifest::AudiobookManifest;
+
+    const PLUGIN_NAME: &str = "audiobook-audio";
+    const PLUGIN_PACKAGE: &str = "dev.kora.reader.audio";
+    const PLUGIN_CLASS: &str = "AudiobookAudioPlugin";
+    const PROGRESS_WRITE_INTERVAL_MS: i64 = 5_000;
+    const PROGRESS_MIN_DELTA_MS: i64 = 3_000;
+
+    static HANDLE: OnceLock<PluginHandle<Wry>> = OnceLock::new();
+    static EVENT_CHANNEL: OnceLock<Channel<NativePlaybackState>> = OnceLock::new();
+    static RELAY_READY: AtomicBool = AtomicBool::new(false);
+    static FINISHED: AtomicBool = AtomicBool::new(false);
+    static KEEP_SCREEN_ON: AtomicBool = AtomicBool::new(false);
+    static LAST_PERSIST_AT: AtomicI64 = AtomicI64::new(0);
+    static LAST_PERSIST_POSITION: AtomicI64 = AtomicI64::new(-1);
+
+    fn current() -> &'static Mutex<Option<Current>> {
+        static CURRENT: OnceLock<Mutex<Option<Current>>> = OnceLock::new();
+        CURRENT.get_or_init(|| Mutex::new(None))
+    }
+
+    fn speed_slot() -> &'static Mutex<f32> {
+        static SPEED: OnceLock<Mutex<f32>> = OnceLock::new();
+        SPEED.get_or_init(|| Mutex::new(1.0))
+    }
+
+    #[derive(Debug, Clone)]
+    struct Current {
+        audiobook_id: String,
+        manifest: AudiobookManifest,
+        cover_path: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PlayArgs<'a> {
+        audiobook_id: &'a str,
+        src: String,
+        title: &'a str,
+        artist: Option<&'a str>,
+        cover_path: Option<&'a str>,
+        start_ms: i64,
+        speed: f32,
+        chapters_json: String,
+        keep_screen_on: bool,
+    }
+
+    /// Estado que envía el servicio Android. Se usa tanto para las respuestas de
+    /// los comandos como para el canal de eventos periódicos.
+    #[derive(Debug, Clone, Default, Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct NativePlaybackState {
+        #[serde(default)]
+        pub event: String,
+        #[serde(default)]
+        pub audiobook_id: Option<String>,
+        #[serde(default)]
+        pub position_ms: i64,
+        #[serde(default)]
+        pub duration_ms: i64,
+        #[serde(default)]
+        pub playing: bool,
+        #[serde(default)]
+        pub ended: bool,
+        #[serde(default)]
+        pub speed: f32,
+        #[serde(default)]
+        pub chapter_index: i64,
+        #[serde(default)]
+        pub chapter_title: Option<String>,
+        #[serde(default)]
+        pub sleep_remaining_ms: i64,
+        #[serde(default)]
+        pub error: Option<String>,
+    }
+
+    fn now_ms() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0)
+    }
+
+    fn ensure_event_relay() -> Result<()> {
+        if RELAY_READY.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let channel = EVENT_CHANNEL
+            .get()
+            .ok_or_else(|| anyhow!("el canal de eventos del reproductor no está inicializado"))?;
+
+        #[derive(Serialize)]
+        struct RelayArgs<'a> {
+            channel: &'a Channel<NativePlaybackState>,
+        }
+
+        handle
+            .run_mobile_plugin::<serde_json::Value>("setupEventRelay", RelayArgs { channel })
+            .map_err(|error| anyhow!("reproductor Android: {error}"))?;
+        RELAY_READY.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn call<T: DeserializeOwned>(command: &str, payload: impl Serialize) -> Result<T> {
+        ensure_event_relay()?;
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        handle
+            .run_mobile_plugin(command, payload)
+            .map_err(|error| anyhow!("reproductor Android: {error}"))
+    }
+
+    fn chapters_json(manifest: &AudiobookManifest) -> Result<String> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Chapter<'a> {
+            index: usize,
+            title: &'a str,
+            start_ms: i64,
+            end_ms: i64,
+        }
+
+        let chapters: Vec<Chapter<'_>> = manifest
+            .chapters
+            .iter()
+            .map(|chapter| Chapter {
+                index: chapter.index,
+                title: &chapter.title,
+                start_ms: chapter.start_ms,
+                end_ms: chapter.end_ms,
+            })
+            .collect();
+        Ok(serde_json::to_string(&chapters)?)
+    }
+
+    fn snapshot_from_state(
+        audiobook_id: &str,
+        manifest: &AudiobookManifest,
+        cover_path: Option<String>,
+        state: &NativePlaybackState,
+    ) -> Result<PlaybackSnapshot> {
+        let position = state.position_ms.clamp(0, manifest.duration_ms.max(0));
+        let mut snapshot = PlaybackSnapshot::from_manifest(
+            audiobook_id.to_string(),
+            manifest,
+            position,
+            state.playing && !state.ended,
+        );
+        snapshot.cover_path = cover_path;
+        if state.ended {
+            FINISHED.store(true, Ordering::SeqCst);
+        }
+        Ok(snapshot)
+    }
+
+    fn snapshot_from_native(state: NativePlaybackState) -> Result<Option<PlaybackSnapshot>> {
+        if let Some(error) = state
+            .error
+            .as_deref()
+            .map(str::trim)
+            .filter(|error| !error.is_empty())
+        {
+            anyhow::bail!("reproductor Android: {error}");
+        }
+
+        let guard = current()
+            .lock()
+            .map_err(|_| anyhow!("estado del reproductor de audiolibros bloqueado"))?;
+        let Some(current) = guard.as_ref() else {
+            return Ok(None);
+        };
+        if state.audiobook_id.as_deref() != Some(current.audiobook_id.as_str()) {
+            return Ok(None);
+        }
+        snapshot_from_state(
+            &current.audiobook_id,
+            &current.manifest,
+            current.cover_path.clone(),
+            &state,
+        )
+        .map(Some)
+    }
+
+    fn decode_state(body: InvokeResponseBody) -> Option<NativePlaybackState> {
+        match body {
+            InvokeResponseBody::Json(json) => serde_json::from_str(&json).ok(),
+            InvokeResponseBody::Raw(bytes) => serde_json::from_slice(&bytes).ok(),
+        }
+    }
+
+    fn handle_native_event(app: &AppHandle<Wry>, state: NativePlaybackState) {
+        if state.ended {
+            FINISHED.store(true, Ordering::SeqCst);
+        }
+
+        let Some(audiobook_id) = state.audiobook_id.as_deref() else {
+            return;
+        };
+
+        let position = state.position_ms.max(0);
+        let (current_id, chapter) = {
+            let guard = match current().lock() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            };
+            let Some(current) = guard.as_ref() else {
+                return;
+            };
+            if audiobook_id != current.audiobook_id {
+                return;
+            }
+            (
+                current.audiobook_id.clone(),
+                current.manifest.chapter_at(position) as i64,
+            )
+        };
+
+        let now = now_ms();
+        let force = state.event != "tick";
+        let last_at = LAST_PERSIST_AT.load(Ordering::SeqCst);
+        let last_position = LAST_PERSIST_POSITION.load(Ordering::SeqCst);
+        if !force
+            && now.saturating_sub(last_at) < PROGRESS_WRITE_INTERVAL_MS
+            && (position - last_position).abs() < PROGRESS_MIN_DELTA_MS
+        {
+            return;
+        }
+
+        LAST_PERSIST_AT.store(now, Ordering::SeqCst);
+        LAST_PERSIST_POSITION.store(position, Ordering::SeqCst);
+
+        let Some(app_state) = app.try_state::<crate::state::AppState>() else {
+            return;
+        };
+        let storage = app_state.storage.clone();
+        let owner = app_state.identity.account.id.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = storage
+                .audiobooks
+                .save_progress(&current_id, &owner, position, chapter)
+                .await
+            {
+                eprintln!("no se pudo guardar el progreso del audiolibro: {error}");
+            }
+        });
+    }
+
+    pub fn init_plugin() -> TauriPlugin<Wry> {
+        Builder::new(PLUGIN_NAME)
+            .setup(|app, api| {
+                let handle = api.register_android_plugin(PLUGIN_PACKAGE, PLUGIN_CLASS)?;
+                let _ = HANDLE.set(handle);
+                RELAY_READY.store(false, Ordering::SeqCst);
+
+                let app = app.clone();
+                let channel = Channel::<NativePlaybackState>::new(move |body| {
+                    if let Some(state) = decode_state(body) {
+                        handle_native_event(&app, state);
+                    }
+                    Ok(())
+                });
+                let _ = EVENT_CHANNEL.set(channel);
+                Ok(())
+            })
+            .build()
+    }
+
+    pub fn set_keep_screen_on(enabled: bool) -> Result<()> {
+        KEEP_SCREEN_ON.store(enabled, Ordering::SeqCst);
+        let _: serde_json::Value =
+            call("setKeepScreenOn", serde_json::json!({ "enabled": enabled }))?;
+        Ok(())
+    }
+
+    pub fn set_sleep_timer(minutes: u32) -> Result<()> {
+        let _: serde_json::Value =
+            call("setSleepTimer", serde_json::json!({ "minutes": minutes }))?;
+        Ok(())
+    }
 
     #[derive(Default)]
     pub struct AudiobookPlayback;
@@ -281,52 +571,157 @@ mod android {
     impl AudiobookPlayback {
         pub fn play(
             &self,
-            _audiobook_id: String,
-            _path: &Path,
-            _manifest: AudiobookManifest,
-            _start_ms: i64,
-            _cover_path: Option<String>,
+            audiobook_id: String,
+            path: &Path,
+            manifest: AudiobookManifest,
+            start_ms: i64,
+            cover_path: Option<String>,
         ) -> Result<PlaybackSnapshot> {
-            bail!("el reproductor de audiolibros aún no está disponible en Android")
+            let existing: NativePlaybackState = call("getState", ()).unwrap_or_default();
+            let can_resume = existing.audiobook_id.as_deref() == Some(audiobook_id.as_str())
+                && !existing.ended
+                && existing
+                    .error
+                    .as_deref()
+                    .map(str::trim)
+                    .is_none_or(str::is_empty);
+            let state = if can_resume {
+                if existing.playing {
+                    existing
+                } else {
+                    call("resume", ())?
+                }
+            } else {
+                let chapters = chapters_json(&manifest)?;
+                let chapter_title = manifest
+                    .chapter(manifest.chapter_at(start_ms))
+                    .map(|chapter| chapter.title.clone());
+                let speed = *speed_slot()
+                    .lock()
+                    .map_err(|_| anyhow!("velocidad del reproductor bloqueada"))?;
+                let args = PlayArgs {
+                    audiobook_id: &audiobook_id,
+                    src: path.to_string_lossy().to_string(),
+                    title: &manifest.book_title,
+                    artist: chapter_title.as_deref(),
+                    cover_path: cover_path.as_deref(),
+                    start_ms: start_ms.max(0),
+                    speed,
+                    chapters_json: chapters,
+                    keep_screen_on: KEEP_SCREEN_ON.load(Ordering::SeqCst),
+                };
+                call("play", &args)
+                    .with_context(|| "no se pudo iniciar el audiolibro en Android")?
+            };
+
+            if let Some(error) = state
+                .error
+                .as_deref()
+                .map(str::trim)
+                .filter(|error| !error.is_empty())
+            {
+                anyhow::bail!("reproductor Android: {error}");
+            }
+
+            *current()
+                .lock()
+                .map_err(|_| anyhow!("reproductor de audiolibros bloqueado"))? = Some(Current {
+                audiobook_id: audiobook_id.clone(),
+                manifest: manifest.clone(),
+                cover_path: cover_path.clone(),
+            });
+            FINISHED.store(false, Ordering::SeqCst);
+            let snapshot = snapshot_from_state(&audiobook_id, &manifest, cover_path, &state)?;
+            if state.speed > 0.0
+                && let Ok(mut speed) = speed_slot().lock()
+            {
+                *speed = state.speed.clamp(0.5, 2.5);
+            }
+            Ok(snapshot)
         }
 
         pub fn pause(&self) -> Result<Option<PlaybackSnapshot>> {
-            bail!("el reproductor de audiolibros aún no está disponible en Android")
+            let state: NativePlaybackState = call("pause", ())?;
+            snapshot_from_native(state)
         }
 
         pub fn resume(&self) -> Result<Option<PlaybackSnapshot>> {
-            bail!("el reproductor de audiolibros aún no está disponible en Android")
+            let state: NativePlaybackState = call("resume", ())?;
+            snapshot_from_native(state)
         }
 
         pub fn stop(&self) -> Result<()> {
-            Ok(())
+            let result = call::<NativePlaybackState>("stop", ());
+            *current()
+                .lock()
+                .map_err(|_| anyhow!("reproductor de audiolibros bloqueado"))? = None;
+            FINISHED.store(false, Ordering::SeqCst);
+            LAST_PERSIST_AT.store(0, Ordering::SeqCst);
+            LAST_PERSIST_POSITION.store(-1, Ordering::SeqCst);
+            result.map(|_| ())
         }
 
-        pub fn set_speed(&self, _speed: f32) -> Result<Option<PlaybackSnapshot>> {
-            bail!("el reproductor de audiolibros aún no está disponible en Android")
+        pub fn set_speed(&self, speed: f32) -> Result<Option<PlaybackSnapshot>> {
+            let speed = speed.clamp(0.5, 2.5);
+            if let Ok(mut slot) = speed_slot().lock() {
+                *slot = speed;
+            }
+            let state: NativePlaybackState =
+                call("setSpeed", serde_json::json!({ "speed": speed }))?;
+            snapshot_from_native(state)
         }
 
-        pub fn seek(&self, _position_ms: i64) -> Result<Option<PlaybackSnapshot>> {
-            bail!("el reproductor de audiolibros aún no está disponible en Android")
+        pub fn seek(&self, position_ms: i64) -> Result<Option<PlaybackSnapshot>> {
+            let state: NativePlaybackState = call(
+                "seek",
+                serde_json::json!({ "positionMs": position_ms.max(0) }),
+            )?;
+            LAST_PERSIST_AT.store(0, Ordering::SeqCst);
+            snapshot_from_native(state)
         }
 
         pub fn snapshot(&self) -> Result<Option<PlaybackSnapshot>> {
-            Ok(None)
+            let state = match call::<NativePlaybackState>("getState", ()) {
+                Ok(state) => state,
+                Err(_) => return Ok(None),
+            };
+            snapshot_from_native(state)
         }
 
         pub fn position_ms(&self) -> i64 {
-            0
+            call::<NativePlaybackState>("getState", ())
+                .map(|state| state.position_ms.max(0))
+                .unwrap_or(0)
         }
 
         pub fn finished(&self) -> bool {
-            false
+            FINISHED.load(Ordering::SeqCst)
         }
 
-        pub fn clear_finished(&self) {}
+        pub fn clear_finished(&self) {
+            FINISHED.store(false, Ordering::SeqCst);
+        }
     }
 }
 
 #[cfg(target_os = "android")]
-pub use android::AudiobookPlayback;
+pub use android::{
+    AudiobookPlayback, init_plugin as init_mobile_plugin, set_keep_screen_on, set_sleep_timer,
+};
 #[cfg(not(target_os = "android"))]
 pub use desktop::AudiobookPlayback;
+
+#[cfg(not(target_os = "android"))]
+pub fn init_mobile_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    unreachable!("el plugin de audio móvil solo se registra en Android")
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn set_keep_screen_on(_enabled: bool) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn set_sleep_timer(_minutes: u32) -> anyhow::Result<()> {
+    Ok(())
+}

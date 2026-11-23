@@ -16,6 +16,7 @@
   } from "../lib/api";
   import {
     formatDate,
+    locale,
     t,
     translate,
     type MessageKey,
@@ -41,27 +42,29 @@
     onRead?: (bookId: string, locator?: Locator) => void;
   } = $props();
 
-  const months = [
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-  ];
-  const weekdays = ["L", "M", "X", "J", "V", "S", "D"];
+  function localIsoDate(date = new Date()): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  }
 
-  const today = new Date();
-  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  let year = $state(today.getFullYear());
-  let month = $state(today.getMonth() + 1);
-  let selectedDate = $state(todayIso);
+  let todayIso = $state(localIsoDate());
+  let year = $state(new Date().getFullYear());
+  let month = $state(new Date().getMonth() + 1);
+  let selectedDate = $state(localIsoDate());
+  let monthLabel = $derived.by(() => {
+    const monthName = new Intl.DateTimeFormat($locale, {
+      month: "long",
+    }).format(new Date(year, month - 1, 1));
+    return `${monthName.charAt(0).toLocaleUpperCase($locale)}${monthName.slice(1)} ${year}`;
+  });
+  let weekdayLabels = $derived.by(() => {
+    $locale;
+    return Array.from({ length: 7 }, (_, index) =>
+      new Intl.DateTimeFormat($locale, { weekday: "short" })
+        .format(new Date(2024, 0, 1 + index))
+        .replace(".", "")
+        .slice(0, 2),
+    );
+  });
 
   let diary = $state<DiaryMonth | null>(null);
   let achievements = $state<Achievement[]>([]);
@@ -75,6 +78,8 @@
   let exportResult = $state<DiaryExport | null>(null);
   let notice = $state<string | null>(null);
   let error = $state<string | null>(null);
+  let diaryRequest = 0;
+  let pomodoroBusy = $state(false);
   let noteOpen = $state(false);
   let noteEditingId = $state<string | null>(null);
   let noteDate = $state("");
@@ -110,6 +115,14 @@
       Math.floor((new Date(pomodoro.endsAt).getTime() - nowMs) / 1000),
     );
   });
+  let pomodoroRunning = $derived(
+    pomodoro !== null && pomodoro.state !== "idle",
+  );
+  let displayRemaining = $derived(
+    pomodoroRunning
+      ? remaining
+      : Math.max(0, Math.round(config.focusMinutes * 60)),
+  );
   let phaseKey = $derived<MessageKey>(
     pomodoro?.state === "focus"
       ? "diary.focus"
@@ -121,12 +134,13 @@
   );
   let phaseTotal = $derived.by(() => {
     if (!pomodoro || pomodoro.state === "idle") return 0;
+    const source = pomodoro.config ?? config;
     const minutes =
       pomodoro.state === "focus"
-        ? config.focusMinutes
+        ? source.focusMinutes
         : pomodoro.state === "break"
-          ? config.breakMinutes
-          : config.longBreakMinutes;
+          ? source.breakMinutes
+          : source.longBreakMinutes;
     return Math.max(1, minutes * 60);
   });
   let phaseRatio = $derived(
@@ -140,6 +154,8 @@
     void initEvents();
     timer = setInterval(() => {
       nowMs = Date.now();
+      const currentDay = localIsoDate();
+      if (currentDay !== todayIso) todayIso = currentDay;
     }, 1000);
     return () => {
       for (const stop of unlisten) stop();
@@ -175,35 +191,52 @@
   }
 
   async function load() {
+    const request = ++diaryRequest;
     error = null;
-    try {
-      const [monthData, achievementList, pomodoroStatus, voiceList] =
-        await Promise.all([
-          getDiary(year, month),
-          getAchievements(),
-          getPomodoro(),
-          ttsVoices(),
-        ]);
-      diary = monthData;
-      achievements = achievementList;
-      pomodoro = pomodoroStatus;
-      config = { ...pomodoroStatus.config };
-      voices = voiceList;
+    const [monthResult, achievementResult, pomodoroResult, voiceResult] =
+      await Promise.allSettled([
+        getDiary(year, month),
+        getAchievements(),
+        getPomodoro(),
+        ttsVoices(),
+      ]);
+    if (request === diaryRequest && monthResult.status === "fulfilled") {
+      diary = monthResult.value;
+      ensureSelection(monthResult.value);
+    }
+    if (achievementResult.status === "fulfilled") {
+      achievements = achievementResult.value;
+    }
+    if (pomodoroResult.status === "fulfilled" && !pomodoro) {
+      pomodoro = pomodoroResult.value;
+      config = { ...pomodoroResult.value.config };
+    }
+    if (voiceResult.status === "fulfilled") {
+      voices = voiceResult.value;
       if (!voiceId) {
-        voiceId = voiceList.find((voice) => voice.installed)?.id ?? "";
+        voiceId = voiceResult.value.find((voice) => voice.installed)?.id ?? "";
       }
-      ensureSelection(monthData);
-    } catch (cause) {
-      error = errorMessage(cause);
+    }
+    if (request === diaryRequest) {
+      const failure = [
+        monthResult,
+        achievementResult,
+        pomodoroResult,
+        voiceResult,
+      ].find((result) => result.status === "rejected");
+      if (failure) error = errorMessage(failure.reason);
     }
   }
 
   async function loadDiary() {
+    const request = ++diaryRequest;
     try {
-      diary = await getDiary(year, month);
+      const monthData = await getDiary(year, month);
+      if (request !== diaryRequest) return;
+      diary = monthData;
       ensureSelection(diary);
     } catch (cause) {
-      error = errorMessage(cause);
+      if (request === diaryRequest) error = errorMessage(cause);
     }
   }
 
@@ -244,7 +277,8 @@
     const current = new Date();
     year = current.getFullYear();
     month = current.getMonth() + 1;
-    selectedDate = `${year}-${String(month).padStart(2, "0")}-${String(current.getDate()).padStart(2, "0")}`;
+    selectedDate = localIsoDate(current);
+    todayIso = selectedDate;
     await loadDiary();
   }
 
@@ -274,8 +308,9 @@
   }
 
   function formatCountdown(seconds: number) {
-    const minutes = Math.floor(seconds / 60);
-    const rest = seconds % 60;
+    const safe = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
+    const minutes = Math.floor(safe / 60);
+    const rest = safe % 60;
     return `${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}`;
   }
 
@@ -352,15 +387,23 @@
   }
 
   async function togglePomodoro() {
+    if (pomodoroBusy) return;
+    pomodoroBusy = true;
     error = null;
     try {
-      pomodoro =
+      const status =
         !pomodoro || pomodoro.state === "idle"
           ? await startPomodoro(config)
           : await stopPomodoro();
+      if (status) {
+        pomodoro = status;
+        config = { ...status.config };
+      }
       nowMs = Date.now();
     } catch (cause) {
       error = errorMessage(cause);
+    } finally {
+      pomodoroBusy = false;
     }
   }
 
@@ -381,6 +424,7 @@
       error = errorMessage(cause);
     } finally {
       exporting = false;
+      exportProgress = null;
     }
   }
 
@@ -470,7 +514,7 @@
     </div>
     <div class="month-nav">
       <button class="ghost" onclick={() => changeMonth(-1)} aria-label={$t("diary.prevMonth")}>‹</button>
-      <strong>{months[month - 1]} {year}</strong>
+      <strong>{monthLabel}</strong>
       <button class="ghost" onclick={() => changeMonth(1)} aria-label={$t("diary.nextMonth")}>›</button>
       <button class="ghost small" onclick={goToday}>{$t("diary.today")}</button>
     </div>
@@ -518,7 +562,7 @@
         <span class="hint">{entryCountLabel(diary?.totals.entries ?? 0)}</span>
       </div>
       <div class="weekdays">
-        {#each weekdays as day}<span>{day}</span>{/each}
+        {#each weekdayLabels as day}<span>{day}</span>{/each}
       </div>
       <div class="heatmap">
         {#each Array(leadingBlanks) as _}<span class="blank"></span>{/each}
@@ -528,7 +572,7 @@
             class:selected={selectedDate === day.date}
             class:today={day.date === todayIso}
             aria-pressed={selectedDate === day.date}
-            title={`${day.date}: ${day.minutes} min, ${day.entries} entradas`}
+            title={`${shortDate(day.date)} · ${day.minutes} ${$t("diary.minutesShort")} · ${entryCountLabel(day.entries)}`}
             onclick={() => selectDay(day)}
           >
             {Number(day.date.slice(-2))}
@@ -593,7 +637,7 @@
           <div class="manual-actions">
             <button
               class="primary small"
-              disabled={noteBusy || !noteBody.trim()}
+              disabled={noteBusy || !noteBody.trim() || (!noteEditingId && !noteDate)}
               onclick={saveManualEntry}
             >
               {noteBusy ? $t("common.loading") : $t("common.save")}
@@ -614,8 +658,8 @@
               <div class="entry-head">
                 <strong>{kindLabel(entry.kind)}</strong>
                 <span class="hint">
-                  {#if entry.durationMinutes > 0}{entry.durationMinutes} min{/if}
-                  {#if entry.pagesRead}· {entry.pagesRead} págs{/if}
+                  {#if entry.durationMinutes > 0}{entry.durationMinutes} {$t("diary.minutesShort")}{/if}
+                  {#if entry.pagesRead}· {entry.pagesRead} {$t("diary.pagesShort")}{/if}
                   {#if entry.extractsCreated}· {entry.extractsCreated} {$t("diary.extracts")}{/if}
                   {#if entry.notesCreated}· {entry.notesCreated} {$t("diary.notes")}{/if}
                 </span>
@@ -658,7 +702,7 @@
           style={`--ring-progress:${Math.round(phaseRatio * 360)}deg`}
         >
           <div class="timer">
-            <strong>{formatCountdown(remaining)}</strong>
+            <strong>{formatCountdown(displayRemaining)}</strong>
             <span>{$t(phaseKey)}</span>
           </div>
         </div>
@@ -676,6 +720,7 @@
         ] as [number, number, number, string][]) as [focus, pause, long, label] (label)}
           <button
             class:active={config.focusMinutes === focus && config.breakMinutes === pause}
+            disabled={pomodoroRunning}
             onclick={() => applyPreset(focus, pause, long)}
           >
             {label}
@@ -716,30 +761,33 @@
       <div class="config-grid">
         <label>
           <span>{$t("diary.configFocus")}</span>
-          <input type="number" min="1" max="180" bind:value={config.focusMinutes} />
+          <input type="number" min="1" max="180" bind:value={config.focusMinutes} disabled={pomodoroRunning} />
         </label>
         <label>
           <span>{$t("diary.configBreak")}</span>
-          <input type="number" min="1" max="60" bind:value={config.breakMinutes} />
+          <input type="number" min="1" max="60" bind:value={config.breakMinutes} disabled={pomodoroRunning} />
         </label>
         <label>
           <span>{$t("diary.configLong")}</span>
-          <input type="number" min="1" max="120" bind:value={config.longBreakMinutes} />
+          <input type="number" min="1" max="120" bind:value={config.longBreakMinutes} disabled={pomodoroRunning} />
         </label>
         <label>
           <span>{$t("diary.configRounds")}</span>
-          <input type="number" min="2" max="12" bind:value={config.roundsBeforeLongBreak} />
+          <input type="number" min="2" max="12" bind:value={config.roundsBeforeLongBreak} disabled={pomodoroRunning} />
         </label>
       </div>
       <label class="check">
-        <input type="checkbox" bind:checked={config.autoStartBreaks} />
+        <input type="checkbox" bind:checked={config.autoStartBreaks} disabled={pomodoroRunning} />
         <span>{$t("diary.autoBreak")}</span>
       </label>
       <label class="check">
-        <input type="checkbox" bind:checked={config.autoStartFocus} />
+        <input type="checkbox" bind:checked={config.autoStartFocus} disabled={pomodoroRunning} />
         <span>{$t("diary.autoFocus")}</span>
       </label>
-      <button class="primary" onclick={togglePomodoro}>
+      {#if pomodoroRunning}
+        <p class="hint">{$t("diary.configLocked")}</p>
+      {/if}
+      <button class="primary" onclick={togglePomodoro} disabled={pomodoroBusy} aria-busy={pomodoroBusy}>
         {!pomodoro || pomodoro.state === "idle" ? $t("diary.startFocus") : $t("diary.stop")}
       </button>
       <p class="hint">
@@ -775,7 +823,11 @@
           <p class="notice">{$t("diary.noVoice")}</p>
         {/if}
       {/if}
-      <button class="primary" onclick={exportNow} disabled={exporting}>
+      <button
+        class="primary"
+        onclick={exportNow}
+        disabled={exporting || (includeAudiobook && installedVoices.length === 0)}
+      >
         {exporting ? $t("diary.exporting") : $t("diary.exportNow")}
       </button>
       {#if exportProgress}

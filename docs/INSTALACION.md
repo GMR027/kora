@@ -7,16 +7,16 @@
 El artefacto se genera en:
 
 ```text
-target/release/bundle/deb/Kora_0.1.0_<arch>.deb
+target/release/bundle/deb/Kora_0.1.2_<arch>.deb
 ```
 
 El sufijo depende de la arquitectura del host (`amd64` en x86_64, `arm64` en
 aarch64). Instálalo con:
 
 ```bash
-sudo apt install ./Kora_0.1.0_amd64.deb
+sudo apt install ./Kora_0.1.2_amd64.deb
 # o en Fedora/derivados con dpkg instalado:
-sudo dpkg -i Kora_0.1.0_amd64.deb
+sudo dpkg -i Kora_0.1.2_amd64.deb
 ```
 
 Si tu distribución prefiere RPM, Tauri también puede generar `rpm`; el
@@ -33,6 +33,16 @@ Kora funciona sin ellas, pero habilitan funciones adicionales:
 | Audiolibros M4B | `ffmpeg` en el `PATH` |
 | Clonación de voz | modelos NeuTTS/NeuCodec descargados desde **Voz** |
 | Modo ensayo | modelos Whisper descargados desde **Ajustes** |
+
+### Importación en Android
+
+En Android, el selector del sistema entrega URIs `content://`. Kora copia el
+archivo elegido a su caché interna antes de importarlo, así que puedes abrir
+EPUB y PDF desde Descargas, Drive o cualquier proveedor de documentos.
+
+La importación de audiolibros (MP3, M4B, etc.) todavía no está disponible en
+Android: esa vista solo reproduce audiolibros que ya estén en la biblioteca.
+La importación de audio requiere `ffmpeg`/`ffprobe` y Whisper en el escritorio.
 
 ### Primer arranque
 

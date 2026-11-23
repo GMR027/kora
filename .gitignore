@@ -39,3 +39,12 @@ Thumbs.db
 
 # Helper nativo generado por `pnpm build:helper:release`
 src-tauri/binaries/
+
+# Landing: capturas de QA y paquetes descargables locales
+/landing/preview-*.png
+/landing/downloads/*.apk
+/landing/downloads/*.deb
+/landing/downloads/*.rpm
+
+# Despliegue
+/.deploy-tag

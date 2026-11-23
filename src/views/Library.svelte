@@ -44,7 +44,8 @@
   } from "../lib/api";
   import { appearance, updateAppearance } from "../lib/appearance";
   import { formatBytes, t, translate } from "../lib/i18n";
-  import { notifyError, notifySuccess } from "../lib/toast";
+  import { discardImportSource, stageImportSource } from "../lib/importSource";
+  import { notifyError, notifyImportant, notifySuccess } from "../lib/toast";
   import type { AppTab } from "../lib/navigation";
   import Button from "../lib/components/Button.svelte";
   import CategorySuggestions from "../lib/components/CategorySuggestions.svelte";
@@ -581,27 +582,37 @@
     busy = "import";
     let imported = 0;
     let failed = 0;
-    for (const path of paths) {
+    let lastError: unknown = null;
+    for (const source of paths) {
+      let staged = source;
       try {
-        const book = await libraryImport(path);
+        staged = stageImportSource(source);
+        const book = await libraryImport(staged);
         books = [book, ...books.filter((item) => item.id !== book.id)];
         imported += 1;
-      } catch {
+      } catch (cause) {
         failed += 1;
+        lastError = cause;
+      } finally {
+        if (staged !== source) discardImportSource(staged);
       }
     }
 
     if (imported > 0) {
-      notifySuccess(
+      notifyImportant(
+        "success",
         translate("library.importedCount", { count: imported }),
         paths.length > 1
           ? translate("library.importedOf", { total: paths.length })
-          : undefined,
+          : null,
+        "library",
       );
     }
     if (failed > 0) {
       notifyError(
-        new Error(translate("library.importFailedCount", { count: failed })),
+        failed === 1 && lastError
+          ? lastError
+          : new Error(translate("library.importFailedCount", { count: failed })),
       );
     }
     void loadSemantic();
@@ -3804,8 +3815,10 @@
     z-index: 3;
     display: grid;
     place-items: center;
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
     padding: 0;
     border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
     border-radius: 50%;

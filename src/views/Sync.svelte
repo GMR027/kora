@@ -20,6 +20,7 @@
     syncNow,
   } from "../lib/api";
   import { formatDate as formatI18nDate, t, translate } from "../lib/i18n";
+  import { pushNotification } from "../lib/notifications";
   import type { AppTab } from "../lib/navigation";
   import type {
     AuditEntry,
@@ -51,7 +52,9 @@
   onMount(() => {
     void load();
     timer = setInterval(() => void pollPeers(), 1600);
-    void initEvents();
+    void initEvents().catch((cause) => {
+      error = errorMessage(cause);
+    });
     return () => {
       for (const stop of unlisten) stop();
       if (timer) clearInterval(timer);
@@ -67,7 +70,11 @@
     unlisten.push(
       await listen<SyncHandoffEvent>("sync::handoff", (event) => {
         lastHandoff = event.payload;
-        notice = `${event.payload.peerName} está leyendo «${event.payload.handoff.bookId}»`;
+        notice = translate("sync.handoffNotice", {
+          peer: event.payload.peerName,
+          chapter: event.payload.handoff.chapter + 1,
+          offset: event.payload.handoff.offset,
+        });
       }),
     );
   }
@@ -158,11 +165,10 @@
   }
 
   async function toggleSync() {
-    if (!status) return;
     busy = "sync";
     error = null;
     try {
-      status = status.running ? await stopSync() : await startSync();
+      status = status?.running ? await stopSync() : await startSync();
       await loadPeers();
     } catch (cause) {
       error = errorMessage(cause);
@@ -188,7 +194,22 @@
     error = null;
     try {
       const outcome = await syncNow(peer.id);
-      notice = `Sync con ${peer.name}: ${outcome.received} recibidos, ${outcome.sent} enviados en ${outcome.durationMs} ms.`;
+      notice = translate("sync.syncDone", {
+        peer: peer.name,
+        received: outcome.received,
+        sent: outcome.sent,
+        duration: outcome.durationMs,
+      });
+      pushNotification({
+        kind: "success",
+        title: translate("notifications.syncDone"),
+        description: translate("notifications.syncBody", {
+          peer: peer.name,
+          received: outcome.received,
+          sent: outcome.sent,
+        }),
+        action: "sync",
+      });
       status = await getSyncStatus();
     } catch (cause) {
       error = errorMessage(cause);
@@ -198,10 +219,25 @@
   }
 
   async function forget(peer: PeerInfo) {
-    if (!window.confirm(`¿Olvidar el dispositivo «${peer.name}»?`)) return;
+    if (!window.confirm(translate("sync.forgetConfirm", { name: peer.name }))) {
+      return;
+    }
     try {
       await revokePeer(peer.id);
       await loadPeers();
+      const deviceList = await listSyncDevices();
+      devices = deviceList;
+      if (selectedDeviceId === peer.id) {
+        const next = deviceList.find(
+          (device) => !device.isLocal && device.trusted,
+        );
+        if (next) {
+          await selectDevice(next.id);
+        } else {
+          selectedDeviceId = null;
+          collections = null;
+        }
+      }
     } catch (cause) {
       error = errorMessage(cause);
     }
@@ -221,7 +257,9 @@
       applyCollections(
         await setSyncCategories(selectedDeviceId, selected, syncAll),
       );
-      notice = `Filtro de «${collections?.deviceName ?? "dispositivo"}» guardado.`;
+      notice = translate("sync.filterSaved", {
+        device: collections?.deviceName ?? "",
+      });
     } catch (cause) {
       error = errorMessage(cause);
     } finally {
@@ -240,7 +278,10 @@
   }
 
   function peerLabel(peer: PeerInfo) {
-    return peer.trusted ? "Emparejado" : peer.purpose === "pair" ? "Para emparejar" : "Descubierto";
+    if (peer.trusted) return translate("sync.peerTrusted");
+    return peer.purpose === "pair"
+      ? translate("sync.peerPair")
+      : translate("sync.peerDiscovered");
   }
 </script>
 
@@ -294,7 +335,9 @@
       {/if}
       {#if status?.pairing || status?.sharing}
         <p class="badge">
-          {status.pairing ? "Anunciando para emparejar" : "Anunciando para compartir"}
+          {status.pairing
+            ? $t("sync.pairingAdvertised")
+            : $t("sync.sharingAdvertised")}
         </p>
       {/if}
     </article>
@@ -336,7 +379,7 @@
             <div>
               <strong>{peer.name}</strong>
               <span class="hint">
-                {peer.address ?? "sin dirección"}:{peer.port} ·
+                {peer.address ?? $t("sync.noAddress")}:{peer.port} ·
                 {peerLabel(peer)}
                 {#if peer.sasPrefix}· SAS {peer.sasPrefix}{/if}
               </span>

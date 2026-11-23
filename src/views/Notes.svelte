@@ -70,11 +70,11 @@
   let savingEdit = $state(false);
 
   let filtered = $derived.by(() => {
-    const needle = query.trim().toLocaleLowerCase();
+    const needle = normalizeSearch(query.trim());
     return entries.filter((item) => {
       if (filter !== "all" && item.entry.type !== filter) return false;
       if (!needle) return true;
-      return searchable(item).toLocaleLowerCase().includes(needle);
+      return normalizeSearch(searchable(item)).includes(needle);
     });
   });
 
@@ -105,6 +105,13 @@
     } finally {
       loading = false;
     }
+  }
+
+  function normalizeSearch(value: string): string {
+    return value
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase();
   }
 
   function searchable(item: LibraryAnnotationEntry): string {
@@ -360,12 +367,20 @@
     try {
       await deleteAnnotation(item.entry.type, item.entry.data.id);
       entries = entries.filter((entry) => entry.entry.data.id !== item.entry.data.id);
+      if (editingExtractId === item.entry.data.id) cancelEditExtract();
+      if (editingVoiceId === item.entry.data.id) cancelEditVoice();
+      if (editingReactionId === item.entry.data.id) cancelEditReaction();
       notifySuccess(translate("notes.deleted"));
     } catch (cause) {
       notifyError(cause);
     } finally {
       deletingId = null;
     }
+  }
+
+  function clearFilters() {
+    query = "";
+    filter = "all";
   }
 </script>
 
@@ -425,13 +440,23 @@
   {:else if loading}
     <Spinner label={$t("common.loading")} />
   {:else if filtered.length === 0}
-    <EmptyState
-      title={$t("notes.empty")}
-      description={$t("notes.emptyHelp")}
-      action={$t("notes.goLibrary")}
-      onAction={() => onNavigate?.("library")}
-      icon="book"
-    />
+    {#if entries.length === 0}
+      <EmptyState
+        title={$t("notes.empty")}
+        description={$t("notes.emptyHelp")}
+        action={$t("notes.goLibrary")}
+        onAction={() => onNavigate?.("library")}
+        icon="book"
+      />
+    {:else}
+      <EmptyState
+        title={$t("notes.noResults")}
+        description={$t("notes.noResultsHelp")}
+        action={$t("notes.clearFilters")}
+        onAction={clearFilters}
+        icon="search"
+      />
+    {/if}
   {:else}
     <ul class="note-list">
       {#each filtered as item (item.entry.data.id)}
@@ -472,6 +497,7 @@
                 class="voice-audio"
                 controls
                 preload="none"
+                aria-label={`${$t("notes.audioNote")} · ${item.bookTitle}`}
                 src={audioUrl(item.entry.data.audioPath) ?? undefined}
               ></audio>
             {/if}

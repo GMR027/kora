@@ -15,7 +15,8 @@
   } from "./lib/appearance";
   import { t } from "./lib/i18n";
   import type { AppTab } from "./lib/navigation";
-  import { notifyError, notify } from "./lib/toast";
+  import { notifyError, notifyImportant } from "./lib/toast";
+  import { checkUpdatesInBackground } from "./lib/updates";
   import type {
     AccountView,
     Achievement,
@@ -72,11 +73,12 @@
 
   onMount(() => {
     void boot();
+    void checkUpdatesInBackground();
     let unlisten: UnlistenFn | undefined;
     let unlistenConversion: UnlistenFn | undefined;
     let unlistenConversionError: UnlistenFn | undefined;
     void listen<Achievement>("achievement::unlocked", (event) => {
-      notify(
+      notifyImportant(
         "success",
         $t("toast.achievement", { title: event.payload.title }),
         event.payload.description,
@@ -85,10 +87,11 @@
       unlisten = stop;
     });
     void listen<PdfConversionResult>("pdf-convert-done", (event) => {
-      notify(
+      notifyImportant(
         "success",
         $t("pdf.convertDoneToast"),
         event.payload.book.title,
+        "library",
       );
       window.dispatchEvent(new Event("kora:library-changed"));
     }).then((stop) => {
@@ -257,7 +260,7 @@
             <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
           {:then module}
             {@const View = module.default}
-            <View onNavigate={navigate} profile={account} />
+            <View onNavigate={navigate} profile={account} appVersion={info?.version ?? ""} platform={info?.platform ?? ""} />
           {/await}
         {/if}
       </div>

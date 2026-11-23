@@ -214,6 +214,15 @@ export function applyAppearance(state: AppearanceState) {
   root.dataset.theme = theme.id;
   root.dataset.dark = theme.dark ? "true" : "false";
   root.dataset.texture = state.preferences.texture;
+  // En Android las barras del sistema quedan fuera del WebView; el nativo
+  // pinta su fondo y elige iconos claros u oscuros según el tema activo.
+  (
+    window as unknown as {
+      KoraChrome?: {
+        setChrome?: (background: string, dark: boolean) => void;
+      };
+    }
+  ).KoraChrome?.setChrome?.(colors.background, theme.dark);
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", colors.background);

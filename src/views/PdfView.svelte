@@ -302,6 +302,19 @@
         return;
       }
 
+      const panelOpen =
+        tocOpen ||
+        searchOpen ||
+        annotationsOpen ||
+        mirrorOpen ||
+        characterPanelOpen ||
+        practiceOpen ||
+        activeAnnotation !== null;
+      if (panelOpen) {
+        if (event.key === "Escape") closePanels();
+        return;
+      }
+
       if (event.key === "ArrowRight" || event.key === "PageDown") {
         event.preventDefault();
         void stepPage(1);
@@ -309,10 +322,7 @@
         event.preventDefault();
         void stepPage(-1);
       } else if (event.key === "Escape") {
-        selection = null;
-        activeAnnotation = null;
-        tocOpen = false;
-        searchOpen = false;
+        closePanels();
       }
     };
 
@@ -359,6 +369,9 @@
       unlistenTtsEnd?.();
       unlistenTtsState?.();
       unlistenPracticeDownload?.();
+      if (practiceRecording) void practiceCancel();
+      if (mirror?.hosting) void stopMirror().catch(() => {});
+      else if (mirror?.active) void leaveMirror().catch(() => {});
       clearInterval(practiceTimer);
       clearTimeout(ttsSettingsTimer);
       resizeObserver?.disconnect();
@@ -397,6 +410,12 @@
     }
   });
 
+  $effect(() => {
+    if (!practiceOpen && practiceRecording) {
+      void cancelPractice();
+    }
+  });
+
   async function initialise() {
     pageCount = session.pdf?.pageCount ?? 0;
     currentPage = session.locator.section;
@@ -409,7 +428,12 @@
     try {
       await loadDocument();
       updateSpread();
-      await loadBookDecorations(session.bookId);
+      try {
+        await loadBookDecorations(session.bookId);
+      } catch (cause) {
+        // Un fallo al cargar anotaciones no debe impedir ver el PDF.
+        console.error("No se pudieron cargar las anotaciones del PDF", cause);
+      }
       indexEntries = session.document.sections.map((section) => ({
         title: section.title ?? `Página ${section.locator.section + 1}`,
         page: section.locator.section,
@@ -673,7 +697,7 @@
   async function loadLayer(page: PDFPageProxy, index: number): Promise<PageTextLayer> {
     try {
       const layer = await getOcrPage(session.bookId, index);
-      if (layer.words.length > 0) return layer;
+      if (layer && layer.words.length > 0) return layer;
     } catch (cause) {
       console.warn("Capa de texto del backend no disponible", cause);
     }
@@ -1035,7 +1059,19 @@
     let end = Number(endWord.dataset.word);
     if (start > end) [start, end] = [end, start];
 
-    const text = current.toString().replace(/\s+/g, " ").trim();
+    // Los span de palabras son elementos independientes: `Selection.toString`
+    // los concatena sin espacios («lasmareasMarinaSoler»). Reconstruimos el
+    // pasaje desde la capa de texto para que citas, notas y modo ensayo
+    // conserven las palabras separadas.
+    const layer = renders.get(startPage)?.layer;
+    const text =
+      layer && layer.words.length > 0
+        ? layer.words
+            .slice(start, end + 1)
+            .map((word) => word.text)
+            .join(" ")
+            .slice(0, 2000)
+        : current.toString().replace(/\s+/g, " ").trim().slice(0, 2000);
     if (!text || !Number.isFinite(start) || !Number.isFinite(end)) {
       selection = null;
       return;
@@ -1047,7 +1083,7 @@
       page: startPage,
       start,
       end,
-      text: text.slice(0, 2000),
+      text,
       x: rect.left + rect.width / 2,
       y: rect.top,
     };
@@ -1072,6 +1108,10 @@
         : null);
     if (!anchor || !anchor.text.trim()) return;
 
+    // Conserva el pasaje cuando la marca se crea desde el panel para que las
+    // demás acciones (extraer, reaccionar, nota, voz) sigan disponibles.
+    const keepPanelAnchor = panelAnchor !== null;
+
     try {
       const annotation = await addMarker({
         bookId: session.bookId,
@@ -1086,7 +1126,7 @@
       annotations = [...annotations, annotation];
       annotationsRefresh += 1;
       selection = null;
-      panelAnchor = null;
+      if (!keepPanelAnchor) panelAnchor = null;
       window.getSelection()?.removeAllRanges();
       refreshMarks();
     } catch (cause) {
@@ -1115,6 +1155,23 @@
     }
   }
 
+  async function copyText(value: string): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      const area = document.createElement("textarea");
+      area.value = value;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      const copied = document.execCommand("copy");
+      area.remove();
+      return copied;
+    }
+  }
+
   async function copyQuote() {
     if (!session) return;
     const text = (panelAnchor?.text ?? selection?.text ?? "").trim();
@@ -1123,12 +1180,12 @@
       text,
       `— ${session.document.title}${session.document.author ? `, ${session.document.author}` : ""}`,
     ].join("\n\n");
-    try {
-      await navigator.clipboard.writeText(citation);
+    if (await copyText(citation)) {
       extractNotice = "Cita copiada.";
       window.setTimeout(() => (extractNotice = null), 2400);
-    } catch {
+    } else {
       extractNotice = "No se pudo copiar la cita.";
+      window.setTimeout(() => (extractNotice = null), 2400);
     }
   }
 
@@ -1184,6 +1241,12 @@
     panelAnchor = captureAnchor();
     annotationsTab = tab;
     annotationsOpen = true;
+    tocOpen = false;
+    searchOpen = false;
+    mirrorOpen = false;
+    characterPanelOpen = false;
+    practiceOpen = false;
+    activeAnnotation = null;
     annotationsRefresh += 1;
   }
 
@@ -1192,6 +1255,16 @@
     panelAnchor = null;
     selection = null;
     window.getSelection()?.removeAllRanges();
+  }
+
+  function closePanels() {
+    closeAnnotations();
+    activeAnnotation = null;
+    tocOpen = false;
+    searchOpen = false;
+    mirrorOpen = false;
+    characterPanelOpen = false;
+    practiceOpen = false;
   }
 
   async function loadBookDecorations(bookId: string) {
@@ -1463,6 +1536,12 @@
   async function openMirrorPanel() {
     mirrorOpen = !mirrorOpen;
     if (mirrorOpen) {
+      tocOpen = false;
+      searchOpen = false;
+      annotationsOpen = false;
+      characterPanelOpen = false;
+      practiceOpen = false;
+      activeAnnotation = null;
       await refreshMirror();
       try {
         mirrorPeers = await getPeers();
@@ -1671,6 +1750,12 @@
 
   async function openCharacterPanel() {
     characterPanelOpen = true;
+    tocOpen = false;
+    searchOpen = false;
+    annotationsOpen = false;
+    mirrorOpen = false;
+    practiceOpen = false;
+    activeAnnotation = null;
     try {
       const [detected, assigned] = await Promise.all([
         ttsCharacters(session.bookId, currentPage),
@@ -1697,6 +1782,12 @@
 
   async function openPracticePanel() {
     practiceOpen = true;
+    tocOpen = false;
+    searchOpen = false;
+    annotationsOpen = false;
+    mirrorOpen = false;
+    characterPanelOpen = false;
+    activeAnnotation = null;
     practiceError = null;
     practiceResult = null;
     await loadWhisperModels();
@@ -1735,6 +1826,13 @@
 
     practiceError = null;
     practiceResult = null;
+    if (ttsState === "playing") {
+      try {
+        ttsStatus = await ttsPause();
+      } catch {
+        // La práctica puede continuar aunque falle la pausa del TTS.
+      }
+    }
     try {
       await practiceStart(
         session.bookId,
@@ -1744,6 +1842,10 @@
         selection.text,
         language,
       );
+      if (disposed || !practiceOpen) {
+        void practiceCancel();
+        return;
+      }
       practiceRecording = true;
       practiceSeconds = 0;
       clearInterval(practiceTimer);
@@ -1764,6 +1866,7 @@
       await loadPracticeHistory();
     } catch (cause) {
       practiceError = errorMessage(cause);
+      void practiceCancel();
     }
   }
 
@@ -1819,7 +1922,14 @@
         class="ghost small"
         onclick={() => {
           tocOpen = !tocOpen;
-          if (tocOpen) searchOpen = false;
+          if (tocOpen) {
+            searchOpen = false;
+            annotationsOpen = false;
+            mirrorOpen = false;
+            characterPanelOpen = false;
+            practiceOpen = false;
+            activeAnnotation = null;
+          }
         }}
       >
         {$t("reader.contents")}
@@ -1829,7 +1939,14 @@
         class:active={searchOpen}
         onclick={() => {
           searchOpen = !searchOpen;
-          if (searchOpen) tocOpen = false;
+          if (searchOpen) {
+            tocOpen = false;
+            annotationsOpen = false;
+            mirrorOpen = false;
+            characterPanelOpen = false;
+            practiceOpen = false;
+            activeAnnotation = null;
+          }
         }}
       >
         <Icon name="search" size={15} /> {$t("common.search")}
