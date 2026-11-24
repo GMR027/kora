@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -5,6 +7,9 @@ use serde_json::{Value, json};
 
 use crate::error::{KoraError, Result};
 use crate::storage::Storage;
+
+#[cfg(target_os = "android")]
+pub mod local;
 
 const CONFIG_KEY: &str = "ai.config";
 const DEFAULT_OLLAMA_URL: &str = "http://127.0.0.1:11434";
@@ -30,14 +35,22 @@ pub struct AiConfig {
 
 impl Default for AiConfig {
     fn default() -> Self {
-        Self {
+        #[allow(unused_mut)]
+        let mut config = Self {
             provider: "auto".to_string(),
             ollama_url: DEFAULT_OLLAMA_URL.to_string(),
             llama_url: DEFAULT_LLAMA_URL.to_string(),
             model: String::new(),
             temperature: 0.55,
             max_tokens: 900,
+        };
+        #[cfg(target_os = "android")]
+        {
+            config.provider = "local".to_string();
+            config.model = local::MODEL_ID.to_string();
+            config.max_tokens = 512;
         }
+        config
     }
 }
 
@@ -53,9 +66,12 @@ impl AiConfig {
     }
 
     fn validate(&self) -> Result<()> {
-        if !matches!(self.provider.as_str(), "auto" | "ollama" | "llama_cpp") {
+        if !matches!(
+            self.provider.as_str(),
+            "auto" | "off" | "local" | "ollama" | "llama_cpp"
+        ) {
             return Err(KoraError::InvalidInput(
-                "el proveedor de IA debe ser auto, ollama o llama_cpp".into(),
+                "el proveedor de IA debe ser auto, off, local, ollama o llama_cpp".into(),
             ));
         }
         for (label, url) in [("Ollama", &self.ollama_url), ("llama.cpp", &self.llama_url)] {
@@ -101,7 +117,7 @@ pub struct AiMessage {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiStatus {
-    /// Proveedor realmente detectado: `ollama` o `llama_cpp`.
+    /// Proveedor realmente detectado: `local`, `ollama` o `llama_cpp`.
     pub provider: String,
     pub configured_provider: String,
     pub available: bool,
@@ -109,6 +125,27 @@ pub struct AiStatus {
     pub model: String,
     pub models: Vec<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiLocalStatus {
+    pub supported: bool,
+    pub installed: bool,
+    pub size_bytes: u64,
+    pub expected_size: u64,
+    pub model: String,
+    pub license: String,
+    pub downloading: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiLocalProgress {
+    pub downloaded: u64,
+    pub total: u64,
+    pub percent: f64,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +162,8 @@ pub struct AiService {
     storage: Storage,
     probe: reqwest::Client,
     chat: reqwest::Client,
+    #[cfg(target_os = "android")]
+    local: Option<Arc<local::LocalAiEngine>>,
 }
 
 struct Probe {
@@ -149,7 +188,68 @@ impl AiService {
             storage,
             probe,
             chat,
+            #[cfg(target_os = "android")]
+            local: None,
         })
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn with_local(storage: Storage, models_dir: std::path::PathBuf) -> Result<Self> {
+        let mut service = Self::new(storage)?;
+        service.local = Some(Arc::new(local::LocalAiEngine::new(models_dir)));
+        Ok(service)
+    }
+
+    pub fn local_status(&self) -> AiLocalStatus {
+        #[cfg(target_os = "android")]
+        if let Some(local) = &self.local {
+            let status = local.status();
+            return AiLocalStatus {
+                supported: true,
+                installed: status.installed,
+                size_bytes: status.size_bytes,
+                expected_size: status.expected_size,
+                model: status.model,
+                license: status.license,
+                downloading: status.downloading,
+            };
+        }
+        AiLocalStatus {
+            supported: false,
+            installed: false,
+            size_bytes: 0,
+            expected_size: 0,
+            model: String::new(),
+            license: String::new(),
+            downloading: false,
+        }
+    }
+
+    pub async fn local_download<F>(&self, progress: F) -> Result<AiLocalStatus>
+    where
+        F: FnMut(AiLocalProgress),
+    {
+        #[cfg(target_os = "android")]
+        if let Some(local) = &self.local {
+            local.download(progress).await?;
+            return Ok(self.local_status());
+        }
+        #[cfg(not(target_os = "android"))]
+        let _ = progress;
+        Err(KoraError::Unsupported(
+            "el asistente local solo está disponible en Android".into(),
+        ))
+    }
+
+    pub fn local_delete(&self) -> Result<AiLocalStatus> {
+        #[cfg(target_os = "android")]
+        if let Some(local) = &self.local {
+            local.delete()?;
+            return Ok(self.local_status());
+        }
+        Err(KoraError::Unsupported(
+            "el asistente local solo está disponible en Android".into(),
+        ))
     }
 
     pub async fn config(&self) -> Result<AiConfig> {
@@ -178,6 +278,43 @@ impl AiService {
     /// Comprueba los proveedores en el orden adecuado para la plataforma.
     /// En Android prioriza llama.cpp; en escritorio, Ollama.
     async fn detect(&self, config: &AiConfig) -> AiStatus {
+        if config.provider == "off" {
+            return AiStatus {
+                provider: "local".to_string(),
+                configured_provider: "off".to_string(),
+                available: false,
+                base_url: String::new(),
+                model: String::new(),
+                models: Vec::new(),
+                error: None,
+            };
+        }
+        #[cfg(target_os = "android")]
+        if let Some(local) = &self.local {
+            let local_status = local.status();
+            let wants_local =
+                config.provider == "local" || (config.provider == "auto" && local_status.installed);
+            if wants_local {
+                return AiStatus {
+                    provider: "local".to_string(),
+                    configured_provider: config.provider.clone(),
+                    available: local_status.installed,
+                    base_url: String::new(),
+                    model: if local_status.installed {
+                        local::MODEL_NAME.to_string()
+                    } else {
+                        String::new()
+                    },
+                    models: if local_status.installed {
+                        vec![local::MODEL_ID.to_string()]
+                    } else {
+                        Vec::new()
+                    },
+                    error: (!local_status.installed)
+                        .then(|| "el asistente local aún no está descargado".to_string()),
+                };
+            }
+        }
         let preferred = if cfg!(target_os = "android") {
             "llama_cpp"
         } else {
@@ -372,6 +509,29 @@ impl AiService {
         let temperature = temperature.unwrap_or(config.temperature).clamp(0.0, 2.0);
         let max_tokens = max_tokens.unwrap_or(config.max_tokens).clamp(64, 8192);
         let started = Instant::now();
+
+        #[cfg(target_os = "android")]
+        if status.provider == "local" {
+            let local = self.local.as_ref().ok_or_else(|| {
+                KoraError::Unsupported("el asistente local no está inicializado".into())
+            })?;
+            let content = local
+                .chat(
+                    messages
+                        .iter()
+                        .map(|message| (message.role.clone(), message.content.clone()))
+                        .collect(),
+                    temperature,
+                    max_tokens,
+                )
+                .await?;
+            return Ok(AiReply {
+                content,
+                provider: "local".to_string(),
+                model: local::MODEL_NAME.to_string(),
+                elapsed_ms: started.elapsed().as_millis(),
+            });
+        }
 
         let content = match self
             .openai_chat(

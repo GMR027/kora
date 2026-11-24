@@ -5,7 +5,13 @@
   import { onMount } from "svelte";
   import {
     accountStatus,
+    aiActivateLocal,
+    aiChat,
+    aiDeactivateLocal,
     aiGetConfig,
+    aiLocalDelete,
+    aiLocalDownload,
+    aiLocalStatus,
     backupLibrary,
     aiSaveConfig,
     aiStatus,
@@ -66,6 +72,8 @@
   import type {
     AccountStatus,
     AiConfig,
+    AiLocalProgress,
+    AiLocalStatus,
     AiStatus,
     AppTexture,
     ClassificationConfig,
@@ -143,10 +151,19 @@
   let selectedCategories = $state<string[]>([]);
   let aiConfig = $state<AiConfig | null>(null);
   let aiState = $state<AiStatus | null>(null);
+  let aiLocal = $state<AiLocalStatus | null>(null);
+  let aiProgress = $state<AiLocalProgress | null>(null);
+  let aiTestReply = $state<string | null>(null);
+  let aiTesting = $state(false);
   let aiBusy = $state(false);
+  let aiAdvanced = $state(false);
+  let aiAdvancedCode = $state("");
+  let aiAdvancedError = $state(false);
   let classificationConfig = $state<ClassificationConfig | null>(null);
   let classificationState = $state<ClassificationStatus | null>(null);
   let classificationBusy = $state(false);
+
+  const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
 
   let themes = $derived([
     ...BUILTIN_THEMES,
@@ -213,11 +230,34 @@
       })
       .catch(() => undefined);
 
+    let unlistenAi: (() => void) | undefined;
+    listen<AiLocalProgress>("ai::model_progress", (event) => {
+      aiProgress = event.payload;
+      if (event.payload.status === "ready") {
+        void Promise.all([aiLocalStatus(), aiStatus()])
+          .then(([local, status]) => {
+            aiLocal = local;
+            aiState = status;
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            setTimeout(() => {
+              aiProgress = null;
+            }, 1200);
+          });
+      }
+    })
+      .then((stop) => {
+        unlistenAi = stop;
+      })
+      .catch(() => undefined);
+
     return () => {
       unlisten?.();
       unlistenClassification?.();
       unlistenSemantic?.();
       unlistenSemanticModel?.();
+      unlistenAi?.();
       if (classificationRefresh) clearTimeout(classificationRefresh);
     };
   });
@@ -280,7 +320,11 @@
 
   async function loadAi() {
     try {
-      const [config, status] = await Promise.all([aiGetConfig(), aiStatus()]);
+      const [config, status, local] = await Promise.all([
+        aiGetConfig(),
+        aiStatus(),
+        aiLocalStatus(),
+      ]);
       aiConfig = {
         ...config,
         temperature: Number.isFinite(config.temperature)
@@ -289,6 +333,7 @@
         maxTokens: Number.isFinite(config.maxTokens) ? config.maxTokens : 900,
       };
       aiState = status;
+      aiLocal = local;
     } catch (cause) {
       notifyError(cause);
     }
@@ -367,7 +412,10 @@
   async function refreshAi() {
     aiBusy = true;
     try {
-      aiState = await aiStatus();
+      const [status, local] = await Promise.all([aiStatus(), aiLocalStatus()]);
+      aiState = status;
+      aiLocal = local;
+      classificationState = await classificationStatus();
     } catch (cause) {
       notifyError(cause);
     } finally {
@@ -387,6 +435,121 @@
     } finally {
       aiBusy = false;
     }
+  }
+
+  async function downloadLocalAi() {
+    aiBusy = true;
+    aiProgress = {
+      downloaded: 0,
+      total: 0,
+      percent: 0,
+      status: "downloading",
+    };
+    try {
+      aiLocal = await aiLocalDownload();
+      aiConfig = await aiActivateLocal();
+      aiState = await aiStatus();
+      classificationState = await classificationStatus().catch(() => classificationState);
+      notifySuccess(translate("settings.aiLocalReady"));
+    } catch (cause) {
+      notifyError(cause);
+      aiProgress = null;
+    } finally {
+      aiBusy = false;
+    }
+  }
+
+  async function activateLocalAi() {
+    aiBusy = true;
+    try {
+      aiConfig = await aiActivateLocal();
+      aiState = await aiStatus();
+      classificationState = await classificationStatus().catch(() => classificationState);
+      notifySuccess(translate("settings.aiLocalActiveNotice"));
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      aiBusy = false;
+    }
+  }
+
+  async function deactivateLocalAi() {
+    aiBusy = true;
+    try {
+      aiConfig = await aiDeactivateLocal();
+      aiState = await aiStatus();
+      classificationState = await classificationStatus().catch(() => classificationState);
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      aiBusy = false;
+    }
+  }
+
+  async function removeLocalAi() {
+    if (!window.confirm(translate("settings.aiLocalDeleteConfirm"))) return;
+    aiBusy = true;
+    try {
+      aiLocal = await aiLocalDelete();
+      aiConfig = await aiDeactivateLocal();
+      aiState = await aiStatus();
+      classificationState = await classificationStatus().catch(() => classificationState);
+      aiTestReply = null;
+      notifySuccess(translate("settings.aiLocalDeleted"));
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      aiBusy = false;
+    }
+  }
+
+  async function testAi() {
+    aiTesting = true;
+    aiTestReply = null;
+    try {
+      const reply = await aiChat(
+        [{ role: "user", content: translate("settings.aiTestPrompt") }],
+        0.2,
+        120,
+      );
+      aiTestReply = reply.content;
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      aiTesting = false;
+    }
+  }
+
+  function unlockAdvanced() {
+    if (aiAdvancedCode.trim().toLowerCase() === "kora") {
+      aiAdvanced = true;
+      aiAdvancedError = false;
+      aiAdvancedCode = "";
+    } else {
+      aiAdvancedError = true;
+    }
+  }
+
+  function aiProviderLabel(status: AiStatus) {
+    if (status.provider === "local") return translate("settings.aiLocal");
+    return status.provider === "ollama" ? "Ollama" : "llama.cpp";
+  }
+
+  function aiStatusText() {
+    if (aiState?.configuredProvider === "off") {
+      return translate("settings.aiDisabled");
+    }
+    if (aiState?.available) return translate("settings.aiOnline");
+    if (isMobile && aiLocal && !aiLocal.installed) {
+      return translate("settings.aiNotActivated");
+    }
+    return translate("settings.aiOffline");
+  }
+
+  function scrollToAssistant() {
+    document
+      .getElementById("ai-assistant")
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   async function loadReaderDefaults() {
@@ -1288,7 +1451,7 @@
   {:else if tab === "ai"}
     {#if aiConfig}
       <div class="ai-layout">
-        <section class="panel ai-config">
+        <section class="panel ai-config" id="ai-assistant">
           <div class="ai-status-head">
             <div>
               <p class="eyebrow">{$t("settings.aiEyebrow")}</p>
@@ -1296,103 +1459,206 @@
             </div>
             <span class="ai-status" class:online={aiState?.available}>
               <i aria-hidden="true"></i>
-              {aiState?.available ? $t("settings.aiOnline") : $t("settings.aiOffline")}
+              {aiStatusText()}
             </span>
           </div>
-          <p class="hint">{$t("settings.aiHelp")}</p>
+          <p class="hint">
+            {isMobile ? $t("settings.aiSimpleHelp") : $t("settings.aiHelp")}
+          </p>
 
-          <div class="provider-grid" role="group" aria-label={$t("settings.aiProvider")}>
-            {#each [
-              ["auto", "settings.aiAuto", "sparkles"],
-              ["ollama", "settings.aiOllama", "book"],
-              ["llama_cpp", "settings.aiLlama", "voice"],
-            ] as [id, key, icon] (id)}
-              <button
-                class:active={aiConfig?.provider === id}
-                aria-pressed={aiConfig?.provider === id}
-                onclick={() => {
-                  if (aiConfig) aiConfig.provider = id as AiConfig["provider"];
-                }}
-              >
-                <Icon name={icon as "sparkles" | "book" | "voice"} size={18} />
-                <strong>{$t(key as MessageKey)}</strong>
-              </button>
-            {/each}
-          </div>
+          {#if isMobile && aiLocal}
+            <div class="ai-local-card" class:ready={aiLocal.installed}>
+              <div class="ai-local-head">
+                <span class="ai-local-icon"><Icon name="sparkles" size={22} /></span>
+                <div>
+                  <strong>
+                    {aiLocal.installed
+                      ? $t("settings.aiLocalTitle")
+                      : $t("settings.aiLocalInstallTitle")}
+                  </strong>
+                  <p>
+                    {aiLocal.installed
+                      ? $t("settings.aiLocalHelp")
+                      : $t("settings.aiLocalInstallHelp", { size: "475 MB" })}
+                  </p>
+                </div>
+              </div>
 
-          <div class="form-grid">
-            <label>
-              <span>{$t("settings.aiOllamaUrl")}</span>
-              <input bind:value={aiConfig.ollamaUrl} placeholder="http://127.0.0.1:11434" />
-            </label>
-            <label>
-              <span>{$t("settings.aiLlamaUrl")}</span>
-              <input bind:value={aiConfig.llamaUrl} placeholder="http://127.0.0.1:8080" />
-            </label>
-            <label class="wide">
-              <span>{$t("settings.aiModel")}</span>
-              <select bind:value={aiConfig.model}>
-                <option value="">{$t("settings.aiModelAuto")}</option>
-                {#each aiState?.models ?? [] as model (model)}
-                  <option value={model}>{model}</option>
-                {/each}
-                {#if aiConfig.model && !(aiState?.models ?? []).includes(aiConfig.model)}
-                  <option value={aiConfig.model}>{aiConfig.model}</option>
+              {#if aiLocal.installed}
+                <div class="ai-local-actions">
+                  {#if aiState?.provider === "local" && aiState?.available}
+                    <Button
+                      variant="primary"
+                      loading={aiTesting}
+                      onclick={testAi}
+                    >
+                      <Icon name="sparkles" size={17} /> {$t("settings.aiLocalTest")}
+                    </Button>
+                    <Button variant="ghost" loading={aiBusy} onclick={deactivateLocalAi}>
+                      {$t("settings.aiLocalDeactivate")}
+                    </Button>
+                  {:else}
+                    <Button
+                      variant="primary"
+                      loading={aiBusy}
+                      onclick={activateLocalAi}
+                    >
+                      <Icon name="check" size={17} /> {$t("settings.aiLocalActivate")}
+                    </Button>
+                  {/if}
+                  <Button variant="ghost" loading={aiBusy} onclick={removeLocalAi}>
+                    <Icon name="trash" size={17} /> {$t("settings.aiLocalDelete")}
+                  </Button>
+                </div>
+                {#if aiTesting}
+                  <p class="hint ai-thinking">{$t("settings.aiThinking")}</p>
                 {/if}
-              </select>
-            </label>
-            <label>
-              <span>{$t("settings.aiTemperature")} · {aiConfig.temperature.toFixed(2)}</span>
-              <input type="range" min="0" max="2" step="0.05" bind:value={aiConfig.temperature} />
-            </label>
-            <label>
-              <span>{$t("settings.aiMaxTokens")}</span>
-              <input type="number" min="64" max="8192" step="64" bind:value={aiConfig.maxTokens} />
-            </label>
-          </div>
+                {#if aiTestReply}
+                  <p class="ai-test-reply">{aiTestReply}</p>
+                {/if}
+              {:else}
+                <Button variant="primary" loading={aiBusy} onclick={downloadLocalAi}>
+                  <Icon name="download" size={17} /> {$t("settings.aiLocalDownload")}
+                </Button>
+              {/if}
 
-          {#if aiState?.error}
-            <p class="notice" role="status">{aiState.error}</p>
+              {#if aiProgress}
+                <div class="ai-progress">
+                  <span class="progress-track">
+                    <span style:width={`${Math.round(aiProgress.percent)}%`}></span>
+                  </span>
+                  <span class="hint">{Math.round(aiProgress.percent)}%</span>
+                </div>
+              {/if}
+            </div>
           {/if}
+
           {#if aiState?.available}
             <p class="ai-detected">
-              <strong>{aiState.provider === "ollama" ? "Ollama" : "llama.cpp"}</strong>
-              <span>{aiState.baseUrl}</span>
-              <span>
-                {aiState.models.length}
-                {aiState.models.length === 1
-                  ? $t("settings.aiModelSingular")
-                  : $t("settings.aiModels")}
-              </span>
+              <strong>{aiProviderLabel(aiState)}</strong>
+              {#if aiState.model}<span>{aiState.model}</span>{/if}
+              {#if aiState.baseUrl}<span>{aiState.baseUrl}</span>{/if}
+              {#if aiState.models.length > 1}
+                <span>
+                  {aiState.models.length}
+                  {$t("settings.aiModels")}
+                </span>
+              {/if}
             </p>
+          {:else if aiState?.error && (!isMobile || aiAdvanced)}
+            <p class="notice" role="status">{aiState.error}</p>
           {/if}
 
-          <div class="actions">
-            <Button variant="ghost" loading={aiBusy} onclick={refreshAi}>
-              <Icon name="sync" size={17} /> {$t("settings.aiRefresh")}
-            </Button>
-            <Button variant="primary" loading={aiBusy} onclick={saveAi}>
-              <Icon name="check" size={17} /> {$t("common.save")}
-            </Button>
-          </div>
+          {#if aiAdvanced}
+            <div class="ai-advanced">
+              <div class="ai-advanced-head">
+                <strong>{$t("settings.aiAdvanced")}</strong>
+                <button class="link-button" onclick={() => (aiAdvanced = false)}>
+                  {$t("settings.aiAdvancedLock")}
+                </button>
+              </div>
+
+              <div class="provider-grid" role="group" aria-label={$t("settings.aiProvider")}>
+                {#each [
+                  ["auto", "settings.aiAuto", "sparkles"],
+                  ["local", "settings.aiLocal", "download"],
+                  ["ollama", "settings.aiOllama", "book"],
+                  ["llama_cpp", "settings.aiLlama", "voice"],
+                ] as [id, key, icon] (id)}
+                  <button
+                    class:active={aiConfig?.provider === id}
+                    aria-pressed={aiConfig?.provider === id}
+                    onclick={() => {
+                      if (aiConfig) aiConfig.provider = id as AiConfig["provider"];
+                    }}
+                  >
+                    <Icon name={icon as "sparkles" | "download" | "book" | "voice"} size={18} />
+                    <strong>{$t(key as MessageKey)}</strong>
+                  </button>
+                {/each}
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>{$t("settings.aiOllamaUrl")}</span>
+                  <input bind:value={aiConfig.ollamaUrl} placeholder="http://127.0.0.1:11434" />
+                </label>
+                <label>
+                  <span>{$t("settings.aiLlamaUrl")}</span>
+                  <input bind:value={aiConfig.llamaUrl} placeholder="http://127.0.0.1:8080" />
+                </label>
+                <label class="wide">
+                  <span>{$t("settings.aiModel")}</span>
+                  <select bind:value={aiConfig.model}>
+                    <option value="">{$t("settings.aiModelAuto")}</option>
+                    {#each aiState?.models ?? [] as model (model)}
+                      <option value={model}>{model}</option>
+                    {/each}
+                    {#if aiConfig.model && !(aiState?.models ?? []).includes(aiConfig.model)}
+                      <option value={aiConfig.model}>{aiConfig.model}</option>
+                    {/if}
+                  </select>
+                </label>
+                <label>
+                  <span>{$t("settings.aiTemperature")} · {aiConfig.temperature.toFixed(2)}</span>
+                  <input type="range" min="0" max="2" step="0.05" bind:value={aiConfig.temperature} />
+                </label>
+                <label>
+                  <span>{$t("settings.aiMaxTokens")}</span>
+                  <input type="number" min="64" max="8192" step="64" bind:value={aiConfig.maxTokens} />
+                </label>
+              </div>
+
+              <div class="actions">
+                <Button variant="ghost" loading={aiBusy} onclick={refreshAi}>
+                  <Icon name="sync" size={17} /> {$t("settings.aiRefresh")}
+                </Button>
+                <Button variant="primary" loading={aiBusy} onclick={saveAi}>
+                  <Icon name="check" size={17} /> {$t("common.save")}
+                </Button>
+              </div>
+            </div>
+          {:else}
+            <div class="ai-advanced-lock">
+              <label>
+                <span>{$t("settings.aiAdvanced")}</span>
+                <input
+                  type="password"
+                  bind:value={aiAdvancedCode}
+                  placeholder={$t("settings.aiAdvancedPlaceholder")}
+                  onkeydown={(event) => {
+                    if (event.key === "Enter") unlockAdvanced();
+                  }}
+                />
+              </label>
+              <Button variant="ghost" onclick={unlockAdvanced}>
+                <Icon name="lock" size={16} /> {$t("settings.aiAdvancedUnlock")}
+              </Button>
+              {#if aiAdvancedError}
+                <span class="field-error">{$t("settings.aiAdvancedWrong")}</span>
+              {/if}
+            </div>
+          {/if}
         </section>
 
-        <aside class="panel ai-guide">
-          <h2>{$t("settings.aiGuide")}</h2>
-          <p class="hint">{$t("settings.aiPrivacy")}</p>
-          <div class="ai-guide-block">
-            <strong>Ollama · PC</strong>
-            <code>ollama serve</code>
-            <code>ollama pull qwen2.5:7b-instruct</code>
-            <code>http://127.0.0.1:11434</code>
-          </div>
-          <div class="ai-guide-block">
-            <strong>llama.cpp · Android</strong>
-            <code>llama-server -m modelo.gguf --port 8080 -c 8192</code>
-            <code>http://127.0.0.1:8080</code>
-          </div>
-          <p class="hint">{$t("settings.aiFree")}</p>
-        </aside>
+        {#if !isMobile || aiAdvanced}
+          <aside class="panel ai-guide">
+            <h2>{$t("settings.aiGuide")}</h2>
+            <p class="hint">{$t("settings.aiPrivacy")}</p>
+            <div class="ai-guide-block">
+              <strong>Ollama · PC</strong>
+              <code>ollama serve</code>
+              <code>ollama pull qwen2.5:7b-instruct</code>
+              <code>http://127.0.0.1:11434</code>
+            </div>
+            <div class="ai-guide-block">
+              <strong>llama.cpp · Android</strong>
+              <code>llama-server -m modelo.gguf --port 8080 -c 8192</code>
+              <code>http://127.0.0.1:8080</code>
+            </div>
+            <p class="hint">{$t("settings.aiFree")}</p>
+          </aside>
+        {/if}
       </div>
       {#if classificationConfig}
         <section class="panel classification-panel">
@@ -1429,42 +1695,44 @@
               <input type="checkbox" bind:checked={classificationConfig.allowNewCategories} />
               <span>{$t("settings.classificationNew")}</span>
             </label>
-            <label>
-              <span>
-                {$t("settings.classificationEmbeddingThreshold")} ·
-                {Math.round(classificationConfig.embeddingThreshold * 100)}%
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                bind:value={classificationConfig.embeddingThreshold}
-              />
-            </label>
-            <label>
-              <span>
-                {$t("settings.classificationAiThreshold")} ·
-                {Math.round(classificationConfig.aiThreshold * 100)}%
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                bind:value={classificationConfig.aiThreshold}
-              />
-            </label>
-            <label>
-              <span>{$t("settings.classificationMax")}</span>
-              <input
-                type="number"
-                min="1"
-                max="8"
-                step="1"
-                bind:value={classificationConfig.maxSuggestions}
-              />
-            </label>
+            {#if aiAdvanced}
+              <label>
+                <span>
+                  {$t("settings.classificationEmbeddingThreshold")} ·
+                  {Math.round(classificationConfig.embeddingThreshold * 100)}%
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  bind:value={classificationConfig.embeddingThreshold}
+                />
+              </label>
+              <label>
+                <span>
+                  {$t("settings.classificationAiThreshold")} ·
+                  {Math.round(classificationConfig.aiThreshold * 100)}%
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  bind:value={classificationConfig.aiThreshold}
+                />
+              </label>
+              <label>
+                <span>{$t("settings.classificationMax")}</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="8"
+                  step="1"
+                  bind:value={classificationConfig.maxSuggestions}
+                />
+              </label>
+            {/if}
           </div>
 
           {#if classificationState}
@@ -1480,9 +1748,14 @@
               </p>
             {/if}
             {#if classificationConfig.useAi && !classificationState.aiAvailable}
-              <p class="notice" role="status">
-                {$t("settings.classificationAiUnavailable")}
-              </p>
+              <div class="ai-inline-activate">
+                <p class="notice" role="status">
+                  {$t("settings.classificationAiUnavailable")}
+                </p>
+                <Button variant="primary" size="small" onclick={scrollToAssistant}>
+                  <Icon name="sparkles" size={16} /> {$t("settings.aiActivate")}
+                </Button>
+              </div>
             {/if}
           {/if}
 
@@ -1517,24 +1790,26 @@
               <Icon name="sparkles" size={17} />
               {$t("settings.classificationClassifyPending")}
             </Button>
-            <Button
-              variant="ghost"
-              loading={classificationBusy}
-              disabled={classificationBusy || !classificationConfig.enabled}
-              onclick={() => classifyPending(true)}
-            >
-              <Icon name="sync" size={17} />
-              {$t("settings.classificationReclassify")}
-            </Button>
-            <Button
-              variant="ghost"
-              loading={classificationBusy}
-              disabled={classificationBusy}
-              onclick={applyBaseCategories}
-            >
-              <Icon name="plus" size={17} />
-              {$t("settings.classificationSeedApply")}
-            </Button>
+            {#if aiAdvanced}
+              <Button
+                variant="ghost"
+                loading={classificationBusy}
+                disabled={classificationBusy || !classificationConfig.enabled}
+                onclick={() => classifyPending(true)}
+              >
+                <Icon name="sync" size={17} />
+                {$t("settings.classificationReclassify")}
+              </Button>
+              <Button
+                variant="ghost"
+                loading={classificationBusy}
+                disabled={classificationBusy}
+                onclick={applyBaseCategories}
+              >
+                <Icon name="plus" size={17} />
+                {$t("settings.classificationSeedApply")}
+              </Button>
+            {/if}
           </div>
         </section>
       {/if}
@@ -2592,6 +2867,145 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.62rem;
     white-space: nowrap;
+  }
+
+  .ai-local-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface-2);
+  }
+
+  .ai-local-card.ready {
+    border-color: color-mix(in srgb, var(--ok) 35%, var(--border));
+    background: color-mix(in srgb, var(--ok) 5%, var(--surface-2));
+  }
+
+  .ai-local-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .ai-local-head strong {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 550;
+  }
+
+  .ai-local-head p {
+    margin: 3px 0 0;
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.45;
+  }
+
+  .ai-local-icon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .ai-local-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ai-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ai-test-reply {
+    margin: 0;
+    padding: 10px 12px;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 9px 9px 0;
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+
+  .ai-thinking {
+    color: var(--accent);
+  }
+
+  .ai-advanced {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+  }
+
+  .ai-advanced-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .ai-advanced-head strong {
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .ai-advanced-lock {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  .ai-advanced-lock label {
+    flex: 1;
+    min-width: 180px;
+  }
+
+  .link-button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .field-error {
+    flex-basis: 100%;
+    color: var(--danger);
+    font-size: 0.7rem;
+  }
+
+  .ai-inline-activate {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ai-inline-activate .notice {
+    flex: 1;
+    min-width: 200px;
+    margin: 0;
   }
 
   @media (max-width: 900px) {

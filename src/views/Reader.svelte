@@ -3286,7 +3286,13 @@
         </div>
       {:else}
         <div class="ai-meta">
-          <span>{aiStatusState.provider === "ollama" ? "Ollama" : "llama.cpp"}</span>
+          <span>
+            {aiStatusState.provider === "local"
+              ? $t("settings.aiLocal")
+              : aiStatusState.provider === "ollama"
+                ? "Ollama"
+                : "llama.cpp"}
+          </span>
           <code>{aiStatusState.model}</code>
           <span>{$t("reader.aiLocalBadge")}</span>
         </div>

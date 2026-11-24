@@ -102,6 +102,9 @@ impl AppState {
         tauri::async_runtime::block_on(storage.audiobooks.reset_interrupted(&identity.account.id))?;
 
         let voice_profiles = Arc::new(VoiceProfileService::new(storage.clone(), layout.clone()));
+        #[cfg(target_os = "android")]
+        let ai = AiService::with_local(storage.clone(), layout.root.join("models").join("ai"))?;
+        #[cfg(not(target_os = "android"))]
         let ai = AiService::new(storage.clone())?;
 
         // En escritorio se registra además NeuTTS; en Android no hay mutación.

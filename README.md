@@ -9,9 +9,9 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 Kora se descarga únicamente desde el clúster oficial:
 
 - Landing y descargas: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.6-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.6_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.6-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.7-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.7_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.7-1.x86_64.rpm>
 
 La app consulta `https://kora.iguzman.com.mx/downloads/latest.json` y descarga
 la actualización desde ese mismo host. GitHub se usa solo para el código
@@ -40,7 +40,8 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 > superior, accesibilidad 48dp, i18n español/inglés y empaquetado Linux +
 > validación del APK núcleo por CI.
 >
-> Sobre esa base se añadieron la **IA local** (Ollama/llama.cpp), la
+> Sobre esa base se añadieron la **IA local** (asistente Qwen2.5 en Android,
+> con Ollama/llama.cpp opcionales), la
 > **clasificación asistida** de libros y audiolibros con sugerencias de
 > categoría, la **conversión PDF→EPUB** con reubicación de anotaciones, la
 > **papelera con restauración**, las **copias de seguridad** y la optimización
@@ -56,7 +57,7 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | `pnpm check` (svelte-check) | ✅ 0 errores, 0 warnings |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ |
-| `cargo test --workspace` | ✅ 220 unitarios + 5 M4B + 5 flujo de audiolibros + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
+| `cargo test --workspace` | ✅ 221 unitarios + 5 M4B + 5 flujo de audiolibros + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
 | Temas y texturas | ✅ 4 temas integrados + temas por cuenta, 10 texturas y contraste |
 | i18n | ✅ español/inglés tipado con paridad de claves |
 | Accesibilidad | ✅ 48dp, foco visible, skip link, ARIA y reduced-motion |
@@ -66,10 +67,12 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | APK debug universal | ✅ compilado localmente para las cuatro ABI |
 | Audiolibros Android | ✅ Media3 ExoPlayer, `MediaSessionService`, notificación, segundo plano y pantalla apagada |
 | TTS Android | ✅ `TextToSpeech` + `MediaSessionService`, tarjeta de pantalla de bloqueo y portada de respaldo |
-| APK release firmado | ✅ 78 MB, `arm64` + `x86_64`, firma V2 verificada con la llave de Kora |
+| APK release firmado | ✅ 86 MB, `arm64` + `x86_64`, firma V2 verificada con la llave de Kora |
 | Icono Android adaptativo | ✅ fondo propio y primer plano con margen seguro; sin esquinas negras ni recorte del arte |
 | Búsqueda semántica | ✅ chunking UTF-16, coseno y ranking con proveedor determinista |
-| IA local | ✅ Ollama/llama.cpp, configuración y detección de modelos |
+| IA local | ✅ asistente Qwen2.5 0.5B en Android con activación de un botón y modo avanzado para Ollama/llama.cpp |
+| Voces soportadas | ✅ solo español e inglés; las voces del sistema en otros idiomas se filtran |
+| Modo avanzado | ✅ código de acceso oculta proveedor, URL, modelo y parámetros técnicos |
 | Clasificación automática | ✅ reglas, metadatos, embeddings, IA y sugerencias |
 | Conversión PDF→EPUB | ✅ capítulos, OCR, reubicación de anotaciones y portada |
 | Papelera y copias | ✅ restauración, ZIP verificado y purga |
@@ -154,7 +157,7 @@ Kora/
 │  │  ├─ tts/                   # Motores, perfiles y sinks de audio
 │  │  ├─ sync/                  # mDNS, QUIC y CRDT
 │  │  ├─ accounts/              # Identidad, pairing y sharing
-│  │  ├─ ai/                    # Cliente local Ollama/llama.cpp
+│  │  ├─ ai/                    # Asistente local Candle y cliente Ollama/llama.cpp
 │  │  ├─ classify/              # Reglas, embeddings e IA para categorías
 │  │  ├─ features/              # OCR, embeddings, diario, logros
 │  │  ├─ commands/              # Comandos #[tauri::command]
@@ -274,7 +277,8 @@ conexión del pool y `audit_log` es append-only.
 | `pdf_conversion_preview` | Analiza un PDF, capítulos, OCR y datos que se conservarán |
 | `convert_pdf_to_epub` | Convierte el PDF a EPUB y reubica anotaciones y progreso |
 | `pdf_conversion_status` | Progreso de la conversión activa |
-| `ai_get_config` / `ai_save_config` / `ai_status` / `ai_chat` | IA local con Ollama o llama.cpp |
+| `ai_get_config` / `ai_save_config` / `ai_status` / `ai_chat` | Asistente local en Android, o Ollama/llama.cpp en el modo avanzado |
+| `ai_local_status` / `ai_local_download` / `ai_local_delete` / `ai_activate_local` / `ai_deactivate_local` | Descarga, borrado y activación del modelo Qwen2.5 en el teléfono |
 | `reader_get_defaults` / `reader_apply_to_all` | Tipografía base global aplicada a la biblioteca |
 | `reader_open` | Inspecciona EPUB/PDF, completa metadatos/portada y devuelve sesión, progreso y ajustes |
 | `reader_get_chapter` | Devuelve un capítulo saneado con imágenes incrustadas (EPUB) |
@@ -978,17 +982,20 @@ depender de `sqlite-vec` ni de una extensión nativa de SQLite.
 
 ## IA local, clasificación y conversión
 
-### IA local (Ollama y llama.cpp)
+### Asistente local
 
-Kora no envía libros ni notas a servicios en la nube. El módulo `ai` habla con
-un servidor **Ollama** (`http://127.0.0.1:11434`) o compatible con OpenAI
-(`llama.cpp`, por ejemplo `http://127.0.0.1:8080`). La configuración se guarda
-en `settings` (`ai.config`) y se edita en **Ajustes → IA local**; el lector
-ofrece resumen de escena, términos clave, personajes, consultas de términos y
-chat sobre el capítulo actual. Los modelos no se descargan desde Kora: se usan
-los que el usuario tenga en Ollama o llama.cpp. En Android se prioriza
-`llama.cpp` y se permite HTTP local en producción. Guía completa en
-[`docs/local-ai.md`](docs/local-ai.md).
+Kora no envía libros ni notas a servicios en la nube. En Android, **Ajustes →
+IA local → Descargar y activar** descarga el modelo **Qwen2.5 0.5B Instruct
+Q4_K_M** (~475 MB) y lo ejecuta en el teléfono con Candle, sin internet. El
+lector ofrece resumen de escena, términos clave, personajes, consultas de
+términos y chat sobre el capítulo actual. La descarga se verifica con SHA-256 y
+puede borrarse con «Liberar espacio».
+
+El **modo avanzado** (código de acceso `kora`) permite configurar un servidor
+**Ollama** (`http://127.0.0.1:11434`) o compatible con OpenAI (`llama.cpp`, por
+ejemplo `http://127.0.0.1:8080`). La configuración se guarda en `settings`
+(`ai.config`) y se edita en **Ajustes → IA local**. En escritorio se sigue
+usando Ollama/llama.cpp. Guía completa en [`docs/local-ai.md`](docs/local-ai.md).
 
 ### Clasificación asistida
 

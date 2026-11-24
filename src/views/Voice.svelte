@@ -163,9 +163,18 @@
   let rememberedDurations = $state<Record<string, number>>({});
 
   const waveBars = Array.from({ length: 28 }, (_, index) => index);
+  const SUPPORTED_LANGUAGES = new Set(["es", "en"]);
 
-  let systemVoices = $derived(voices.filter((voice) => !voice.cloned));
-  let clonedVoices = $derived(voices.filter((voice) => voice.cloned));
+  let systemVoices = $derived(
+    voices.filter(
+      (voice) => !voice.cloned && SUPPORTED_LANGUAGES.has(voice.language),
+    ),
+  );
+  let clonedVoices = $derived(
+    voices.filter(
+      (voice) => voice.cloned && SUPPORTED_LANGUAGES.has(voice.language),
+    ),
+  );
   let languages = $derived(
     [...new Set(models.flatMap((model) => model.languages))].sort(),
   );
@@ -220,8 +229,9 @@
   let filteredProfiles = $derived(
     profiles.filter(
       (profile) =>
-        !normalizedProfileQuery ||
-        normalizeSearch(profile.name).includes(normalizedProfileQuery),
+        SUPPORTED_LANGUAGES.has(profile.language) &&
+        (!normalizedProfileQuery ||
+          normalizeSearch(profile.name).includes(normalizedProfileQuery)),
     ),
   );
   let featuredProfile = $derived.by(() => {

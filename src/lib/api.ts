@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AccountStatus,
   AiConfig,
+  AiLocalStatus,
   AndroidAudioMetadata,
   AudioImportOptions,
   AiMessage,
@@ -131,6 +132,19 @@ export const aiChat = (
     temperature,
     maxTokens,
   });
+
+export const aiLocalStatus = () => invoke<AiLocalStatus>("ai_local_status");
+
+export const aiLocalDownload = () =>
+  invoke<AiLocalStatus>("ai_local_download");
+
+export const aiLocalDelete = () => invoke<AiLocalStatus>("ai_local_delete");
+
+export const aiActivateLocal = () => invoke<AiConfig>("ai_activate_local");
+
+export const aiDeactivateLocal = () =>
+  invoke<AiConfig>("ai_deactivate_local");
+
 
 // --- Aplicación y almacenamiento -------------------------------------------
 

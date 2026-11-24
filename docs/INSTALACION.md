@@ -5,9 +5,9 @@
 La app se descarga solo desde el clúster:
 
 - Landing: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.6-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.6_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.6-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.7-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.7_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.7-1.x86_64.rpm>
 
 GitHub es únicamente el repositorio de código: no hay releases, binarios ni
 GitHub Pages con descargas. Las secciones siguientes describen cómo generar los
@@ -20,14 +20,14 @@ paquetes desde el código para desarrollo.
 El artefacto se genera en:
 
 ```text
-target/release/bundle/deb/Kora_0.1.6_<arch>.deb
+target/release/bundle/deb/Kora_0.1.7_<arch>.deb
 ```
 
 El sufijo depende de la arquitectura del host (`amd64` en x86_64, `arm64` en
 aarch64). Instálalo con:
 
 ```bash
-sudo apt install ./Kora_0.1.6_amd64.deb
+sudo apt install ./Kora_0.1.7_amd64.deb
 ```
 
 > Usa `apt install ./archivo.deb`, no `dpkg -i`: `apt` descarga las
@@ -37,7 +37,7 @@ sudo apt install ./Kora_0.1.6_amd64.deb
 >
 > ```bash
 > sudo apt-get -f install
-> sudo apt install ./Kora_0.1.6_amd64.deb
+> sudo apt install ./Kora_0.1.7_amd64.deb
 > ```
 
 El paquete declara estas dependencias de ejecución: `espeak-ng`, `libasound2`

@@ -1452,10 +1452,10 @@ export interface DeviceInfo {
   createdAt: string;
 }
 
-// --- IA local (Ollama / llama.cpp) -----------------------------------------
+// --- IA local (modelo embebido / Ollama / llama.cpp) -----------------------
 
 export interface AiConfig {
-  provider: "auto" | "ollama" | "llama_cpp";
+  provider: "auto" | "off" | "local" | "ollama" | "llama_cpp";
   ollamaUrl: string;
   llamaUrl: string;
   model: string;
@@ -1469,13 +1469,30 @@ export interface AiMessage {
 }
 
 export interface AiStatus {
-  provider: "ollama" | "llama_cpp";
-  configuredProvider: "auto" | "ollama" | "llama_cpp";
+  provider: "local" | "ollama" | "llama_cpp";
+  configuredProvider: "auto" | "off" | "local" | "ollama" | "llama_cpp";
   available: boolean;
   baseUrl: string;
   model: string;
   models: string[];
   error: string | null;
+}
+
+export interface AiLocalStatus {
+  supported: boolean;
+  installed: boolean;
+  sizeBytes: number;
+  expectedSize: number;
+  model: string;
+  license: string;
+  downloading: boolean;
+}
+
+export interface AiLocalProgress {
+  downloaded: number;
+  total: number;
+  percent: number;
+  status: "downloading" | "ready" | string;
 }
 
 export interface AiReply {

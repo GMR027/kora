@@ -85,6 +85,9 @@ whisper-rs = "0.16"
 tauri-plugin-barcode-scanner = "2"
 ureq = "3"
 whisper-rs = "0.16"
+candle-core = { version = "0.11.1", default-features = false }
+candle-transformers = { version = "0.11.1", default-features = false }
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }
 
 [dev-dependencies]
 tempfile = "3"

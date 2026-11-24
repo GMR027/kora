@@ -127,6 +127,10 @@ impl TtsService {
         for engine in &self.engines {
             voices.extend(engine.voices().await?);
         }
+        // Kora solo ofrece lectura en español e inglés. El motor nativo de
+        // Android devuelve todas las voces instaladas del sistema (coreano,
+        // japonés, etc.), así que se descartan aquí para todas las pantallas.
+        voices.retain(|voice| supported_voice_language(&voice.language));
         Ok(voices)
     }
 
@@ -179,6 +183,26 @@ impl TtsService {
         match self.media.as_ref() {
             Some(media) => media.stop().await,
             None => Ok(()),
+        }
+    }
+}
+
+/// Idiomas de lectura soportados por Kora. El catálogo Piper, los perfiles
+/// clonados y el motor nativo de Android se limitan a estos dos idiomas.
+pub fn supported_voice_language(language: &str) -> bool {
+    matches!(language, "es" | "en")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_spanish_and_english_are_supported() {
+        assert!(supported_voice_language("es"));
+        assert!(supported_voice_language("en"));
+        for language in ["ko", "ja", "zh", "fr", "de", "it", "pt", "und"] {
+            assert!(!supported_voice_language(language), "{language}");
         }
     }
 }

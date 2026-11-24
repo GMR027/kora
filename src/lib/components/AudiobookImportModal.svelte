@@ -409,7 +409,10 @@
                 <strong>
                   {aiReady
                     ? $t("audiobooks.aiAvailable", {
-                        provider: aiStatus?.provider ?? "IA",
+                        provider:
+                          aiStatus?.provider === "local"
+                            ? $t("settings.aiLocal")
+                            : (aiStatus?.provider ?? "IA"),
                         model: aiStatus?.model ?? "",
                       })
                     : $t("audiobooks.aiUnavailable")}
