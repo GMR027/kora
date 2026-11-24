@@ -56,7 +56,7 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | `pnpm check` (svelte-check) | ✅ 0 errores, 0 warnings |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ |
-| `cargo test --workspace` | ✅ 207 unitarios + 5 M4B + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
+| `cargo test --workspace` | ✅ 220 unitarios + 5 M4B + 5 flujo de audiolibros + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
 | Temas y texturas | ✅ 4 temas integrados + temas por cuenta, 10 texturas y contraste |
 | i18n | ✅ español/inglés tipado con paridad de claves |
 | Accesibilidad | ✅ 48dp, foco visible, skip link, ARIA y reduced-motion |
@@ -67,6 +67,7 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | Audiolibros Android | ✅ Media3 ExoPlayer, `MediaSessionService`, notificación, segundo plano y pantalla apagada |
 | TTS Android | ✅ `TextToSpeech` + `MediaSessionService`, tarjeta de pantalla de bloqueo y portada de respaldo |
 | APK release firmado | ✅ 28 MB, firma V2 verificada con la llave de Kora |
+| Icono Android adaptativo | ✅ fondo propio y primer plano con margen seguro; sin esquinas negras ni recorte del arte |
 | Búsqueda semántica | ✅ chunking UTF-16, coseno y ranking con proveedor determinista |
 | IA local | ✅ Ollama/llama.cpp, configuración y detección de modelos |
 | Clasificación automática | ✅ reglas, metadatos, embeddings, IA y sugerencias |
@@ -83,6 +84,7 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | NeuTTS real | ✅ español e inglés con `encoder.onnx`, `decoder.onnx` y GGUF Q4 |
 | ffmpeg + M4B real | ✅ dos capítulos con `ffprobe` y un M4B generado desde Piper |
 | Sync real entre dos instancias | ✅ QUIC local, libro+portada, anotación CRDT, borrado suave y convergencia |
+| Categorías entre dispositivos | ✅ las categorías con el mismo nombre se reutilizan por alias y las asignaciones se reescriben al id local |
 | Handoff y espejo | ✅ eventos `sync::handoff`, `mirror::position` y `mirror::tts_state` |
 | Cuenta y vinculación | ✅ PIN Argon2id, clave Ed25519, código temporal + QR y confianza por huella TLS |
 | Shares | ✅ copia, solo lectura, caducidad, `max_uses` y revocación |

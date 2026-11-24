@@ -3032,10 +3032,28 @@ impl Inner {
                 )?;
                 category.owner_account_id = self.owner_account_id.clone();
                 category.origin_share_id = None;
-                self.storage
+                // Las categorías iniciales se crean con ids distintos en cada
+                // dispositivo, pero comparten nombre. La restricción
+                // (owner_account_id, name) impide insertar el duplicado, así
+                // que se reutiliza la categoría local y se guarda el alias
+                // para reescribir las asignaciones de los libros.
+                if let Some(local) = self
+                    .storage
                     .categories
-                    .upsert_from_sync(&category, &self.owner_account_id)
-                    .await?;
+                    .find_by_name(&self.owner_account_id, &category.name)
+                    .await?
+                    && local.id != category.id
+                {
+                    self.storage
+                        .sync_aliases
+                        .put(peer_id, ResourceType::Category, &category.id, &local.id)
+                        .await?;
+                } else {
+                    self.storage
+                        .categories
+                        .upsert_from_sync(&category, &self.owner_account_id)
+                        .await?;
+                }
             }
             ResourceType::Book => {
                 let (mut book, category_ids) = manifest::book_from_payload(payload)?;
@@ -3101,8 +3119,20 @@ impl Inner {
 
                 let mut valid_categories = Vec::new();
                 for category_id in category_ids {
-                    if self.storage.categories.get(&category_id).await?.is_some() {
-                        valid_categories.push(category_id);
+                    let local_category = self
+                        .storage
+                        .sync_aliases
+                        .get(peer_id, ResourceType::Category, &category_id)
+                        .await?
+                        .unwrap_or(category_id);
+                    if self
+                        .storage
+                        .categories
+                        .get(&local_category)
+                        .await?
+                        .is_some()
+                    {
+                        valid_categories.push(local_category);
                     }
                 }
                 self.storage
@@ -3817,6 +3847,80 @@ mod tests {
             .await?;
         right_service.sync_now(left_service.device_id()).await?;
         assert!(right.storage.books.get(&book.id).await?.is_some());
+
+        left_service.stop().await?;
+        right_service.stop().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn duplicate_category_names_map_to_the_local_category() -> Result<()> {
+        let (left, left_identity) = TestStorage::with_identity().await;
+        let (right, right_identity) = TestStorage::with_identity().await;
+        let left_service = service(&left, &left_identity).await?;
+        let right_service = service(&right, &right_identity).await?;
+        trust(&left_identity.account.id, &left.storage, &right_service).await?;
+        trust(&right_identity.account.id, &right.storage, &left_service).await?;
+
+        // Cada dispositivo crea su propia categoría «Ficción» con un id
+        // distinto, como ocurre con las categorías iniciales.
+        let left_category = left
+            .storage
+            .categories
+            .create(crate::storage::NewCategory {
+                name: "Ficción".to_string(),
+                color: Some("#b45309".to_string()),
+                sort_order: 0,
+                owner_account_id: left_identity.account.id.clone(),
+                origin_share_id: None,
+            })
+            .await?;
+        let right_category = right
+            .storage
+            .categories
+            .create(crate::storage::NewCategory {
+                name: "Ficción".to_string(),
+                color: Some("#1d4ed8".to_string()),
+                sort_order: 0,
+                owner_account_id: right_identity.account.id.clone(),
+                origin_share_id: None,
+            })
+            .await?;
+        let book = seed_book(&left.storage, &left_identity.account.id, "Con categoría").await?;
+        left.storage
+            .book_categories
+            .assign(&book.id, &left_category.id, &left_identity.account.id, None)
+            .await?;
+
+        right_service.sync_now(left_service.device_id()).await?;
+
+        let categories = right
+            .storage
+            .categories
+            .list_by_owner(&right_identity.account.id)
+            .await?;
+        assert_eq!(
+            categories
+                .iter()
+                .filter(|category| category.name == "Ficción")
+                .count(),
+            1
+        );
+        let assigned = right.storage.book_categories.list_by_book(&book.id).await?;
+        assert_eq!(assigned.len(), 1);
+        assert_eq!(assigned[0].id, right_category.id);
+        assert_eq!(
+            right
+                .storage
+                .sync_aliases
+                .get(
+                    left_service.device_id(),
+                    ResourceType::Category,
+                    &left_category.id,
+                )
+                .await?,
+            Some(right_category.id.clone())
+        );
 
         left_service.stop().await?;
         right_service.stop().await?;

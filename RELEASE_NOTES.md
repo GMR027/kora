@@ -1,5 +1,10 @@
 # Kora 0.1.5
 
+- Sincronización: las categorías con el mismo nombre en varios dispositivos se
+  reutilizan en lugar de duplicarse y las asignaciones de libros se remapean al
+  id local, evitando el error `UNIQUE constraint failed` al emparejar.
+- Icono Android: capas adaptativas regeneradas con fondo propio y margen de
+  seguridad para que el launcher no recorte el libro ni los audífonos.
 - Importación de audiolibros en Android desde el selector del sistema, con
   lectura de metadatos y portada incrustada.
 - Transcripción local con Whisper en el teléfono: modelos Base (147 MB) y Tiny
