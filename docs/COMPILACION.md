@@ -113,14 +113,18 @@ forma estática dentro de `libkora_lib.so`.
 ```bash
 pnpm tauri android init --ci
 pnpm tauri android dev
-pnpm tauri android build --apk          # release (firmado si hay keystore)
-pnpm tauri android build --apk --debug  # debug universal
+pnpm tauri android build --apk --target aarch64 x86_64  # release 64 bits
+pnpm tauri android build --apk --debug --target aarch64 # debug para el teléfono
 ```
 
 El APK de debug queda en
 `src-tauri/gen/android/app/build/outputs/apk/universal/debug/` y puede ser
-grande porque incluye las cuatro ABI y símbolos. El release firmado queda en
+grande porque incluye símbolos. El release firmado queda en
 `src-tauri/gen/android/app/build/outputs/apk/universal/release/`.
+
+Whisper usa bindings empaquetados de 64 bits: los targets `armv7` e `i686`
+no compilan `whisper-rs-sys`. Por eso el APK publicado incluye `arm64-v8a` y
+`x86_64`; para el teléfono basta `--target aarch64`.
 
 ## i18n
 

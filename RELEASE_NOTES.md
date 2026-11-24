@@ -19,4 +19,4 @@
 - Las actualizaciones y descargas se publican únicamente en
   <https://kora.iguzman.com.mx>; la app ya no permite cambiar la URL del
   manifiesto desde Ajustes.
-- APK Android con `versionCode` 6 e instaladores Linux actualizados.
+- APK Android de 64 bits (`arm64` y `x86_64`) con `versionCode` 6 e instaladores Linux actualizados.

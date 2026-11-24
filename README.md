@@ -562,15 +562,16 @@ recursos). El `applicationId` sale del identificador `dev.kora.reader` y el
 
 ```bash
 pnpm android:dev                       # dispositivo/emulador conectado
-pnpm android:build                     # APK
-pnpm android:build:release             # APK release (firmado si hay keystore)
+pnpm android:build                     # APK (64 bits)
+pnpm android:build:release             # APK release firmado (64 bits)
 ```
 
 El APK queda en
-`src-tauri/gen/android/app/build/outputs/apk/universal/release/`. El build de
-debug (`pnpm tauri android build --apk --debug`) queda en
-`.../apk/universal/debug/` e incluye las cuatro ABI y símbolos, por lo que pesa
-bastante más.
+`src-tauri/gen/android/app/build/outputs/apk/universal/release/`. Whisper no
+compila para ABI de 32 bits con los bindings empaquetados, así que el release
+se genera con `--target aarch64 x86_64` (o solo `aarch64` para el teléfono).
+El build de debug (`pnpm tauri android build --apk --debug --target aarch64`)
+queda en `.../apk/universal/debug/` e incluye símbolos, por lo que pesa más.
 
 ### Firma de release
 
