@@ -1,6 +1,5 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-#[cfg(not(target_os = "android"))]
 use tauri::Emitter;
 use tauri::{AppHandle, State};
 
@@ -48,7 +47,6 @@ pub struct PracticeHistoryEntry {
     pub created_at: DateTime<Utc>,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelDownloadProgress {
@@ -233,98 +231,87 @@ pub async fn practice_download_model(
     app: AppHandle,
     model_id: String,
 ) -> Result<()> {
-    #[cfg(target_os = "android")]
-    {
-        let _ = (&state, &app, &model_id);
-        return Err(KoraError::Unsupported(
-            "la descarga de modelos Whisper no está disponible en Android".into(),
-        ));
+    let spec = find_model(&model_id)
+        .ok_or_else(|| KoraError::NotFound(format!("modelo {model_id} desconocido")))?;
+    let root = state.layout.assets.clone();
+    let destination = model_path(&root, spec.id);
+    if destination.is_file() {
+        return Ok(());
     }
 
-    #[cfg(not(target_os = "android"))]
-    {
-        let spec = find_model(&model_id)
-            .ok_or_else(|| KoraError::NotFound(format!("modelo {model_id} desconocido")))?;
-        let root = state.layout.assets.clone();
-        let destination = model_path(&root, spec.id);
-        if destination.is_file() {
-            return Ok(());
-        }
+    std::fs::create_dir_all(crate::tts::whisper_dir(&root))?;
+    let temp = destination.with_extension("bin.tmp");
+    let app_clone = app.clone();
+    let id = spec.id.to_string();
+    let url = spec.url;
+    let size = spec.size_bytes;
 
-        std::fs::create_dir_all(crate::tts::whisper_dir(&root))?;
-        let temp = destination.with_extension("bin.tmp");
-        let app_clone = app.clone();
-        let id = spec.id.to_string();
-        let url = spec.url;
-        let size = spec.size_bytes;
-
-        tokio::task::spawn_blocking(move || {
-            let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
-            let result =
-                crate::tts::download::download_file(url, &temp, size, &mut |downloaded, total| {
-                    if last_emit.elapsed() >= std::time::Duration::from_millis(150)
-                        || downloaded >= total
-                    {
-                        last_emit = std::time::Instant::now();
-                        let _ = app_clone.emit(
-                            "tts-practice-download-progress",
-                            ModelDownloadProgress {
-                                model_id: id.clone(),
-                                downloaded,
-                                total,
-                                done: false,
-                                error: None,
-                            },
-                        );
-                    }
-                });
-
-            let result = result.and_then(|downloaded| {
-                if downloaded < size / 2 {
-                    return Err(KoraError::Storage(
-                        "el modelo Whisper llegó incompleto".into(),
-                    ));
-                }
-                std::fs::rename(&temp, &destination)?;
-                Ok(())
-            });
-
-            if result.is_err() {
-                let _ = std::fs::remove_file(&temp);
-            }
-
-            match &result {
-                Ok(()) => {
+    tokio::task::spawn_blocking(move || {
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let result =
+            crate::tts::download::download_file(url, &temp, size, &mut |downloaded, total| {
+                if last_emit.elapsed() >= std::time::Duration::from_millis(150)
+                    || downloaded >= total
+                {
+                    last_emit = std::time::Instant::now();
                     let _ = app_clone.emit(
                         "tts-practice-download-progress",
                         ModelDownloadProgress {
                             model_id: id.clone(),
-                            downloaded: 1,
-                            total: 1,
-                            done: true,
+                            downloaded,
+                            total,
+                            done: false,
                             error: None,
                         },
                     );
                 }
-                Err(error) => {
-                    let _ = app_clone.emit(
-                        "tts-practice-download-progress",
-                        ModelDownloadProgress {
-                            model_id: id.clone(),
-                            downloaded: 0,
-                            total: 0,
-                            done: true,
-                            error: Some(error.to_string()),
-                        },
-                    );
-                }
+            });
+
+        let result = result.and_then(|downloaded| {
+            if downloaded < size / 2 {
+                return Err(KoraError::Storage(
+                    "el modelo Whisper llegó incompleto".into(),
+                ));
             }
+            std::fs::rename(&temp, &destination)?;
+            Ok(())
+        });
 
-            result
-        })
-        .await
-        .map_err(|error| KoraError::Internal(format!("tarea de descarga Whisper: {error}")))??;
+        if result.is_err() {
+            let _ = std::fs::remove_file(&temp);
+        }
 
-        Ok(())
-    }
+        match &result {
+            Ok(()) => {
+                let _ = app_clone.emit(
+                    "tts-practice-download-progress",
+                    ModelDownloadProgress {
+                        model_id: id.clone(),
+                        downloaded: 1,
+                        total: 1,
+                        done: true,
+                        error: None,
+                    },
+                );
+            }
+            Err(error) => {
+                let _ = app_clone.emit(
+                    "tts-practice-download-progress",
+                    ModelDownloadProgress {
+                        model_id: id.clone(),
+                        downloaded: 0,
+                        total: 0,
+                        done: true,
+                        error: Some(error.to_string()),
+                    },
+                );
+            }
+        }
+
+        result
+    })
+    .await
+    .map_err(|error| KoraError::Internal(format!("tarea de descarga Whisper: {error}")))??;
+
+    Ok(())
 }

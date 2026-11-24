@@ -184,6 +184,7 @@
   <Onboarding
     initial={appearanceState}
     {account}
+    platform={info?.platform ?? ""}
     onChanged={changedAppearance}
     onDone={() => {
       void refreshAppearance();

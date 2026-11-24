@@ -14,11 +14,11 @@ use crate::audiobooks::{
     NarrationSettings, PlaybackSnapshot, lines_from_text, m4b, marker_anchor, queue, read_manifest,
     resolve_sections,
 };
+use crate::audiobooks::{AudiobookProgressEvent, emit_progress, transcribe_existing};
 #[cfg(not(target_os = "android"))]
 use crate::audiobooks::{
-    AudiobookProgressEvent, DEFAULT_WAVEFORM_BUCKETS, MAX_WAVEFORM_BUCKETS, MIN_WAVEFORM_BUCKETS,
-    emit_progress, generate, import, import_audio as import_audio_only, reanalyze_audio_chapters,
-    regenerate, transcribe_existing,
+    DEFAULT_WAVEFORM_BUCKETS, MAX_WAVEFORM_BUCKETS, MIN_WAVEFORM_BUCKETS, generate, import,
+    import_audio as import_audio_only, reanalyze_audio_chapters, regenerate,
 };
 use crate::commands::reader::owned_book;
 use crate::error::{KoraError, Result};
@@ -152,11 +152,11 @@ pub fn audiobook_capabilities(state: State<'_, AppState>) -> AudiobookCapabiliti
         platform_supported,
         audio_import_supported: true,
         native_audio_import: cfg!(target_os = "android"),
-        transcription_supported: platform_supported,
+        transcription_supported: true,
         playback_supported: true,
         background_playback: cfg!(target_os = "android"),
         ffmpeg: platform_supported && m4b::ensure_available().is_ok(),
-        whisper_base: platform_supported && practice::installed(&state.layout.assets, "base"),
+        whisper_base: practice::installed(&state.layout.assets, "base"),
     }
 }
 
@@ -521,9 +521,12 @@ pub async fn import_audio_audiobook(
     path: String,
     options: AudioImportOptions,
     metadata: Option<crate::audiobooks::import_audio::AndroidAudioMetadata>,
+    transcribe: Option<bool>,
 ) -> Result<AudiobookInfo> {
     #[cfg(target_os = "android")]
     {
+        let transcribe = transcribe.unwrap_or(false);
+        let model_id = options.model_id.clone();
         let Some(metadata) = metadata else {
             return Err(KoraError::InvalidInput(
                 "faltan los metadatos de audio de Android".into(),
@@ -559,25 +562,49 @@ pub async fn import_audio_audiobook(
             options,
             metadata,
             Some(control.as_ref()),
+            !transcribe,
         )
         .await;
-        state.audiobook_jobs.finish();
-        queue::notify_queue(&app);
-        drop(_guard);
-
-        let audiobook = match result {
+        let mut audiobook = match result {
             Ok(audiobook) => audiobook,
             Err(error) => {
+                state.audiobook_jobs.finish();
+                queue::notify_queue(&app);
+                drop(_guard);
                 eprintln!("Kora: falló la importación de audio en Android: {error:#}");
                 return Err(error);
             }
         };
+        if transcribe {
+            match transcribe_existing(
+                &state,
+                &app,
+                &audiobook.id,
+                model_id.as_deref(),
+                Some(control.as_ref()),
+            )
+            .await
+            {
+                Ok(updated) => audiobook = updated,
+                Err(error) => {
+                    state.audiobook_jobs.finish();
+                    queue::notify_queue(&app);
+                    drop(_guard);
+                    eprintln!("Kora: falló la transcripción del audio importado: {error:#}");
+                    emit_task_error(&app, Some(&audiobook.id), &error, "Transcripción cancelada");
+                    return Err(error);
+                }
+            }
+        }
+        state.audiobook_jobs.finish();
+        queue::notify_queue(&app);
+        drop(_guard);
         return info_for(&state, &audiobook, None).await;
     }
 
     #[cfg(not(target_os = "android"))]
     {
-        let _ = metadata;
+        let _ = (metadata, transcribe);
         if state.audiobook_jobs.status().is_some() {
             return Err(KoraError::Conflict(
                 "espera a que termine la tarea actual antes de importar".into(),
@@ -794,61 +821,58 @@ pub async fn transcribe_audiobook_later(
     state: State<'_, AppState>,
     app: AppHandle,
     audiobook_id: String,
+    model_id: Option<String>,
 ) -> Result<AudiobookInfo> {
-    #[cfg(target_os = "android")]
-    {
-        let _ = (&state, &app, &audiobook_id);
+    let audiobook = owned_audiobook(&state, &audiobook_id).await?;
+    let book = state
+        .storage
+        .books
+        .get(&audiobook.book_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound("libro del audiolibro".into()))?;
+    if !book.audio_only {
         return Err(KoraError::Unsupported(
-            "la transcripción aún no está disponible en Android".into(),
+            "este audiolibro ya tiene una transcripción".into(),
         ));
     }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let audiobook = owned_audiobook(&state, &audiobook_id).await?;
-        let book = state
-            .storage
-            .books
-            .get(&audiobook.book_id)
-            .await?
-            .ok_or_else(|| KoraError::NotFound("libro del audiolibro".into()))?;
-        if !book.audio_only {
-            return Err(KoraError::Unsupported(
-                "este audiolibro ya tiene una transcripción".into(),
-            ));
-        }
-        if state.audiobook_jobs.status().is_some() {
-            return Err(KoraError::Conflict(
-                "espera a que termine la tarea actual antes de transcribir".into(),
-            ));
-        }
-        let _guard = state.audiobook_jobs.run_lock.lock().await;
-        if state.audiobook_jobs.status().is_some() {
-            return Err(KoraError::Conflict(
-                "espera a que termine la tarea actual antes de transcribir".into(),
-            ));
-        }
-        let title = format!("Transcribiendo «{}»", book.title);
-        let control = state.audiobook_jobs.begin(&title, Some("Whisper Base"));
-        queue::notify_queue(&app);
-        let result = transcribe_existing(&state, &app, &audiobook_id, Some(control.as_ref())).await;
-        state.audiobook_jobs.finish();
-        queue::notify_queue(&app);
-        drop(_guard);
-
-        let audiobook = match result {
-            Ok(audiobook) => audiobook,
-            Err(error) => {
-                emit_task_error(&app, Some(&audiobook_id), &error, "Transcripción cancelada");
-                return Err(error);
-            }
-        };
-        let progress = state.storage.audiobooks.progress(&audiobook.id).await?;
-        info_for(&state, &audiobook, progress.as_ref()).await
+    if state.audiobook_jobs.status().is_some() {
+        return Err(KoraError::Conflict(
+            "espera a que termine la tarea actual antes de transcribir".into(),
+        ));
     }
+    let _guard = state.audiobook_jobs.run_lock.lock().await;
+    if state.audiobook_jobs.status().is_some() {
+        return Err(KoraError::Conflict(
+            "espera a que termine la tarea actual antes de transcribir".into(),
+        ));
+    }
+    let title = format!("Transcribiendo «{}»", book.title);
+    let control = state.audiobook_jobs.begin(&title, Some("Whisper"));
+    queue::notify_queue(&app);
+    let result = transcribe_existing(
+        &state,
+        &app,
+        &audiobook_id,
+        model_id.as_deref(),
+        Some(control.as_ref()),
+    )
+    .await;
+    state.audiobook_jobs.finish();
+    queue::notify_queue(&app);
+    drop(_guard);
+
+    let audiobook = match result {
+        Ok(audiobook) => audiobook,
+        Err(error) => {
+            eprintln!("Kora: falló la transcripción: {error:#}");
+            emit_task_error(&app, Some(&audiobook_id), &error, "Transcripción cancelada");
+            return Err(error);
+        }
+    };
+    let progress = state.storage.audiobooks.progress(&audiobook.id).await?;
+    info_for(&state, &audiobook, progress.as_ref()).await
 }
 
-#[cfg(not(target_os = "android"))]
 fn emit_task_error(
     app: &AppHandle,
     audiobook_id: Option<&str>,

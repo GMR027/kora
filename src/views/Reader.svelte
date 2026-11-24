@@ -256,6 +256,7 @@
   );
   let ttsRects = $state<MarkRect[]>([]);
   let characterPanelOpen = $state(false);
+  let voicePickerOpen = $state(false);
   let characters = $state<CharacterInfo[]>([]);
   let characterVoices = $state<Record<string, string>>({});
   let practiceOpen = $state(false);
@@ -324,6 +325,22 @@
   });
 
   $effect(() => {
+    if (
+      tocOpen ||
+      settingsOpen ||
+      aiOpen ||
+      annotationsOpen ||
+      termPanelOpen ||
+      mirrorOpen ||
+      characterPanelOpen ||
+      practiceOpen ||
+      activeAnnotation
+    ) {
+      voicePickerOpen = false;
+    }
+  });
+
+  $effect(() => {
     // Cerrar el panel mientras se graba debe apagar el micrófono, no dejar
     // una captura huérfana en segundo plano.
     if (!practiceOpen && practiceRecording) {
@@ -333,7 +350,19 @@
     }
   });
   let installedVoices = $derived(
-    ttsVoices.filter((voice) => voice.installed),
+    ttsVoices.filter(
+      (voice) =>
+        voice.installed && (voice.language === "es" || voice.language === "en"),
+    ),
+  );
+  let downloadableVoices = $derived(
+    ttsVoices.filter(
+      (voice) =>
+        !voice.installed && (voice.language === "es" || voice.language === "en"),
+    ),
+  );
+  let currentTtsVoice = $derived(
+    installedVoices.find((voice) => voice.id === ttsVoiceId) ?? null,
   );
   let ttsLanguage = $derived.by(() => {
     const language = (session?.document.language ?? "").toLowerCase();
@@ -685,6 +714,7 @@
     settingsOpen = false;
     termPanelOpen = false;
     characterPanelOpen = false;
+    voicePickerOpen = false;
     mirrorOpen = false;
     aiOpen = false;
     annotationsOpen = false;
@@ -836,6 +866,7 @@
     practiceOpen = false;
     activeAnnotation = null;
     characterPanelOpen = false;
+    voicePickerOpen = false;
     mirrorOpen = false;
     aiOpen = false;
     annotationsOpen = false;
@@ -1621,6 +1652,7 @@
       practiceOpen ||
       activeAnnotation !== null ||
       characterPanelOpen ||
+      voicePickerOpen ||
       mirrorOpen ||
       aiOpen ||
       annotationsOpen;
@@ -2234,7 +2266,11 @@
       ttsVoices = voices;
       ttsRate = preferences.rate;
       ttsPitch = preferences.pitch;
-      const installed = voices.filter((voice) => voice.installed);
+      const installed = voices.filter(
+        (voice) =>
+          voice.installed &&
+          (voice.language === "es" || voice.language === "en"),
+      );
       ttsVoiceId =
         preferences.voiceId &&
         installed.some((voice) => voice.id === preferences.voiceId)
@@ -2575,6 +2611,19 @@
     }
   }
 
+  function openVoicePicker() {
+    voicePickerOpen = true;
+    settingsOpen = false;
+    tocOpen = false;
+    aiOpen = false;
+    annotationsOpen = false;
+    termPanelOpen = false;
+    mirrorOpen = false;
+    characterPanelOpen = false;
+    practiceOpen = false;
+    activeAnnotation = null;
+  }
+
   async function openCharacterPanel() {
     characterPanelOpen = true;
     settingsOpen = false;
@@ -2615,8 +2664,7 @@
     }
   }
 
-  async function assignCharacterVoice(character: string, voiceId: string) {
-    if (!session || !voiceId) return;
+  async function assignCharacterVoice(character: string, voiceId: string) {    if (!session || !voiceId) return;
     try {
       await ttsAssignCharacterVoice(session.bookId, character, voiceId);
       characterVoices = { ...characterVoices, [character]: voiceId };
@@ -2749,7 +2797,8 @@
 
 <section class="reader">
   <header class="toolbar">
-    <div class="heading">
+    <div class="toolbar-context">
+      <div class="heading">
       {#if onExit}
         <button
           class="bar-back"
@@ -2794,8 +2843,12 @@
           <span class="progress-fill" style:width={`${bookProgress * 100}%`}></span>
         </span>
       </div>
+      {/if}
+    </div>
 
-      <div class="controls">
+    {#if session}
+      <div class="toolbar-actions">
+        <div class="controls">
         {#if !isPdf}
           <button
             class="ghost"
@@ -2906,6 +2959,15 @@
             <span class="control-label">{$t("reader.annotations")}</span>
           </button>
           <button
+            class="ghost control-metrics"
+            aria-label={$t("reader.metrics")}
+            title={$t("reader.metrics")}
+            onclick={openPracticePanel}
+          >
+            <Icon name="chart" size={17} />
+            <span class="control-label">{$t("reader.metrics")}</span>
+          </button>
+          <button
             class="ghost control-mirror"
             class:active={mirrorOpen}
             aria-expanded={mirrorOpen}
@@ -2917,6 +2979,7 @@
             <span class="control-label">{$t("reader.mirror")}</span>
           </button>
         {/if}
+        </div>
       </div>
     {/if}
   </header>
@@ -3023,80 +3086,142 @@
 
   {#if session && !isPdf && ttsPanelOpen}
     <div class="tts-bar">
-      <button class="primary small" onclick={toggleTts}>
-        {ttsState === "playing"
-          ? $t("reader.pause")
-          : ttsState === "paused"
-            ? $t("reader.resume")
-            : $t("reader.listen")}
-      </button>
-      {#if ttsActive}
-        <button class="ghost small" onclick={stopTts}>{$t("reader.stop")}</button>
-      {/if}
-      {#if excerptTts}
-        <span class="tts-excerpt">{$t("reader.excerptLabel")}</span>
-      {/if}
-      <label class="tts-rate" title={$t("reader.readingSpeed")}>
-        <span>{ttsRate.toFixed(1)}×</span>
-        <input
-          type="range"
-          min="0.5"
-          max="3"
-          step="0.1"
-          value={ttsRate}
-          oninput={(event) => setTtsRate(Number(event.currentTarget.value))}
-          aria-label={$t("reader.readingSpeed")}
-        />
-      </label>
-      <label class="tts-rate" title={$t("reader.voiceTone")}>
-        <span>{$t("reader.pitch", { value: ttsPitch.toFixed(2) })}</span>
-        <input
-          type="range"
-          min="0.8"
-          max="1.2"
-          step="0.02"
-          value={ttsPitch}
-          oninput={(event) => setTtsPitch(Number(event.currentTarget.value))}
-          aria-label={$t("reader.voiceTone")}
-        />
-      </label>
-      <select
-        class="tts-voice"
-        bind:value={ttsVoiceId}
-        onchange={() => setTtsVoice(ttsVoiceId)}
-        aria-label={$t("reader.readingVoice")}
-      >
-        {#if installedVoices.length === 0}
-          <option value="">{$t("reader.noVoices")}</option>
-        {/if}
-        {#each installedVoices as voice (voice.id)}
-          <option value={voice.id}>
-            {voice.language.toUpperCase()} · {voice.name}{voice.cloned ? ` · ${$t("reader.cloned")}` : ""}
-          </option>
-        {/each}
-      </select>
-      <button class="ghost small" onclick={openCharacterPanel}>{$t("reader.voices")}</button>
-      <button class="ghost small" onclick={openPracticePanel}>{$t("reader.practice")}</button>
-      <label class="tts-auto">
-        <input type="checkbox" bind:checked={autoAdvance} />
-        {$t("reader.autoAdvance")}
-      </label>
-      <label class="tts-sleep" title={$t("reader.sleepTimer")}>
-        <Icon name="clock" size={14} />
-        <select
-          value={sleepMinutes}
-          onchange={(event) => startSleepTimer(Number(event.currentTarget.value))}
-          aria-label={$t("reader.sleepTimer")}
+      <header class="tts-head">
+        <span class="tts-heading">
+          <span class="tts-head-icon"><Icon name="headphones" size={16} /></span>
+          <strong>{$t("reader.listen")}</strong>
+        </span>
+        <button
+          class="tts-close"
+          aria-label={$t("common.close")}
+          title={$t("common.close")}
+          onclick={() => (ttsPanelOpen = false)}
         >
-          <option value={0}>{$t("reader.sleepOff")}</option>
-          <option value={15}>{$t("reader.sleep15")}</option>
-          <option value={30}>{$t("reader.sleep30")}</option>
-          <option value={60}>{$t("reader.sleep60")}</option>
-        </select>
-        {#if sleepRemaining > 0}
-          <strong>{formatSleep(sleepRemaining)}</strong>
+          <Icon name="close" size={16} />
+        </button>
+      </header>
+
+      <div class="tts-main">
+        <button class="primary tts-play" onclick={toggleTts}>
+          <Icon
+            name={ttsState === "playing" ? "pause" : "play"}
+            size={16}
+          />
+          {ttsState === "playing"
+            ? $t("reader.pause")
+            : ttsState === "paused"
+              ? $t("reader.resume")
+              : $t("reader.listen")}
+        </button>
+        {#if ttsActive}
+          <button class="ghost tts-stop" onclick={stopTts}>
+            <Icon name="stop" size={14} />
+            {$t("reader.stop")}
+          </button>
         {/if}
-      </label>
+        {#if excerptTts}
+          <span class="tts-excerpt">{$t("reader.excerptLabel")}</span>
+        {/if}
+      </div>
+
+      <div class="tts-sliders">
+        <label class="tts-control" title={$t("reader.readingSpeed")}>
+          <span class="tts-control-head">
+            <span>{$t("reader.speed")}</span>
+            <strong>{ttsRate.toFixed(1)}×</strong>
+          </span>
+          <input
+            type="range"
+            min="0.5"
+            max="3"
+            step="0.1"
+            value={ttsRate}
+            oninput={(event) => setTtsRate(Number(event.currentTarget.value))}
+            aria-label={$t("reader.readingSpeed")}
+          />
+        </label>
+        <label class="tts-control" title={$t("reader.voiceTone")}>
+          <span class="tts-control-head">
+            <span>{$t("reader.tone")}</span>
+            <strong>{ttsPitch.toFixed(2)}</strong>
+          </span>
+          <input
+            type="range"
+            min="0.8"
+            max="1.2"
+            step="0.02"
+            value={ttsPitch}
+            oninput={(event) => setTtsPitch(Number(event.currentTarget.value))}
+            aria-label={$t("reader.voiceTone")}
+          />
+        </label>
+      </div>
+
+      <div class="tts-voice-row">
+        <button
+          class="tts-voice"
+          onclick={openVoicePicker}
+          aria-label={$t("reader.readingVoice")}
+        >
+          {#if currentTtsVoice}
+            <span class="tts-voice-lang">{currentTtsVoice.language.toUpperCase()}</span>
+            <span class="tts-voice-label">
+              {currentTtsVoice.name}{currentTtsVoice.cloned
+                ? ` · ${$t("reader.cloned")}`
+                : ""}
+            </span>
+          {:else}
+            <span class="tts-voice-label">{$t("reader.noVoices")}</span>
+          {/if}
+          <Icon name="chevron" size={13} />
+        </button>
+        <div class="tts-circle-action">
+          <button
+            class="tts-circle"
+            aria-label={$t("reader.voices")}
+            title={$t("reader.voices")}
+            onclick={openCharacterPanel}
+          >
+            <Icon name="account" size={19} />
+          </button>
+          <span>{$t("reader.voices")}</span>
+        </div>
+        <div class="tts-circle-action">
+          <button
+            class="tts-circle tts-circle-accent"
+            aria-label={$t("reader.practice")}
+            title={$t("reader.practice")}
+            onclick={openPracticePanel}
+          >
+            <Icon name="mic" size={19} />
+          </button>
+          <span>{$t("reader.practiceShort")}</span>
+        </div>
+      </div>
+
+      <div class="tts-footer">
+        <label class="tts-auto">
+          <input type="checkbox" bind:checked={autoAdvance} />
+          {$t("reader.autoAdvance")}
+        </label>
+        <label class="tts-sleep" title={$t("reader.sleepTimer")}>
+          <Icon name="clock" size={14} />
+          <select
+            value={sleepMinutes}
+            onchange={(event) => startSleepTimer(Number(event.currentTarget.value))}
+            aria-label={$t("reader.sleepTimer")}
+          >
+            <option value={0}>{$t("reader.sleepOff")}</option>
+            <option value={15}>{$t("reader.sleep15")}</option>
+            <option value={30}>{$t("reader.sleep30")}</option>
+            <option value={60}>{$t("reader.sleep60")}</option>
+          </select>
+          {#if sleepRemaining > 0}
+            <strong>{formatSleep(sleepRemaining)}</strong>
+          {/if}
+        </label>
+      </div>
+
       {#if sleepNotice}
         <span class="sleep-notice">{$t("reader.sleepDone")}</span>
       {/if}
@@ -3521,7 +3646,7 @@
     </p>
   {/if}
 
-  {#if tocOpen || settingsOpen || termPanelOpen || practiceOpen || activeAnnotation || characterPanelOpen || mirrorOpen || aiOpen || annotationsOpen}
+  {#if tocOpen || settingsOpen || termPanelOpen || practiceOpen || activeAnnotation || characterPanelOpen || voicePickerOpen || mirrorOpen || aiOpen || annotationsOpen}
     <button
       class="panel-backdrop"
       aria-label={$t("common.close")}
@@ -4076,10 +4201,10 @@
         </ul>
       {/if}
 
-      {#if ttsVoices.some((voice) => !voice.installed)}
+      {#if downloadableVoices.length > 0}
         <div class="voice-downloads">
           <span class="hint">{$t("reader.downloadVoices")}</span>
-          {#each ttsVoices.filter((voice) => !voice.installed) as voice (voice.id)}
+          {#each downloadableVoices as voice (voice.id)}
             <button
               class="ghost small"
               onclick={() => downloadVoice(voice)}
@@ -4117,6 +4242,44 @@
         </label>
         <p class="hint">{$t("reader.pausesHelp")}</p>
       </div>
+    </aside>
+  {/if}
+
+  {#if voicePickerOpen && session}
+    <aside class="panel voice-picker" aria-label={$t("reader.readingVoice")}>
+      <header>
+        <h2>{$t("reader.readingVoice")}</h2>
+        <button class="ghost small" onclick={() => (voicePickerOpen = false)}>
+          {$t("common.close")}
+        </button>
+      </header>
+      <p class="hint">{$t("reader.voicePickerHelp")}</p>
+      {#if installedVoices.length === 0}
+        <p class="empty">{$t("reader.noVoices")}</p>
+      {:else}
+        <ul class="voice-list">
+          {#each installedVoices as voice (voice.id)}
+            <li>
+              <button
+                class="voice-option"
+                class:active={voice.id === ttsVoiceId}
+                onclick={() => {
+                  setTtsVoice(voice.id);
+                  voicePickerOpen = false;
+                }}
+              >
+                <span class="voice-lang">{voice.language.toUpperCase()}</span>
+                <span class="voice-name">
+                  {voice.name}{voice.cloned ? ` · ${$t("reader.cloned")}` : ""}
+                </span>
+                {#if voice.id === ttsVoiceId}
+                  <Icon name="check" size={15} />
+                {/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </aside>
   {/if}
 
@@ -4331,6 +4494,20 @@
     background: color-mix(in srgb, var(--surface) 97%, transparent);
   }
 
+  .toolbar-context {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .toolbar-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+  }
+
   .selection-bar {
     position: absolute;
     top: 3.6rem;
@@ -4488,7 +4665,12 @@
     display: flex;
     flex: 0 0 auto;
     flex-wrap: nowrap;
-    gap: 0.18rem;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+    border-radius: 14px;
+    background: var(--surface-2);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 42%, transparent);
   }
 
   .controls button {
@@ -4496,13 +4678,13 @@
     align-items: center;
     justify-content: center;
     gap: 0.35rem;
-    width: 34px;
-    min-width: 34px;
-    min-height: 34px;
-    height: 34px;
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    height: 36px;
     padding: 0;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: 10px;
     background: transparent;
     color: var(--muted);
     font: inherit;
@@ -4512,8 +4694,8 @@
   }
 
   .controls button:hover {
-    border-color: transparent;
-    background: var(--surface-2);
+    border-color: var(--border);
+    background: var(--surface);
     color: var(--text);
   }
 
@@ -4527,12 +4709,16 @@
 
 
   .controls .type-button {
-    width: auto;
-    min-width: 34px;
-    padding-inline: 0.4rem;
+    width: 36px;
+    min-width: 36px;
+    padding: 0;
     font-family: var(--font-display);
-    font-size: 0.9rem;
+    font-size: 0.94rem;
     font-weight: 600;
+  }
+
+  .controls .control-metrics {
+    display: none;
   }
 
   .control-label {
@@ -4545,41 +4731,280 @@
     left: 50%;
     z-index: 35;
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.45rem 0.7rem;
-    width: min(46rem, calc(100vw - 1.5rem));
-    padding: 0.7rem 0.8rem;
+    flex-direction: column;
+    gap: 0.7rem;
+    width: min(34rem, calc(100vw - 1.5rem));
+    padding: 0.9rem;
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: 20px;
     background: var(--surface);
     box-shadow: var(--shadow-lg);
     font-size: 0.82rem;
     transform: translateX(-50%);
   }
 
-  .tts-rate {
+  .tts-head {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    color: var(--muted);
-    min-width: 9rem;
+    justify-content: space-between;
+    gap: 0.75rem;
   }
 
-  .tts-rate input {
+  .tts-heading {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-family: var(--font-display);
+    font-size: 1.02rem;
+    font-weight: 600;
+  }
+
+  .tts-head-icon {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+  }
+
+  .tts-close {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+
+  .tts-close:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+    color: var(--text);
+  }
+
+  .tts-main {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .tts-play {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    min-height: 46px;
+    padding: 0.5rem 1.25rem;
+    border-radius: 999px;
+  }
+
+  .tts-stop {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-height: 46px;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+  }
+
+  .tts-sliders {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .tts-control {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.55rem 0.65rem 0.45rem;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 12px;
+    background: var(--surface-2);
+  }
+
+  .tts-control-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    color: var(--muted);
+    font-size: 0.64rem;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .tts-control-head strong {
+    color: var(--accent);
+    font-size: 0.72rem;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .tts-control input[type="range"] {
+    width: 100%;
+    margin: 0;
     accent-color: var(--accent);
-    width: 6rem;
+  }
+
+  .tts-voice-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
   }
 
   .tts-voice {
+    flex: 1;
+    min-width: 0;
+    min-height: 52px;
     font: inherit;
     font-size: 0.78rem;
-    padding: 0.35rem 0.5rem;
-    border-radius: 8px;
+    padding: 0.35rem 0.55rem;
+    border-radius: 12px;
     border: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--surface-2);
     color: var(--text);
-    max-width: 14rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .tts-voice :global(svg) {
+    flex: 0 0 auto;
+    color: var(--muted);
+  }
+
+  .tts-voice-lang {
+    flex: 0 0 auto;
+    min-width: 2rem;
+    padding: 0.18rem 0.32rem;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .tts-voice-label {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .tts-circle-action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+  }
+
+  .tts-circle-action > span {
+    color: var(--muted);
+    font-size: 0.58rem;
+    font-weight: 600;
+  }
+
+  .tts-circle {
+    display: grid;
+    place-items: center;
+    width: 52px;
+    min-width: 52px;
+    height: 52px;
+    min-height: 52px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .tts-circle:hover {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  }
+
+  .tts-circle-accent {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    color: var(--accent);
+  }
+
+  .tts-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .voice-list {
+    list-style: none;
+    margin: 0.6rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .voice-option {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.6rem;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.8rem;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .voice-option:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
+
+  .voice-option.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  }
+
+  .voice-option :global(svg) {
+    flex: 0 0 auto;
+    color: var(--accent);
+  }
+
+  .voice-lang {
+    flex: 0 0 auto;
+    min-width: 2rem;
+    padding: 0.12rem 0.3rem;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .voice-name {
+    flex: 1;
+    min-width: 0;
   }
 
   .tts-auto {
@@ -5800,7 +6225,76 @@
   }
 
   @media (max-width: 900px) {
+    .toolbar {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.35rem;
+      min-height: 0;
+      padding: 0.35rem 0.75rem 0.45rem;
+    }
+
+    .toolbar-context {
+      width: 100%;
+      gap: 0.55rem;
+    }
+
+    .toolbar-actions {
+      width: 100%;
+    }
+
+    .controls {
+      flex: 1 1 auto;
+      width: auto;
+      min-width: 0;
+      justify-content: space-between;
+    }
+
+    .controls .control-metrics {
+      display: inline-flex;
+    }
+
+    .controls .control-mirror {
+      display: none;
+    }
+
     .progress {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      width: auto;
+      margin-left: auto;
+      padding: 0.22rem 0.55rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+    }
+
+    .progress-meta {
+      gap: 0;
+      font-size: 0.62rem;
+    }
+
+    .progress-meta span:first-child {
+      color: var(--accent);
+      font-weight: 650;
+    }
+
+    .progress-meta span:first-child::before {
+      content: "";
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+      vertical-align: 0.08em;
+    }
+
+    .progress-meta span:not(:first-child) {
+      display: none;
+    }
+
+    .progress-track {
       display: none;
     }
   }
@@ -5813,7 +6307,7 @@
     }
 
     .subtitle {
-      display: none;
+      display: block;
     }
 
     .control-mirror {
@@ -5942,22 +6436,21 @@
 
   .controls {
     gap: 2px;
-    padding: 2px;
-    border-radius: 10px;
-    background: transparent;
+    padding: 3px;
+    border-radius: 14px;
+    background: var(--surface-2);
   }
 
   .controls button {
-    width: auto;
-    min-width: 32px;
-    height: 32px;
-    min-height: 32px;
-    padding: 0 0.5rem;
-    border: 0;
-    border-radius: 8px;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    border-radius: 10px;
     background: transparent;
     color: var(--muted);
-    font-size: 0.74rem;
+    font-size: 0.76rem;
   }
 
   .controls button:hover {
@@ -6136,10 +6629,12 @@
     top: auto;
     bottom: 54px;
     z-index: 32;
-    width: min(780px, calc(100% - 48px));
-    padding: 10px 12px;
+    width: calc(100% - 20px);
+    max-height: 60vh;
+    padding: 12px;
+    overflow-y: auto;
     border: 1px solid var(--border);
-    border-radius: 16px;
+    border-radius: 18px;
     background: var(--surface);
     box-shadow: 0 18px 44px -24px rgba(49, 24, 12, 0.34);
     font-size: 0.76rem;
@@ -6151,17 +6646,23 @@
     color: #fff;
   }
 
-  .tts-rate {
-    min-width: 7.4rem;
-    font-size: 0.68rem;
-  }
-
-  .tts-rate input {
-    width: 4.8rem;
+  .tts-sliders {
+    grid-template-columns: 1fr 1fr;
   }
 
   .tts-voice {
     font-size: 0.7rem;
+  }
+
+  .tts-circle {
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    min-height: 48px;
+  }
+
+  .tts-circle-action > span {
+    font-size: 0.55rem;
   }
 
   .tts-auto {
@@ -6199,17 +6700,40 @@
     }
 
     .toolbar {
-      min-height: 50px;
-      padding: 0.25rem 14px;
+      min-height: 0;
+      align-items: stretch;
+      padding: 0.35rem 14px 0.45rem;
     }
 
-    .bar-back-label,
-    .progress {
+    .bar-back-label {
       display: none;
     }
 
+    .bar-back {
+      width: 40px;
+      min-width: 40px;
+      height: 40px;
+      min-height: 40px;
+      padding: 0;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: var(--surface-2);
+    }
+
+    .progress {
+      flex: 0 0 auto;
+      width: auto;
+      min-width: 0;
+      margin-left: auto;
+      padding: 0.22rem 0.55rem;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+    }
+
     .heading-copy h1 {
-      max-width: 44vw;
+      max-width: none;
     }
 
     .surface {
@@ -6249,7 +6773,7 @@
     .tts-bar {
       bottom: 52px;
       width: calc(100% - 20px);
-      max-height: 38vh;
+      max-height: 60vh;
       overflow-y: auto;
     }
   }
@@ -7176,13 +7700,7 @@
 
   @media (max-width: 900px) {
     .mobile-reading-status {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      flex: 0 0 auto;
-      gap: 5px 8px;
-      padding: 6px 14px 8px;
-      border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-      background: color-mix(in srgb, var(--surface) 90%, transparent);
+      display: none;
     }
 
     .mobile-reading-copy {
@@ -7230,9 +7748,10 @@
     }
 
     .controls {
-      max-width: 62vw;
+      max-width: none;
+      width: 100%;
       overflow-x: auto;
-      padding: 0 2px;
+      padding: 3px;
       scrollbar-width: none;
     }
 
@@ -7241,11 +7760,11 @@
     }
 
     .controls button {
-      width: 28px;
-      min-width: 28px;
-      height: 28px;
-      min-height: 28px;
-      border-radius: 50%;
+      width: 40px;
+      min-width: 40px;
+      height: 40px;
+      min-height: 40px;
+      border-radius: 10px;
     }
 
     .controls .control-fullscreen {

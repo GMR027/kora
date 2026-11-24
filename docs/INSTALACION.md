@@ -1,5 +1,18 @@
 # Instalación de Kora
 
+## Descarga oficial
+
+La app se descarga solo desde el clúster:
+
+- Landing: <https://kora.iguzman.com.mx/#descargas>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.5-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.5_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.5-1.x86_64.rpm>
+
+GitHub es únicamente el repositorio de código: no hay releases, binarios ni
+GitHub Pages con descargas. Las secciones siguientes describen cómo generar los
+paquetes desde el código para desarrollo.
+
 ## Linux
 
 ### Paquete `.deb`
@@ -7,14 +20,14 @@
 El artefacto se genera en:
 
 ```text
-target/release/bundle/deb/Kora_0.1.4_<arch>.deb
+target/release/bundle/deb/Kora_0.1.5_<arch>.deb
 ```
 
 El sufijo depende de la arquitectura del host (`amd64` en x86_64, `arm64` en
 aarch64). Instálalo con:
 
 ```bash
-sudo apt install ./Kora_0.1.4_amd64.deb
+sudo apt install ./Kora_0.1.5_amd64.deb
 ```
 
 > Usa `apt install ./archivo.deb`, no `dpkg -i`: `apt` descarga las
@@ -24,7 +37,7 @@ sudo apt install ./Kora_0.1.4_amd64.deb
 >
 > ```bash
 > sudo apt-get -f install
-> sudo apt install ./Kora_0.1.4_amd64.deb
+> sudo apt install ./Kora_0.1.5_amd64.deb
 > ```
 
 El paquete declara estas dependencias de ejecución: `espeak-ng`, `libasound2`
@@ -38,16 +51,18 @@ Tesseract/Leptonica. El `.deb` es el objetivo verificado en Ubuntu/Debian.
 
 ### Actualizaciones
 
-Desde la versión 0.1.4, la app consulta por defecto:
+Desde la versión 0.1.4, la app consulta:
 
 ```text
 https://kora.iguzman.com.mx/downloads/latest.json
 ```
 
 El manifiesto lo genera `deploy.sh` con la versión, las URLs de los paquetes y
-sus hashes SHA-256. En **Ajustes → Acerca de** puedes cambiar esa URL si usas
-otra copia de Kora. El APK de Android descarga la actualización y la instala
-desde la propia app; en escritorio se abre la sección de descargas.
+sus hashes SHA-256. Las builds nuevas usan siempre ese manifiesto y ya no permiten cambiarlo desde
+Ajustes. Para pruebas de desarrollo se puede definir
+`KORA_UPDATE_MANIFEST_URL` en el entorno del proceso. El APK de Android
+descarga la actualización y la instala desde la propia app; en escritorio se
+abre la sección de descargas del clúster.
 
 ### Dependencias opcionales
 
@@ -69,8 +84,12 @@ EPUB y PDF desde Descargas, Drive o cualquier proveedor de documentos.
 
 La importación de audiolibros en Android usa `MediaMetadataRetriever` para leer
 título, artista, duración y portada embebida. Kora guarda el audio y crea
-capítulos en bloques de diez minutos (Android no incluye `ffmpeg`). La
-transcripción automática con Whisper sigue siendo exclusiva del escritorio.
+capítulos en bloques de diez minutos. La transcripción automática con Whisper
+también funciona en el teléfono: descarga **Whisper Base** o **Tiny** desde el
+modal de importación (147 MB / 78 MB), elige **Audio + texto** y mantén la app o
+la pantalla bloqueada; un servicio en primer plano evita que Android corte la
+tarea. La generación de audiolibros con voces sigue siendo exclusiva del
+escritorio.
 
 ### Primer arranque
 
@@ -100,8 +119,9 @@ completa o exporta tus libros y el diario.
 ## Android (APK núcleo)
 
 El APK de esta fase se compila con `.github/workflows/android.yml`, que solo
-**valida** que la compilación Android siga funcionando; no publica artefactos en
-GitHub. Para obtener un APK, compílalo en una máquina x86_64 con el SDK/NDK
+**valida** que la compilación Android siga funcionando; no publica artefactos ni
+releases. El APK que se descarga es el que `deploy.sh` publica en el clúster.
+Para obtener un APK, compílalo en una máquina x86_64 con el SDK/NDK
 instalados:
 
 ```bash

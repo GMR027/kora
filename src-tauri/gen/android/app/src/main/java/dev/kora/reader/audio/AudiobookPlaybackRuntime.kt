@@ -111,6 +111,7 @@ object PlaybackRuntime {
     private var coverPath: String? = null
     private var chaptersJson: String? = null
     private var chapters: List<PlaybackChapter> = emptyList()
+    private var metadataChapterIndex = -1
     private var lastError: String? = null
     private var ended = false
     private var keepScreenOn = false
@@ -132,6 +133,7 @@ object PlaybackRuntime {
                 }
                 emit("tick")
                 saveCheckpoint(force = false)
+                updateChapterMetadataLocked(exo.currentPosition)
                 tickHandler.postDelayed(this, TICK_INTERVAL_MS)
             }
         }
@@ -174,7 +176,10 @@ object PlaybackRuntime {
                 reason == Player.DISCONTINUITY_REASON_SEEK ||
                 reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT
             ) {
-                synchronized(lock) { saveCheckpoint(force = true) }
+                synchronized(lock) {
+                    saveCheckpoint(force = true)
+                    updateChapterMetadataLocked(player?.currentPosition ?: 0L)
+                }
                 emit("seek")
             }
         }
@@ -269,6 +274,7 @@ object PlaybackRuntime {
                 android.app.PendingIntent.getActivity(appContext, 0, it, flags)
             }
             mediaSession = MediaSession.Builder(appContext, wrapper)
+                .setId("kora-audiobook")
                 .setPeriodicPositionUpdateEnabled(true)
                 .apply {
                     if (pendingIntent != null) setSessionActivity(pendingIntent)
@@ -299,14 +305,12 @@ object PlaybackRuntime {
             ended = false
             lastError = null
             lastCheckpointAt = 0L
+            metadataChapterIndex = chapterIndexAt(args.startMs)
 
-            val metadata = MediaMetadata.Builder()
-                .setTitle(args.title.ifBlank { "Audiolibro" })
-                .setArtist(args.artist?.takeIf { it.isNotBlank() } ?: "Kora")
-                .setArtworkUri(args.coverPath?.let { Uri.fromFile(File(it)) })
-                .setIsPlayable(true)
-                .setIsBrowsable(false)
-                .build()
+            val chapterTitle = chapters.getOrNull(metadataChapterIndex)?.title
+                ?: args.artist?.takeIf { it.isNotBlank() }
+                ?: "Kora"
+            val metadata = buildMetadata(args.title, chapterTitle, args.coverPath)
             val itemBuilder = MediaItem.Builder()
                 .setUri(Uri.fromFile(File(args.src)))
                 .setMediaMetadata(metadata)
@@ -369,6 +373,7 @@ object PlaybackRuntime {
             lastError = null
             exo.seekTo(positionMs.coerceIn(0, duration))
             lastCheckpointAt = 0L
+            updateChapterMetadataLocked(exo.currentPosition)
             syncTickerLocked()
         }
         emit("seek")
@@ -398,6 +403,7 @@ object PlaybackRuntime {
             coverPath = null
             chaptersJson = null
             chapters = emptyList()
+            metadataChapterIndex = -1
             ended = false
             lastError = null
             tickHandler.removeCallbacks(ticker)
@@ -509,6 +515,7 @@ object PlaybackRuntime {
             coverPath = null
             chaptersJson = null
             chapters = emptyList()
+            metadataChapterIndex = -1
             lastError = null
             ended = false
             lastCheckpointAt = 0L
@@ -593,6 +600,44 @@ object PlaybackRuntime {
         if (chapters.isEmpty()) return 0
         val position = positionMs.coerceAtLeast(0)
         return chapters.indexOfLast { position >= it.startMs }.coerceAtLeast(0)
+    }
+
+    private fun buildMetadata(
+        bookTitle: String,
+        chapterTitle: String,
+        cover: String?,
+    ): MediaMetadata = MediaMetadata.Builder()
+        .setTitle(bookTitle.ifBlank { "Audiolibro" })
+        .setArtist(chapterTitle.ifBlank { "Kora" })
+        .setArtworkUri(cover?.takeIf { it.isNotBlank() }?.let { Uri.fromFile(File(it)) })
+        .setIsPlayable(true)
+        .setIsBrowsable(false)
+        .build()
+
+    /**
+     * Mantiene el capítulo visible en la notificación y en la pantalla de
+     * bloqueo al avanzar de capítulo sin reiniciar la reproducción.
+     */
+    private fun updateChapterMetadataLocked(positionMs: Long) {
+        val exo = player ?: return
+        if (chapters.isEmpty()) return
+        val index = chapterIndexAt(positionMs)
+        if (index == metadataChapterIndex) return
+        val item = exo.currentMediaItem ?: return
+        val chapterTitle = chapters.getOrNull(index)?.title
+            ?: artist?.takeIf { it.isNotBlank() }
+            ?: "Kora"
+        metadataChapterIndex = index
+        runCatching {
+            exo.replaceMediaItem(
+                exo.currentMediaItemIndex,
+                item.buildUpon()
+                    .setMediaMetadata(buildMetadata(title ?: "Audiolibro", chapterTitle, coverPath))
+                    .build(),
+            )
+        }.onFailure { error ->
+            Log.w(TAG, "no se pudo actualizar el capítulo en la notificación", error)
+        }
     }
 
     private fun mimeTypeFor(path: String): String? {

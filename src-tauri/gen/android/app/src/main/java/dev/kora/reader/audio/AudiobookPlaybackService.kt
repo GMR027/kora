@@ -23,11 +23,17 @@ class AudiobookPlaybackService : MediaSessionService() {
         setMediaNotificationProvider(provider)
         setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_NEVER)
 
-        runCatching { PlaybackRuntime.ensure(applicationContext) }
-            .onFailure { error ->
-                Log.e("KoraAudio", "no se pudo inicializar el reproductor", error)
-                stopSelf()
-            }
+        runCatching {
+            PlaybackRuntime.ensure(applicationContext)
+            // El reproductor y la sesión viven fuera del servicio para sobrevivir
+            // a la recreación de la Activity. Hay que registrar la sesión aquí
+            // para que Media3 cree la notificación multimedia y el servicio
+            // entre en primer plano, igual que un reproductor de música.
+            PlaybackRuntime.mediaSession()?.let { addSession(it) }
+        }.onFailure { error ->
+            Log.e("KoraAudio", "no se pudo inicializar el reproductor", error)
+            stopSelf()
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =

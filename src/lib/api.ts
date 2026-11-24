@@ -135,10 +135,8 @@ export const aiChat = (
 // --- Aplicación y almacenamiento -------------------------------------------
 
 export const appInfo = () => invoke<AppInfo>("app_info");
-export const checkAppUpdate = (manifestUrl?: string) =>
-  invoke<UpdateCheck>("check_app_update", {
-    manifestUrl: manifestUrl?.trim() || null,
-  });
+export const checkAppUpdate = () =>
+  invoke<UpdateCheck>("check_app_update");
 export const openExternalUrl = (url: string) =>
   invoke<void>("open_external_url", { url });
 
@@ -852,8 +850,14 @@ export const importAudioAudiobook = (
   path: string,
   options: AudioImportOptions,
   metadata: AndroidAudioMetadata | null = null,
+  transcribe = false,
 ) =>
-  invoke<AudiobookInfo>("import_audio_audiobook", { path, options, metadata });
+  invoke<AudiobookInfo>("import_audio_audiobook", {
+    path,
+    options,
+    metadata,
+    transcribe,
+  });
 
 export const reanalyzeAudiobookChapters = (
   audiobookId: string,
@@ -873,8 +877,11 @@ export const updateAudiobookChapters = (
     chapters,
   });
 
-export const transcribeAudiobookLater = (audiobookId: string) =>
-  invoke<AudiobookInfo>("transcribe_audiobook_later", { audiobookId });
+export const transcribeAudiobookLater = (
+  audiobookId: string,
+  modelId: string | null = null,
+) =>
+  invoke<AudiobookInfo>("transcribe_audiobook_later", { audiobookId, modelId });
 
 export const playAudiobook = (audiobookId: string) =>
   invoke<PlaybackSnapshot>("play_audiobook", { audiobookId });

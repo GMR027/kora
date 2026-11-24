@@ -421,6 +421,35 @@ class MainActivity : TauriActivity() {
     @JavascriptInterface
     fun probeAudio(path: String): String = probeAudioFile(path)
 
+    // El diálogo de guardado entrega un `content://`; el backend escribe en
+    // una ruta temporal de la caché y este puente copia el resultado.
+    @JavascriptInterface
+    fun saveExportFile(uri: String, path: String): String {
+      if (!uri.startsWith("content://")) return "destino no válido"
+      val source = try {
+        File(path).canonicalFile
+      } catch (_: Exception) {
+        return "ruta de exportación no válida"
+      }
+      return try {
+        val cacheRoot = cacheDir.canonicalFile
+        if (!source.path.startsWith(cacheRoot.path + File.separator)) {
+          return "ruta de exportación no válida"
+        }
+        if (!source.isFile) return "no se encontró el archivo exportado"
+        val output = contentResolver.openOutputStream(Uri.parse(uri), "wt")
+          ?: return "no se pudo abrir el destino"
+        output.use { out ->
+          source.inputStream().use { input -> input.copyTo(out) }
+        }
+        ""
+      } catch (error: Exception) {
+        error.message ?: "no se pudo guardar el archivo"
+      } finally {
+        runCatching { source.delete() }
+      }
+    }
+
     @JavascriptInterface
     fun discardImportFile(path: String) {
       try {

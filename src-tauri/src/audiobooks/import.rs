@@ -24,6 +24,16 @@ use super::scope::AudiobookScope;
 const CHUNK_SECONDS: f64 = 600.0;
 const DEFAULT_WHISPER_MODEL: &str = "base";
 
+#[cfg(target_os = "android")]
+struct AndroidTranscriptionService;
+
+#[cfg(target_os = "android")]
+impl Drop for AndroidTranscriptionService {
+    fn drop(&mut self) {
+        let _ = super::player::stop_transcription_service();
+    }
+}
+
 /// Importa un audiolibro externo, lo transcribe con Whisper y crea un libro
 /// consultable (EPUB) más su fila de audiolibro.
 pub async fn import(
@@ -78,6 +88,10 @@ pub async fn import(
             "descarga el modelo Whisper Base en Ajustes para transcribir audiolibros".into(),
         ));
     }
+    let engine = tokio::task::spawn_blocking(move || practice::WhisperEngine::load(&whisper_path))
+        .await
+        .map_err(|error| KoraError::Internal(format!("tarea de Whisper: {error}")))??;
+    let engine = std::sync::Arc::new(engine);
 
     let probe = tokio::task::spawn_blocking({
         let path = source_path.clone();
@@ -193,7 +207,7 @@ pub async fn import(
     let transcription = transcribe_all(
         app,
         &source_path,
-        &whisper_path,
+        engine,
         &workspace,
         &probe,
         duration_ms,
@@ -415,6 +429,7 @@ pub async fn transcribe_existing(
     state: &AppState,
     app: &AppHandle,
     audiobook_id: &str,
+    model_id: Option<&str>,
     control: Option<&GenerationControl>,
 ) -> Result<Audiobook> {
     let Some(mut audiobook) = state.storage.audiobooks.get(audiobook_id).await? else {
@@ -431,15 +446,34 @@ pub async fn transcribe_existing(
             "este audiolibro ya tiene una transcripción".into(),
         ));
     }
+    #[cfg(target_os = "android")]
+    let _transcription_service = {
+        let _ = super::player::start_transcription_service(&book.title);
+        AndroidTranscriptionService
+    };
+    #[cfg(not(target_os = "android"))]
     m4b::ensure_available()?;
-    let model = find_model(DEFAULT_WHISPER_MODEL)
-        .ok_or_else(|| KoraError::Internal("no hay un modelo Whisper por defecto".into()))?;
+    let model = model_id
+        .and_then(find_model)
+        .filter(|spec| practice::installed(&state.layout.assets, spec.id))
+        .or_else(|| {
+            let base = find_model(DEFAULT_WHISPER_MODEL)?;
+            practice::installed(&state.layout.assets, base.id).then_some(base)
+        })
+        .or_else(|| {
+            let tiny = find_model("tiny")?;
+            practice::installed(&state.layout.assets, tiny.id).then_some(tiny)
+        })
+        .ok_or_else(|| {
+            KoraError::Unsupported(
+                "descarga el modelo Whisper Base o Tiny para transcribir audiolibros".into(),
+            )
+        })?;
     let whisper_path = model_path(&state.layout.assets, model.id);
-    if !practice::installed(&state.layout.assets, model.id) {
-        return Err(KoraError::Unsupported(
-            "descarga el modelo Whisper Base en Ajustes para transcribir audiolibros".into(),
-        ));
-    }
+    let engine = tokio::task::spawn_blocking(move || practice::WhisperEngine::load(&whisper_path))
+        .await
+        .map_err(|error| KoraError::Internal(format!("tarea de Whisper: {error}")))??;
+    let engine = std::sync::Arc::new(engine);
     if let Some(control) = control {
         control.checkpoint().await?;
     }
@@ -450,6 +484,7 @@ pub async fn transcribe_existing(
         .duration_ms
         .max(audiobook.duration_ms.unwrap_or(0))
         .max(1);
+    #[cfg(not(target_os = "android"))]
     let probe = tokio::task::spawn_blocking({
         let source_path = source_path.clone();
         move || m4b::probe(&source_path)
@@ -457,8 +492,38 @@ pub async fn transcribe_existing(
     .await
     .map_err(|error| KoraError::Internal(format!("tarea de ffprobe: {error}")))??;
 
+    #[cfg(target_os = "android")]
+    let probe = m4b::ProbeInfo {
+        duration_ms,
+        title: Some(book.title.clone()),
+        artist: book.author.clone(),
+        language: book.language.clone(),
+        genre: None,
+        comment: book.description.clone(),
+        chapters: manifest
+            .chapters
+            .iter()
+            .map(|chapter| m4b::ProbeChapter {
+                start_ms: chapter.start_ms,
+                end_ms: chapter.end_ms,
+                title: chapter.title.clone(),
+            })
+            .collect(),
+    };
+
     let detection = if manifest.chapters.is_empty() {
-        detect_chapters(app, &source_path, &probe, duration_ms, control).await?
+        #[cfg(not(target_os = "android"))]
+        {
+            detect_chapters(app, &source_path, &probe, duration_ms, control).await?
+        }
+        #[cfg(target_os = "android")]
+        {
+            let fixed = super::import_audio::fixed_detection(duration_ms);
+            ChapterDetection {
+                chapters: fixed.chapters,
+                source: fixed.source,
+            }
+        }
     } else {
         ChapterDetection {
             chapters: manifest
@@ -488,20 +553,30 @@ pub async fn transcribe_existing(
         return Err(error);
     }
 
-    let embedded_cover = workspace.join("embedded-cover.png");
-    let has_embedded_cover = tokio::task::spawn_blocking({
-        let source_path = source_path.clone();
-        let embedded_cover = embedded_cover.clone();
-        move || m4b::extract_cover(&source_path, &embedded_cover)
-    })
-    .await
-    .map_err(|error| KoraError::Internal(format!("tarea de portada: {error}")))?
-    .unwrap_or(false);
+    let existing_cover = {
+        #[cfg(not(target_os = "android"))]
+        {
+            let embedded_cover = workspace.join("embedded-cover.png");
+            let has_embedded_cover = tokio::task::spawn_blocking({
+                let source_path = source_path.clone();
+                let embedded_cover = embedded_cover.clone();
+                move || m4b::extract_cover(&source_path, &embedded_cover)
+            })
+            .await
+            .map_err(|error| KoraError::Internal(format!("tarea de portada: {error}")))?
+            .unwrap_or(false);
+            has_embedded_cover.then_some(embedded_cover)
+        }
+        #[cfg(target_os = "android")]
+        {
+            crate::commands::audiobooks::cover_path(state, &book).map(PathBuf::from)
+        }
+    };
 
     let (transcript_chapters, mut manifest_chapters) = match transcribe_all(
         app,
         &source_path,
-        &whisper_path,
+        engine,
         &workspace,
         &probe,
         duration_ms,
@@ -555,8 +630,8 @@ pub async fn transcribe_existing(
     );
 
     let result = async {
-        let cover_path = if has_embedded_cover && embedded_cover.is_file() {
-            embedded_cover.clone()
+        let cover_path = if let Some(existing) = existing_cover.filter(|path| path.is_file()) {
+            existing
         } else {
             let generated = workspace.join("cover.png");
             cover::render_cover(
@@ -571,6 +646,11 @@ pub async fn transcribe_existing(
             )?;
             generated
         };
+        let cover_ext = cover_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("png")
+            .to_ascii_lowercase();
 
         let epub_path = workspace.join("transcripcion.epub");
         epub::build_epub(
@@ -593,10 +673,11 @@ pub async fn transcribe_existing(
                 .storage
                 .assets
                 .put_file(AssetKind::GeneratedBook, &epub_path, "epub")?;
-        let cover_asset = state
-            .storage
-            .assets
-            .put_file(AssetKind::Cover, &cover_path, "png")?;
+        let cover_asset =
+            state
+                .storage
+                .assets
+                .put_file(AssetKind::Cover, &cover_path, &cover_ext)?;
         let size_bytes = std::fs::metadata(&epub_path)
             .map(|meta| meta.len())
             .unwrap_or(0) as i64;
@@ -606,11 +687,19 @@ pub async fn transcribe_existing(
         book.content_hash = epub_asset.hash;
         book.content_ext = "epub".to_string();
         book.cover_hash = Some(cover_asset.hash);
-        book.cover_ext = Some("png".to_string());
+        book.cover_ext = Some(cover_ext);
         book.size_bytes = size_bytes;
-        book.description = Some(probe.comment.clone().unwrap_or_else(|| {
-            "Transcripción local de un audiolibro importado sin texto.".to_string()
-        }));
+        book.description = Some(
+            probe
+                .comment
+                .clone()
+                .filter(|text| {
+                    !text.contains("sin transcripción") && !text.contains("bloques de diez minutos")
+                })
+                .unwrap_or_else(|| {
+                    "Transcripción local de un audiolibro importado sin texto.".to_string()
+                }),
+        );
         book.origin = BookOrigin::Transcribed;
         book.audio_only = false;
         state.storage.books.update(&book).await?;
@@ -823,11 +912,34 @@ async fn detect_chapters(
     Ok(detection)
 }
 
+/// Extrae un fragmento de audio como WAV mono. En escritorio usa `ffmpeg`;
+/// en Android el decodificador nativo del plugin de audio.
+fn extract_chunk(
+    source: &Path,
+    wav_path: &Path,
+    start_seconds: f64,
+    chunk_seconds: f64,
+) -> Result<()> {
+    #[cfg(not(target_os = "android"))]
+    {
+        m4b::extract_wav(source, wav_path, Some(start_seconds), Some(chunk_seconds))
+            .map_err(|error| KoraError::Internal(format!("ffmpeg: {error:#}")))
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        let start_ms = (start_seconds * 1000.0).round() as i64;
+        let duration_ms = (chunk_seconds * 1000.0).round() as i64;
+        super::player::decode_audio_range(source, wav_path, start_ms, duration_ms)
+            .map_err(|error| KoraError::Internal(format!("decodificador Android: {error:#}")))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn transcribe_all(
     app: &AppHandle,
     source: &Path,
-    whisper_path: &Path,
+    engine: std::sync::Arc<practice::WhisperEngine>,
     workspace: &Path,
     probe: &m4b::ProbeInfo,
     duration_ms: i64,
@@ -869,6 +981,9 @@ async fn transcribe_all(
                 break;
             }
 
+            let chunk_base = 8.0 + (processed_seconds / duration_seconds) * 78.0;
+            let chunk_percent = (chunk_seconds / duration_seconds) * 78.0;
+
             emit_progress(
                 app,
                 AudiobookProgressEvent {
@@ -876,44 +991,84 @@ async fn transcribe_all(
                     phase: "transcribing".to_string(),
                     chapter: chapter_index + 1,
                     total_chapters,
-                    percent: 8.0 + (processed_seconds / duration_seconds) * 78.0,
+                    percent: chunk_base,
                     message: format!("Transcribiendo «{}»", chapter.title),
                 },
             );
 
             let wav_path = workspace.join(format!("part-{chapter_index:03}-{part:02}.wav"));
-            m4b::extract_wav(source, &wav_path, Some(start_seconds), Some(chunk_seconds))?;
+            extract_chunk(source, &wav_path, start_seconds, chunk_seconds)?;
             let samples = audio::read_wav_mono(&wav_path)?;
-            let model_path = whisper_path.to_path_buf();
-            let segments = tokio::task::spawn_blocking(move || -> Result<Vec<TimedSegment>> {
-                match practice::transcribe_timed(&model_path, &samples, "auto") {
-                    Ok(segments)
-                        if segments
-                            .iter()
-                            .any(|segment| !segment.text.trim().is_empty()) =>
-                    {
-                        Ok(segments)
+            let progress_value = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
+            let ticker = {
+                let app = app.clone();
+                let title = chapter.title.clone();
+                let value = progress_value.clone();
+                tokio::spawn(async move {
+                    let mut last = u8::MAX;
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                        let current = value.load(std::sync::atomic::Ordering::Relaxed);
+                        if current == last {
+                            continue;
+                        }
+                        last = current;
+                        emit_progress(
+                            &app,
+                            AudiobookProgressEvent {
+                                audiobook_id: None,
+                                phase: "transcribing".to_string(),
+                                chapter: chapter_index + 1,
+                                total_chapters,
+                                percent: chunk_base + chunk_percent * current as f64 / 100.0,
+                                message: format!("Transcribiendo «{}»", title),
+                            },
+                        );
                     }
-                    // Si el modelo no soporta timestamps de token, seguimos
-                    // con la transcripción normal y la línea queda estimada.
-                    _ => {
-                        let text = practice::transcribe(&model_path, &samples, "auto")?;
-                        let text = text.trim().to_string();
-                        if text.is_empty() {
-                            Ok(Vec::<TimedSegment>::new())
-                        } else {
-                            Ok(vec![TimedSegment {
-                                start_ms: 0,
-                                end_ms: (samples.len() as i64 * 1000 / 16_000).max(1),
-                                text,
-                                words: Vec::new(),
-                            }])
+                })
+            };
+            let engine = engine.clone();
+            let progress = progress_value.clone();
+            let progress_fallback = progress_value.clone();
+            let transcription =
+                tokio::task::spawn_blocking(move || -> Result<Vec<TimedSegment>> {
+                    match engine.transcribe_timed_with_progress(&samples, "auto", move |value| {
+                        progress.store(
+                            value.clamp(0, 100) as u8,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                    }) {
+                        Ok(segments)
+                            if segments
+                                .iter()
+                                .any(|segment| !segment.text.trim().is_empty()) =>
+                        {
+                            Ok(segments)
+                        }
+                        // Si el modelo no soporta timestamps de token, seguimos
+                        // con la transcripción normal y la línea queda estimada.
+                        _ => {
+                            progress_fallback.store(100, std::sync::atomic::Ordering::Relaxed);
+                            let text = engine.transcribe(&samples, "auto")?;
+                            let text = text.trim().to_string();
+                            if text.is_empty() {
+                                Ok(Vec::<TimedSegment>::new())
+                            } else {
+                                Ok(vec![TimedSegment {
+                                    start_ms: 0,
+                                    end_ms: (samples.len() as i64 * 1000 / 16_000).max(1),
+                                    text,
+                                    words: Vec::new(),
+                                }])
+                            }
                         }
                     }
-                }
-            })
-            .await
-            .map_err(|error| KoraError::Internal(format!("tarea de Whisper: {error}")))??;
+                })
+                .await;
+            ticker.abort();
+            progress_value.store(100, std::sync::atomic::Ordering::Relaxed);
+            let segments = transcription
+                .map_err(|error| KoraError::Internal(format!("tarea de Whisper: {error}")))??;
 
             if let Some(control) = control {
                 control.checkpoint().await?;

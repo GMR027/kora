@@ -145,6 +145,70 @@ struct SessionStateArgs<'a> {
     error: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SynthesizeArgs<'a> {
+    text: &'a str,
+    language: Option<&'a str>,
+    voice_id: Option<&'a str>,
+    rate: f32,
+    pitch: f32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SynthesizeResponse {
+    path: String,
+}
+
+/// Lee el WAV que escribe `TextToSpeech.synthesizeToFile` y lo convierte al
+/// PCM que espera el resto de Kora.
+fn read_synthesized_wav(path: &str) -> Result<AudioChunk> {
+    let mut reader = hound::WavReader::open(path)
+        .map_err(|error| KoraError::Internal(format!("WAV de Android inválido: {error}")))?;
+    let spec = reader.spec();
+    let invalid =
+        |error: hound::Error| KoraError::Internal(format!("WAV de Android inválido: {error}"));
+
+    let pcm: Vec<i16> = match spec.sample_format {
+        hound::SampleFormat::Float => reader
+            .samples::<f32>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(invalid)?
+            .into_iter()
+            .map(|sample| (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
+            .collect(),
+        hound::SampleFormat::Int => {
+            if spec.bits_per_sample <= 16 {
+                reader
+                    .samples::<i16>()
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(invalid)?
+            } else {
+                let shift = 32u32.saturating_sub(spec.bits_per_sample.min(32) as u32);
+                reader
+                    .samples::<i32>()
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(invalid)?
+                    .into_iter()
+                    .map(|sample| (sample >> shift) as i16)
+                    .collect()
+            }
+        }
+    };
+
+    if pcm.is_empty() {
+        return Err(KoraError::Internal(
+            "el motor TTS de Android devolvió audio vacío".into(),
+        ));
+    }
+
+    Ok(AudioChunk {
+        pcm,
+        sample_rate: spec.sample_rate.max(8_000),
+        channels: spec.channels.max(1),
+    })
+}
+
 /// Motor TTS nativo de Android. El plugin Kotlin conserva `TextToSpeech` en un
 /// singleton de proceso y publica una sesión Media3 para la pantalla de bloqueo.
 pub struct AndroidTtsEngine {
@@ -224,10 +288,39 @@ impl TtsEngine for AndroidTtsEngine {
             .collect())
     }
 
-    async fn synthesize(&self, _request: &SynthesisRequest) -> Result<AudioChunk> {
-        Err(KoraError::Unsupported(
-            "Android TextToSpeech no expone audio PCM para previsualizar".into(),
-        ))
+    async fn synthesize(&self, request: &SynthesisRequest) -> Result<AudioChunk> {
+        let handle = plugin_handle()?;
+        let text = request.text.trim().to_string();
+        if text.is_empty() {
+            return Err(KoraError::InvalidInput(
+                "la vista previa necesita texto".into(),
+            ));
+        }
+        let voice_id = request.voice_id.trim().to_string();
+        let rate = request.rate.clamp(0.5, 3.0);
+        let pitch = request.pitch.clamp(0.5, 2.0);
+
+        let path = tokio::task::spawn_blocking(move || -> Result<String> {
+            let response: SynthesizeResponse = handle
+                .run_mobile_plugin(
+                    "synthesize",
+                    SynthesizeArgs {
+                        text: &text,
+                        language: None,
+                        voice_id: (!voice_id.is_empty()).then_some(voice_id.as_str()),
+                        rate,
+                        pitch,
+                    },
+                )
+                .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))?;
+            Ok(response.path)
+        })
+        .await
+        .map_err(|error| KoraError::Internal(format!("tarea de síntesis Android: {error}")))??;
+
+        let result = read_synthesized_wav(&path);
+        let _ = std::fs::remove_file(&path);
+        result
     }
 
     async fn speak(&self, request: &SpeakRequest) -> Result<()> {

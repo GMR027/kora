@@ -377,141 +377,140 @@ pub struct TimedSegment {
     pub words: Vec<TimedWord>,
 }
 
-#[cfg(target_os = "android")]
-pub fn transcribe(_model: &Path, _samples: &[f32], _language: &str) -> Result<String> {
-    Err(KoraError::Unsupported(
-        "el modo ensayo con Whisper aún no está disponible en Android".into(),
-    ))
+/// Carga el modelo una sola vez para transcribir varios fragmentos seguidos.
+/// En móvil esto evita releer cientos de megas entre capítulo y capítulo.
+pub struct WhisperEngine {
+    context: whisper_rs::WhisperContext,
 }
 
-#[cfg(target_os = "android")]
-pub fn transcribe_timed(
-    _model: &Path,
-    _samples: &[f32],
-    _language: &str,
-) -> Result<Vec<TimedSegment>> {
-    Err(KoraError::Unsupported(
-        "la transcripción con timestamps aún no está disponible en Android".into(),
-    ))
-}
+impl WhisperEngine {
+    pub fn load(model: &Path) -> Result<Self> {
+        use whisper_rs::{WhisperContext, WhisperContextParameters};
 
-#[cfg(not(target_os = "android"))]
-pub fn transcribe(model: &Path, samples: &[f32], language: &str) -> Result<String> {
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-
-    let model = model
-        .to_str()
-        .ok_or_else(|| KoraError::InvalidInput("ruta de modelo Whisper no válida".into()))?;
-    let context = WhisperContext::new_with_params(model, WhisperContextParameters::default())
-        .map_err(|error| KoraError::Internal(format!("no se pudo cargar Whisper: {error}")))?;
-    let mut state = context
-        .create_state()
-        .map_err(|error| KoraError::Internal(format!("estado de Whisper: {error}")))?;
-
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    let language = matches!(language, "es" | "en").then_some(language);
-    params.set_language(language);
-    params.set_translate(false);
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    params.set_n_threads(
-        std::thread::available_parallelism()
-            .map(|value| value.get() as i32)
-            .unwrap_or(4)
-            .clamp(1, 8),
-    );
-
-    state
-        .full(params, samples)
-        .map_err(|error| KoraError::Internal(format!("Whisper no pudo transcribir: {error}")))?;
-
-    let segments = state.full_n_segments();
-    let mut text = String::new();
-    for index in 0..segments {
-        if let Some(segment) = state.get_segment(index) {
-            text.push_str(
-                segment
-                    .to_str_lossy()
-                    .map_err(|error| KoraError::Internal(format!("texto de Whisper: {error}")))?
-                    .as_ref(),
-            );
-        }
+        let path = model
+            .to_str()
+            .ok_or_else(|| KoraError::InvalidInput("ruta de modelo Whisper no válida".into()))?;
+        let context = WhisperContext::new_with_params(path, WhisperContextParameters::default())
+            .map_err(|error| KoraError::Internal(format!("no se pudo cargar Whisper: {error}")))?;
+        Ok(Self { context })
     }
 
-    Ok(text.trim().to_string())
+    fn params(language: &str, timed: bool) -> whisper_rs::FullParams<'_, '_> {
+        use whisper_rs::{FullParams, SamplingStrategy};
+
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        let language = matches!(language, "es" | "en").then_some(language);
+        params.set_language(language);
+        params.set_translate(false);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        params.set_n_threads(
+            std::thread::available_parallelism()
+                .map(|value| value.get() as i32)
+                .unwrap_or(4)
+                .clamp(1, 8),
+        );
+        if timed {
+            params.set_token_timestamps(true);
+            params.set_split_on_word(true);
+        }
+        params
+    }
+
+    pub fn transcribe(&self, samples: &[f32], language: &str) -> Result<String> {
+        let mut state = self
+            .context
+            .create_state()
+            .map_err(|error| KoraError::Internal(format!("estado de Whisper: {error}")))?;
+        state
+            .full(Self::params(language, false), samples)
+            .map_err(|error| {
+                KoraError::Internal(format!("Whisper no pudo transcribir: {error}"))
+            })?;
+
+        let mut text = String::new();
+        for index in 0..state.full_n_segments() {
+            if let Some(segment) = state.get_segment(index) {
+                text.push_str(
+                    segment
+                        .to_str_lossy()
+                        .map_err(|error| KoraError::Internal(format!("texto de Whisper: {error}")))?
+                        .as_ref(),
+                );
+            }
+        }
+        Ok(text.trim().to_string())
+    }
+
+    /// Transcribe con timestamps por token para alinear palabra a palabra.
+    /// Los timestamps son experimentales en whisper.cpp: si el modelo no los
+    /// devuelve con suficiente calidad, se omiten las palabras y la interfaz
+    /// reparte la línea por longitud.
+    pub fn transcribe_timed(&self, samples: &[f32], language: &str) -> Result<Vec<TimedSegment>> {
+        self.transcribe_timed_with_progress(samples, language, |_| {})
+    }
+
+    /// Variante con callback de progreso (0–100) para tareas largas.
+    pub fn transcribe_timed_with_progress<F>(
+        &self,
+        samples: &[f32],
+        language: &str,
+        progress: F,
+    ) -> Result<Vec<TimedSegment>>
+    where
+        F: FnMut(i32) + 'static,
+    {
+        let mut state = self
+            .context
+            .create_state()
+            .map_err(|error| KoraError::Internal(format!("estado de Whisper: {error}")))?;
+        let mut params = Self::params(language, true);
+        params.set_progress_callback_safe(progress);
+        state.full(params, samples).map_err(|error| {
+            KoraError::Internal(format!("Whisper no pudo transcribir: {error}"))
+        })?;
+
+        let mut output = Vec::new();
+        for index in 0..state.full_n_segments() {
+            let Some(segment) = state.get_segment(index) else {
+                continue;
+            };
+            let text = segment
+                .to_str_lossy()
+                .map_err(|error| KoraError::Internal(format!("texto de Whisper: {error}")))?
+                .trim()
+                .to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let start_ms = segment.start_timestamp().max(0) * 10;
+            let end_ms = (segment.end_timestamp().max(0) * 10).max(start_ms + 1);
+            let words = words_from_segment(&segment, start_ms, end_ms);
+            output.push(TimedSegment {
+                start_ms,
+                end_ms,
+                text,
+                words,
+            });
+        }
+        Ok(output)
+    }
 }
 
-/// Transcribe con timestamps por token para alinear palabra a palabra. Los
-/// timestamps son experimentales en whisper.cpp: si el modelo no los devuelve
-/// con suficiente calidad, se omiten las palabras y la interfaz reparte la
-/// línea por longitud.
-#[cfg(not(target_os = "android"))]
+pub fn transcribe(model: &Path, samples: &[f32], language: &str) -> Result<String> {
+    WhisperEngine::load(model)?.transcribe(samples, language)
+}
+
 pub fn transcribe_timed(
     model: &Path,
     samples: &[f32],
     language: &str,
 ) -> Result<Vec<TimedSegment>> {
-    use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
-
-    let model = model
-        .to_str()
-        .ok_or_else(|| KoraError::InvalidInput("ruta de modelo Whisper no válida".into()))?;
-    let context = WhisperContext::new_with_params(model, WhisperContextParameters::default())
-        .map_err(|error| KoraError::Internal(format!("no se pudo cargar Whisper: {error}")))?;
-    let mut state = context
-        .create_state()
-        .map_err(|error| KoraError::Internal(format!("estado de Whisper: {error}")))?;
-
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    let language = matches!(language, "es" | "en").then_some(language);
-    params.set_language(language);
-    params.set_translate(false);
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    params.set_token_timestamps(true);
-    params.set_split_on_word(true);
-    params.set_n_threads(
-        std::thread::available_parallelism()
-            .map(|value| value.get() as i32)
-            .unwrap_or(4)
-            .clamp(1, 8),
-    );
-
-    state
-        .full(params, samples)
-        .map_err(|error| KoraError::Internal(format!("Whisper no pudo transcribir: {error}")))?;
-
-    let mut output = Vec::new();
-    for index in 0..state.full_n_segments() {
-        let Some(segment) = state.get_segment(index) else {
-            continue;
-        };
-        let text = segment
-            .to_str_lossy()
-            .map_err(|error| KoraError::Internal(format!("texto de Whisper: {error}")))?
-            .trim()
-            .to_string();
-        if text.is_empty() {
-            continue;
-        }
-        let start_ms = segment.start_timestamp().max(0) * 10;
-        let end_ms = (segment.end_timestamp().max(0) * 10).max(start_ms + 1);
-        let words = words_from_segment(&segment, start_ms, end_ms);
-        output.push(TimedSegment {
-            start_ms,
-            end_ms,
-            text,
-            words,
-        });
-    }
-    Ok(output)
+    WhisperEngine::load(model)?.transcribe_timed(samples, language)
 }
 
-#[cfg(not(target_os = "android"))]
 fn words_from_segment(
     segment: &whisper_rs::WhisperSegment<'_>,
     start_ms: i64,

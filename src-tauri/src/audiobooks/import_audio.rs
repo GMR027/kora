@@ -361,7 +361,7 @@ pub struct AndroidAudioMetadata {
     pub language: Option<String>,
 }
 
-fn fixed_detection(duration_ms: i64) -> AudioChapterDetection {
+pub(super) fn fixed_detection(duration_ms: i64) -> AudioChapterDetection {
     const BLOCK_MS: i64 = 600_000;
     const MAX_CHAPTERS: usize = 300;
 
@@ -402,6 +402,7 @@ pub async fn import_android(
     options: AudioImportOptions,
     metadata: AndroidAudioMetadata,
     control: Option<&GenerationControl>,
+    emit_done: bool,
 ) -> Result<Audiobook> {
     let source_path = PathBuf::from(source);
     if !source_path.is_file() {
@@ -650,20 +651,22 @@ pub async fn import_android(
 
     match result {
         Ok(audiobook) => {
-            emit_progress(
-                app,
-                AudiobookProgressEvent {
-                    audiobook_id: Some(audiobook.id.clone()),
-                    phase: "done".to_string(),
-                    chapter: detection.chapters.len(),
-                    total_chapters: detection.chapters.len(),
-                    percent: 100.0,
-                    message: format!(
-                        "«{title}» importado con {} capítulos",
-                        detection.chapters.len()
-                    ),
-                },
-            );
+            if emit_done {
+                emit_progress(
+                    app,
+                    AudiobookProgressEvent {
+                        audiobook_id: Some(audiobook.id.clone()),
+                        phase: "done".to_string(),
+                        chapter: detection.chapters.len(),
+                        total_chapters: detection.chapters.len(),
+                        percent: 100.0,
+                        message: format!(
+                            "«{title}» importado con {} capítulos",
+                            detection.chapters.len()
+                        ),
+                    },
+                );
+            }
             Ok(audiobook)
         }
         Err(error) => {

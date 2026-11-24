@@ -219,6 +219,10 @@
   let karaokeOpen = $state(false);
   let playbackAt = $state(Date.now());
   let frameClock = $state(Date.now());
+  let playerExpanded = $state(false);
+  let sheetDrag = $state(0);
+  let sheetDragging = $state(false);
+  let sheetDragStart = 0;
 
   const KARAOKE_PRECISION_KEYS: Record<KaraokePrecision, MessageKey> = {
     aligned: "audiobooks.karaokeAligned",
@@ -543,6 +547,15 @@
   });
 
   $effect(() => {
+    if (!(playback && playerExpanded)) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  });
+
+  $effect(() => {
     if (!activeTaskStartedAt) return;
     const timer = setInterval(() => {
       clock = Date.now();
@@ -613,6 +626,9 @@
       playback = current;
       playbackAt = Date.now();
       frameClock = playbackAt;
+      if (!loaded) {
+        playerExpanded = current?.playing ?? false;
+      }
       syncKaraoke(current);
       capabilities = caps;
       if (voiceState) voiceStatus = voiceState;
@@ -752,6 +768,7 @@
         await stopVoiceIfListening();
         await endListeningSession();
         playback = await stopAudiobook();
+        playerExpanded = false;
         waveform = null;
         waveformKey = null;
       }
@@ -1269,7 +1286,7 @@
     busy = "transcribe";
     hiddenProgress = false;
     activeTaskTitleOverride = title;
-    activeTaskVoiceOverride = translate("audiobooks.whisperBase");
+    activeTaskVoiceOverride = "Whisper";
     activeTaskCoverOverride = null;
     try {
       const updated = await transcribeAudiobookLater(id);
@@ -1343,6 +1360,7 @@
   async function importAudiobook(
     kind: "audio" | "transcribe",
     detection: AudioImportMode,
+    modelId: "tiny" | "base" | null = null,
   ) {
     error = null;
     notice = null;
@@ -1396,23 +1414,36 @@
       staged.split(/[\\/]/).pop() ?? translate("audiobooks.import");
     activeTaskVoiceOverride =
       kind === "transcribe"
-        ? translate("audiobooks.whisperBase")
+        ? modelId === "tiny"
+          ? "Whisper Tiny"
+          : translate("audiobooks.whisperBase")
         : "Análisis de capítulos";
     activeTaskCoverOverride = null;
     importOpen = false;
     try {
       const imported =
-        kind === "transcribe"
-          ? await importExternalAudiobook(staged)
-          : await importAudioAudiobook(
+        kind === "transcribe" && nativeAudioImport
+          ? await importAudioAudiobook(
               staged,
               {
                 mode: detection,
                 language: metadata?.language ?? null,
-                modelId: null,
+                modelId,
               } satisfies AudioImportOptions,
               metadata,
-            );
+              true,
+            )
+          : kind === "transcribe"
+            ? await importExternalAudiobook(staged)
+            : await importAudioAudiobook(
+                staged,
+                {
+                  mode: detection,
+                  language: metadata?.language ?? null,
+                  modelId: null,
+                } satisfies AudioImportOptions,
+                metadata,
+              );
       notice =
         kind === "transcribe"
           ? translate("audiobooks.importNotice", { title: imported.bookTitle })
@@ -1557,6 +1588,7 @@
     try {
       if (playback?.audiobookId !== item.id || !playback.playing) {
         playback = await playAudiobook(item.id);
+        playerExpanded = true;
         const bookItem = audiobooks.find((entry) => entry.id === item.id);
         if (bookItem) await startListeningSession(bookItem.bookId);
       }
@@ -1576,6 +1608,8 @@
       frameClock = playbackAt;
       syncKaraoke(current);
       if (!current) {
+        playerExpanded = false;
+        sheetDrag = 0;
         waveform = null;
         waveformKey = null;
         waveformLoading = false;
@@ -1634,6 +1668,7 @@
         }
         playback = await playAudiobook(item.id);
         applyPlayback(playback);
+        playerExpanded = true;
         void loadWaveform(item);
         await startListeningSession(item.bookId);
         await loadChapters(item.id);
@@ -1662,6 +1697,8 @@
       void setAudiobookSleepTimer(0).catch(() => undefined);
       playback = await stopAudiobook();
       applyPlayback(playback);
+      playerExpanded = false;
+      sheetDrag = 0;
       waveform = null;
       waveformKey = null;
       await endListeningSession();
@@ -1698,6 +1735,7 @@
         await stopAudiobook().catch(() => undefined);
         await stopVoiceIfListening();
         playback = null;
+        playerExpanded = false;
       }
       await deleteAudiobook(item.id);
       if (shareItem?.id === item.id) {
@@ -1903,6 +1941,7 @@
       if (playback?.audiobookId !== id || !playback.playing) {
         await stopVoiceIfListening();
         playback = await playAudiobook(id);
+        playerExpanded = true;
         const item = audiobooks.find((entry) => entry.id === id);
         if (item) await startListeningSession(item.bookId);
       }
@@ -1922,6 +1961,52 @@
     const item = playerItem;
     if (!item) return;
     await togglePlayback(item);
+  }
+
+  function openPlayer() {
+    playerExpanded = true;
+  }
+
+  function minimizePlayer() {
+    playerExpanded = false;
+    sheetDrag = 0;
+    sheetDragging = false;
+  }
+
+  function onSheetPointerDown(event: PointerEvent) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const target = event.currentTarget as HTMLElement;
+    sheetDragging = true;
+    sheetDragStart = event.clientY;
+    sheetDrag = 0;
+    target.setPointerCapture(event.pointerId);
+  }
+
+  function onSheetPointerMove(event: PointerEvent) {
+    if (!sheetDragging) return;
+    sheetDrag = Math.max(0, event.clientY - sheetDragStart);
+  }
+
+  function onSheetPointerEnd(event: PointerEvent) {
+    if (!sheetDragging) return;
+    sheetDragging = false;
+    const shouldMinimize = sheetDrag > 110;
+    sheetDrag = 0;
+    if (shouldMinimize) {
+      minimizePlayer();
+    } else {
+      const target = event.currentTarget as HTMLElement;
+      if (target.hasPointerCapture?.(event.pointerId)) {
+        target.releasePointerCapture(event.pointerId);
+      }
+    }
+  }
+
+  function onPlayerKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape" && playerExpanded) {
+      event.preventDefault();
+      minimizePlayer();
+    }
   }
 
   function voiceLabel(voice: VoiceDescriptor) {
@@ -1977,6 +2062,8 @@
     />
   {/each}
 {/snippet}
+
+<svelte:window onkeydown={onPlayerKeydown} />
 
 <section class="audiobooks">
   <header class="page-head">
@@ -2351,8 +2438,45 @@
   {/if}
 
   {#if playback}
-    <section class="player-dock" aria-label={$t("audiobooks.nowPlaying")}>
-      <div class="player-cover">
+    {#if playerExpanded}
+      <section
+        class="player-dock player-sheet"
+        class:dragging={sheetDragging}
+        style:transform={`translateY(${sheetDrag}px)`}
+        aria-label={$t("audiobooks.nowPlaying")}
+      >
+        <div
+          class="player-sheet-drag"
+          onpointerdown={onSheetPointerDown}
+          onpointermove={onSheetPointerMove}
+          onpointerup={onSheetPointerEnd}
+          onpointercancel={onSheetPointerEnd}
+          aria-hidden="true"
+        >
+          <span class="sheet-grab-pill"></span>
+        </div>
+        <header class="player-sheet-top">
+          <button
+            class="sheet-minimize"
+            type="button"
+            onclick={minimizePlayer}
+            aria-label={$t("audiobooks.minimizePlayer")}
+            title={$t("audiobooks.minimizePlayer")}
+          >
+            <Icon name="chevron" size={17} />
+            <span>{$t("audiobooks.minimizePlayer")}</span>
+          </button>
+          <span class="sheet-kicker">{$t("audiobooks.nowPlaying")}</span>
+        </header>
+      <div
+        class="player-cover"
+        role="img"
+        aria-label={playback.title}
+        onpointerdown={onSheetPointerDown}
+        onpointermove={onSheetPointerMove}
+        onpointerup={onSheetPointerEnd}
+        onpointercancel={onSheetPointerEnd}
+      >
         {#if coverSrc(playerCover)}
           <img src={coverSrc(playerCover)} alt="" />
         {:else}
@@ -2629,7 +2753,48 @@
           <p class="hint">{$t("audiobooks.noChapters")}</p>
         {/if}
       </div>
-    </section>
+      </section>
+    {:else}
+      <section class="player-mini" aria-label={$t("audiobooks.nowPlaying")}>
+        <button
+          class="mini-open"
+          type="button"
+          onclick={openPlayer}
+          aria-label={$t("audiobooks.expandPlayer")}
+          title={$t("audiobooks.expandPlayer")}
+        >
+          <span class="mini-cover">
+            {#if coverSrc(playerCover)}
+              <img src={coverSrc(playerCover)} alt="" />
+            {:else}
+              <Icon name="headphones" size={22} />
+            {/if}
+          </span>
+          <span class="mini-copy">
+            <strong>{playback.title}</strong>
+            <small>{playback.chapterIndex + 1} · {playback.chapterTitle}</small>
+          </span>
+        </button>
+        <button
+          class="mini-toggle"
+          type="button"
+          onclick={togglePlayer}
+          aria-label={playback.playing ? $t("audiobooks.pause") : $t("audiobooks.play")}
+        >
+          <Icon name={playback.playing ? "pause" : "play"} size={18} />
+        </button>
+        <button
+          class="mini-expand"
+          type="button"
+          onclick={openPlayer}
+          aria-label={$t("audiobooks.expandPlayer")}
+          title={$t("audiobooks.expandPlayer")}
+        >
+          <Icon name="chevron" size={16} />
+        </button>
+        <span class="mini-progress" style:width={`${waveformPercent}%`}></span>
+      </section>
+    {/if}
   {/if}
 
   <section class="tools-section">
@@ -2849,7 +3014,8 @@
     importOpen = false;
     error = null;
   }}
-  onChoose={(kind, detection) => void importAudiobook(kind, detection)}
+  onChoose={(kind, detection, modelId) =>
+    void importAudiobook(kind, detection, modelId)}
   onDownloadWhisper={() => void downloadWhisper("base")}
   onDownloadWhisperModel={(modelId) => void downloadWhisper(modelId)}
 />
@@ -4797,6 +4963,450 @@
     .tool-card,
     .karaoke-word {
       transition: none;
+    }
+  }
+
+  /* ── Reproductor a pantalla completa ─────────────────────────────── */
+  .player-dock.player-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    border-radius: 0;
+    background:
+      radial-gradient(
+        680px 420px at 50% -8%,
+        color-mix(in srgb, var(--accent) 12%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        520px 380px at 110% 30%,
+        color-mix(in srgb, var(--gold) 10%, transparent),
+        transparent 72%
+      ),
+      var(--bg);
+    box-shadow: none;
+    transition: transform 190ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .player-dock.player-sheet.dragging {
+    transition: none;
+  }
+
+  .player-sheet-drag {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 100%;
+    height: 34px;
+    padding-top: env(safe-area-inset-top);
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .sheet-grab-pill {
+    width: 46px;
+    height: 5px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--muted) 35%, transparent);
+  }
+
+  .player-sheet-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: 760px;
+    padding: 0 18px 2px;
+  }
+
+  .sheet-minimize {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 34px;
+    padding: 0 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface) 84%, transparent);
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.7rem;
+    font-weight: 650;
+  }
+
+  .sheet-minimize:hover {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .sheet-minimize :global(svg) {
+    transform: rotate(90deg);
+  }
+
+  .sheet-kicker {
+    color: var(--accent);
+    font-size: 0.65rem;
+    font-weight: 750;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+  }
+
+  .player-sheet .player-cover {
+    display: block;
+    flex: 0 0 auto;
+    width: min(56vw, 240px);
+    aspect-ratio: 2 / 3;
+    margin: 8px auto 14px;
+    border-radius: 18px;
+    box-shadow:
+      0 28px 48px -30px color-mix(in srgb, #1a0f0b 55%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent);
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .player-sheet .player-cover img {
+    object-fit: cover;
+  }
+
+  .player-sheet .player-main {
+    flex: 1 1 auto;
+    width: 100%;
+    max-width: 760px;
+    min-height: 0;
+    padding: 0 18px calc(24px + env(safe-area-inset-bottom));
+    gap: 14px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .player-sheet .player-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .player-sheet .player-titles {
+    align-items: center;
+    text-align: center;
+  }
+
+  .player-sheet .player-titles .eyebrow {
+    display: none;
+  }
+
+  .player-sheet .player-titles strong {
+    font-size: clamp(1.25rem, 4.4vw, 1.7rem);
+    line-height: 1.2;
+  }
+
+  .player-sheet .player-titles span {
+    padding: 0 0.4rem;
+    font-size: 0.78rem;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .player-sheet .player-actions {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    max-width: 100%;
+    overflow: visible;
+  }
+
+  .player-sheet .player-actions > :global(*) {
+    flex: 0 0 auto;
+  }
+
+  .player-sheet .speed {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+
+  .player-sheet .speed select {
+    width: auto;
+    min-height: 34px;
+  }
+
+  .player-sheet .player-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "start wave end"
+      "back play forward";
+    align-items: center;
+    gap: 10px 12px;
+    justify-content: stretch;
+  }
+
+  .player-sheet .player-controls > :nth-child(1) {
+    grid-area: back;
+    justify-self: end;
+  }
+
+  .player-sheet .player-controls > :nth-child(2) {
+    grid-area: play;
+    justify-self: center;
+  }
+
+  .player-sheet .player-controls > :nth-child(3) {
+    grid-area: forward;
+    justify-self: start;
+  }
+
+  .player-sheet .player-controls > :nth-child(4) {
+    grid-area: start;
+    justify-self: start;
+  }
+
+  .player-sheet .player-controls > :nth-child(5) {
+    grid-area: wave;
+  }
+
+  .player-sheet .player-controls > :nth-child(6) {
+    grid-area: end;
+    justify-self: end;
+  }
+
+  .player-sheet .player-toggle {
+    width: 62px;
+    min-width: 62px;
+    height: 62px;
+    min-height: 62px;
+    border-radius: 50%;
+  }
+
+  .player-sheet .player-toggle :global(svg) {
+    width: 28px;
+    height: 28px;
+  }
+
+  .player-sheet .skip {
+    width: 48px;
+    min-width: 48px;
+    height: 48px;
+    min-height: 48px;
+    font-size: 0.65rem;
+  }
+
+  .player-sheet .waveform {
+    height: 44px;
+    border-radius: 9px;
+  }
+
+  .player-sheet .waveform-skeleton,
+  .player-sheet .waveform-empty {
+    height: 44px;
+  }
+
+  .player-sheet .waveform-empty {
+    display: none;
+  }
+
+  .player-sheet .time {
+    display: inline;
+    min-width: 3rem;
+    font-size: 0.72rem;
+  }
+
+  .player-sheet .karaoke-line.prev,
+  .player-sheet .karaoke-line.next {
+    display: block;
+  }
+
+  .player-sheet .karaoke-precision {
+    display: inline-flex;
+  }
+
+  .player-sheet .karaoke-panel {
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface) 84%, transparent);
+  }
+
+  .player-sheet .karaoke-line {
+    font-size: 0.9rem;
+  }
+
+  .player-sheet .karaoke-line.now {
+    font-size: 1.02rem;
+  }
+
+  .player-sheet .karaoke-lines {
+    display: flex;
+  }
+
+  .player-sheet .chapter-drawer {
+    display: block;
+  }
+
+  .player-sheet .chapter-list {
+    max-height: none;
+  }
+
+  @media (max-width: 900px) {
+    .player-sheet .player-cover {
+      display: block;
+      width: min(62vw, 230px);
+      margin-top: 4px;
+      margin-bottom: 12px;
+    }
+
+    .player-sheet .player-main {
+      padding: 0 15px calc(20px + env(safe-area-inset-bottom));
+      overflow-x: hidden;
+    }
+
+    .player-sheet .player-actions {
+      justify-content: flex-start;
+      flex-wrap: wrap;
+      max-width: 100%;
+      overflow: visible;
+      padding-bottom: 0;
+    }
+
+    .player-sheet .karaoke-lines {
+      display: flex;
+    }
+
+    .player-sheet .chapter-drawer {
+      display: block;
+    }
+  }
+
+  /* ── Reproductor minimizado ──────────────────────────────────────── */
+  .player-mini {
+    position: sticky;
+    bottom: calc(78px + env(safe-area-inset-bottom));
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px 10px;
+    overflow: hidden;
+    border: 1px solid var(--accent-line);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(12px);
+  }
+
+  .mini-open {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    font: inherit;
+  }
+
+  .mini-cover {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 44px;
+    height: 58px;
+    overflow: hidden;
+    border-radius: 7px;
+    background: linear-gradient(145deg, var(--accent), var(--accent-2));
+    color: var(--accent-contrast);
+    box-shadow: 0 5px 12px -8px var(--shadow-color);
+  }
+
+  .mini-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .mini-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .mini-copy strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-display);
+    font-size: 0.88rem;
+    font-weight: 650;
+  }
+
+  .mini-copy small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font-size: 0.66rem;
+  }
+
+  .mini-toggle,
+  .mini-expand {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    min-height: 38px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .mini-toggle {
+    border-color: color-mix(in srgb, var(--gold-deep) 68%, #1a0f0b);
+    background: linear-gradient(135deg, var(--gold), var(--gold-deep));
+    color: #fff;
+  }
+
+  .mini-expand :global(svg) {
+    transform: rotate(-90deg);
+  }
+
+  .mini-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    border-radius: 0 999px 999px 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 160ms ease;
+  }
+
+  @media (min-width: 901px) {
+    .player-mini {
+      bottom: 1rem;
     }
   }
 </style>

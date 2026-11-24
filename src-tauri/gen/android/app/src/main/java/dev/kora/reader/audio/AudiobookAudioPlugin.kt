@@ -56,6 +56,25 @@ class SetupEventRelayArgs {
     lateinit var channel: Channel
 }
 
+@InvokeArg
+class DecodeAudioRangeArgs {
+    lateinit var inputPath: String
+    lateinit var outputPath: String
+    var startMs: Long = 0
+    var durationMs: Long = 0
+}
+
+@InvokeArg
+class TranscriptionStartArgs {
+    var title: String = ""
+}
+
+@InvokeArg
+class TranscriptionUpdateArgs {
+    var percent: Float = 0f
+    var message: String = ""
+}
+
 @TauriPlugin
 class AudiobookAudioPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
@@ -67,6 +86,69 @@ class AudiobookAudioPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve(state.toJsObject())
         }.onFailure { error ->
             invoke.reject(error.message ?: "initialize failed")
+        }
+    }
+
+    @Command
+    fun decodeAudioRange(invoke: Invoke) {
+        val args = invoke.parseArgs(DecodeAudioRangeArgs::class.java)
+        Thread({
+            runCatching {
+                AudioRangeDecoder.decodeToWav(
+                    inputPath = args.inputPath,
+                    outputPath = args.outputPath,
+                    startMs = args.startMs,
+                    durationMs = args.durationMs,
+                )
+            }.onSuccess { result ->
+                invoke.resolve(
+                    JSObject()
+                        .put("durationMs", result.durationMs)
+                        .put("frames", result.frames)
+                        .put("sampleRate", result.sampleRate),
+                )
+            }.onFailure { error ->
+                invoke.reject(error.message ?: "decodeAudioRange failed")
+            }
+        }, "kora-audio-decode").start()
+    }
+
+    @Command
+    fun startTranscription(invoke: Invoke) {
+        val args = invoke.parseArgs(TranscriptionStartArgs::class.java)
+        runCatching {
+            TranscriptionService.start(activity.applicationContext, args.title)
+        }.onSuccess {
+            invoke.resolve(JSObject())
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "startTranscription failed")
+        }
+    }
+
+    @Command
+    fun updateTranscription(invoke: Invoke) {
+        val args = invoke.parseArgs(TranscriptionUpdateArgs::class.java)
+        runCatching {
+            TranscriptionService.update(
+                activity.applicationContext,
+                args.percent,
+                args.message,
+            )
+        }.onSuccess {
+            invoke.resolve(JSObject())
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "updateTranscription failed")
+        }
+    }
+
+    @Command
+    fun stopTranscription(invoke: Invoke) {
+        runCatching {
+            TranscriptionService.stop(activity.applicationContext)
+        }.onSuccess {
+            invoke.resolve(JSObject())
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "stopTranscription failed")
         }
     }
 

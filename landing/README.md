@@ -35,9 +35,9 @@ La sección de descargas espera estos archivos:
 
 | Plataforma | Archivo |
 |---|---|
-| Android | `downloads/Kora-0.1.4-android.apk` |
-| Linux Debian/Ubuntu | `downloads/Kora_0.1.4_amd64.deb` |
-| Linux Fedora/RPM | `downloads/Kora-0.1.4-1.x86_64.rpm` |
+| Android | `downloads/Kora-0.1.5-android.apk` |
+| Linux Debian/Ubuntu | `downloads/Kora_0.1.5_amd64.deb` |
+| Linux Fedora/RPM | `downloads/Kora-0.1.5-1.x86_64.rpm` |
 
 En este workspace el APK es un enlace simbólico a `artifacts/kora-release.apk`.
 Los paquetes `.deb` y `.rpm` se generan con:
@@ -53,9 +53,10 @@ Tauri deja los archivos en `target/release/bundle/`. Cópialos a
 archivo con `HEAD`; si falta, el botón muestra «En preparación» y ofrece el
 comando de compilación, sin romper el resto de la sección.
 
-Para una web pública, lo más cómodo es publicar el APK y los paquetes como
-assets de una release de GitHub y cambiar los `href` de `index.html` por las
-URLs de descarga. La lógica de disponibilidad seguirá funcionando.
+La distribución oficial es el clúster: `deploy.sh` publica la landing, los
+binarios y `downloads/latest.json` en <https://kora.iguzman.com.mx>. No se usan
+releases de GitHub ni GitHub Pages para descargar la app; la app solo consulta
+el manifiesto del clúster para actualizarse.
 
 ## Stitch
 
@@ -86,12 +87,12 @@ node scripts/stitch.mjs call list_projects '{}'
 
 ## Publicar
 
-Copia el contenido de `landing/` a la raíz del hosting estático (GitHub Pages,
-Netlify, Cloudflare Pages, un servidor propio…). Recuerda incluir:
+El destino oficial es el clúster. Ejecuta `./deploy.sh` desde la raíz del
+repositorio: el script copia `landing/`, incluye los binarios de
+`landing/downloads/` y genera `downloads/latest.json` dentro de la imagen.
 
-- `index.html`, `styles.css`, `main.js`
-- `assets/` completo
-- `downloads/` con los binarios o enlaces a releases
+No publiques el APK ni los paquetes como assets de GitHub: el canal de descarga
+y actualización es únicamente <https://kora.iguzman.com.mx>.
 
 Licencia del proyecto: MIT. Las fuentes incluidas conservan sus licencias OFL en
 `assets/fonts/OFL-*.txt`.

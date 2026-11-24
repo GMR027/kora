@@ -57,9 +57,7 @@
   import { notifyError, notifyImportant, notifySuccess } from "../lib/toast";
   import {
     DEFAULT_UPDATE_MANIFEST_URL,
-    getUpdateManifestUrl,
     openUpdatesRequest,
-    saveUpdateManifestUrl,
   } from "../lib/updates";
   import type { AppTab } from "../lib/navigation";
   import Button from "../lib/components/Button.svelte";
@@ -131,8 +129,6 @@
   let updateChecking = $state(false);
   let updateDownloading = $state(false);
   let updateError = $state<string | null>(null);
-  let updateManifestUrl = $state("");
-  let showUpdateAdvanced = $state(false);
 
   let themeName = $state("");
   let themeBackground = $state("#fbf9f5");
@@ -718,9 +714,8 @@
     updateChecking = true;
     updateError = null;
     updateCheck = null;
-    saveUpdateManifestUrl(updateManifestUrl);
     try {
-      const result = await checkAppUpdate(updateManifestUrl.trim() || undefined);
+      const result = await checkAppUpdate();
       updateCheck = result;
       try {
         localStorage.setItem("kora.updateCheckedAt", String(Date.now()));
@@ -796,12 +791,7 @@
       });
   }
 
-  function persistUpdateManifest() {
-    saveUpdateManifestUrl(updateManifestUrl);
-  }
-
   onMount(() => {
-    updateManifestUrl = getUpdateManifestUrl();
     const unsubscribe = openUpdatesRequest.subscribe((value) => {
       if (value <= 0) return;
       tab = "about";
@@ -1796,18 +1786,11 @@
           : $t("settings.updateDesktopHint")}
       </p>
 
-      <details class="update-advanced" bind:open={showUpdateAdvanced}>
-        <summary>{$t("settings.updateManifest")}</summary>
-        <label class="wide">
-          <span>{$t("settings.updateManifest")}</span>
-          <input
-            bind:value={updateManifestUrl}
-            onblur={persistUpdateManifest}
-            placeholder={DEFAULT_UPDATE_MANIFEST_URL}
-          />
-        </label>
-        <p class="hint">{$t("settings.updateManifestHelp")}</p>
-      </details>
+      <p class="hint">
+        <strong>{$t("settings.updateManifest")}:</strong>
+        <code>{DEFAULT_UPDATE_MANIFEST_URL}</code><br />
+        {$t("settings.updateManifestHelp")}
+      </p>
     </section>
 
     <section class="panel about">
@@ -1897,6 +1880,12 @@
     color: var(--muted);
     font-size: 0.78rem;
     line-height: 1.5;
+  }
+
+  .hint code {
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem;
   }
 
   .progress-row {
@@ -2224,23 +2213,6 @@
   .update-available strong {
     color: var(--accent);
     font-size: 0.9rem;
-  }
-
-  .update-advanced {
-    margin-top: 0.15rem;
-    padding-top: 0.65rem;
-    border-top: 1px dashed var(--border);
-  }
-
-  .update-advanced summary {
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 0.72rem;
-    font-weight: 600;
-  }
-
-  .update-advanced label {
-    margin-top: 0.55rem;
   }
 
   .about {

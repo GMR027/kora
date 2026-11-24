@@ -21,6 +21,15 @@ class TtsSpeakArgs {
 }
 
 @InvokeArg
+class TtsSynthesizeArgs {
+    var text: String = ""
+    var language: String? = null
+    var voiceId: String? = null
+    var rate: Float = 1f
+    var pitch: Float = 1f
+}
+
+@InvokeArg
 class TtsStartSessionArgs {
     var title: String = ""
     var artist: String = ""
@@ -88,6 +97,37 @@ class KoraTtsPlugin(private val activity: Activity) : Plugin(activity) {
         }.onFailure { error ->
             invoke.reject(error.message ?: "no se pudo iniciar la locución")
         }
+    }
+
+    @Command
+    fun synthesize(invoke: Invoke) {
+        val args = invoke.parseArgs(TtsSynthesizeArgs::class.java)
+        // La síntesis a archivo puede tardar; se resuelve fuera del hilo
+        // principal para no congelar la interfaz.
+        Thread {
+            runCatching {
+                val output = java.io.File(
+                    activity.cacheDir,
+                    "tts-preview-${System.nanoTime()}.wav",
+                )
+                val error = runtime.synthesizeToFile(
+                    text = args.text,
+                    language = args.language,
+                    voiceId = args.voiceId,
+                    rate = args.rate,
+                    pitch = args.pitch,
+                    output = output,
+                )
+                if (error != null) {
+                    output.delete()
+                    invoke.reject(error)
+                } else {
+                    invoke.resolve(JSObject().put("path", output.absolutePath))
+                }
+            }.onFailure { error ->
+                invoke.reject(error.message ?: "no se pudo sintetizar la voz")
+            }
+        }.start()
     }
 
     @Command

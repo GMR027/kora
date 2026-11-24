@@ -38,13 +38,18 @@
     initialKind?: ImportKind;
     error?: string | null;
     onClose: () => void;
-    onChoose: (kind: ImportKind, detection: AudioImportMode) => void;
+    onChoose: (
+      kind: ImportKind,
+      detection: AudioImportMode,
+      modelId: "tiny" | "base" | null,
+    ) => void;
     onDownloadWhisper?: () => void;
     onDownloadWhisperModel?: (modelId: string) => void;
   } = $props();
 
   let kind = $state<ImportKind>("audio");
   let detection = $state<AudioImportMode>("aiFast");
+  let modelId = $state<"tiny" | "base">("base");
 
   let supported = $derived(capabilities?.audioImportSupported ?? true);
   let nativeImport = $derived(capabilities?.nativeAudioImport ?? false);
@@ -67,14 +72,33 @@
   let tinyDownloading = $derived(
     whisperTinyProgress !== null && whisperTinyProgress !== undefined,
   );
+  let whisperSize = $derived(
+    whisperModel?.sizeBytes ? formatBytes(whisperModel.sizeBytes) : "141 MB",
+  );
+  let selectedReady = $derived(
+    modelId === "tiny" ? whisperTinyReady : whisperBaseReady,
+  );
+  let selectedDownloading = $derived(
+    modelId === "tiny" ? tinyDownloading : baseDownloading,
+  );
+  let selectedProgress = $derived(
+    modelId === "tiny" ? whisperTinyProgress : whisperProgress,
+  );
+  let selectedModelName = $derived(
+    modelId === "tiny" ? "Whisper Tiny" : "Whisper Base",
+  );
+  let selectedSize = $derived(
+    modelId === "tiny"
+      ? whisperTiny?.sizeBytes
+        ? formatBytes(whisperTiny.sizeBytes)
+        : "74 MB"
+      : whisperSize,
+  );
   let ready = $derived(
     supported &&
       (kind === "transcribe"
-        ? whisperBaseReady && transcribeSupported
+        ? selectedReady && transcribeSupported
         : nativeImport || ffmpegReady),
-  );
-  let whisperSize = $derived(
-    whisperModel?.sizeBytes ? formatBytes(whisperModel.sizeBytes) : "141 MB",
   );
   function download(modelId: "tiny" | "base") {
     if (onDownloadWhisperModel) {
@@ -87,7 +111,7 @@
   $effect(() => {
     if (!open) return;
     kind = initialKind;
-    if (kind === "transcribe" && !transcribeSupported) {
+    if (initialKind === "transcribe" && !transcribeSupported) {
       kind = "audio";
     }
     detection = "aiFast";
@@ -279,35 +303,103 @@
           {/if}
 
           {#if kind === "transcribe"}
-            <div class="status-row" class:ok={whisperBaseReady} class:missing={!whisperBaseReady}>
+            {#if nativeImport}
+              <div
+                class="model-select"
+                role="radiogroup"
+                aria-label={$t("audiobooks.transcribeModel")}
+              >
+                <button
+                class:active={modelId === "tiny"}
+                type="button"
+                role="radio"
+                aria-checked={modelId === "tiny"}
+                onclick={() => (modelId = "tiny")}
+                disabled={busy}
+              >
+                <strong>{$t("audiobooks.transcribeFast")}</strong>
+                <small>{$t("audiobooks.transcribeFastHelp")}</small>
+              </button>
+              <button
+                class:active={modelId === "base"}
+                type="button"
+                role="radio"
+                aria-checked={modelId === "base"}
+                onclick={() => (modelId = "base")}
+                disabled={busy}
+              >
+                <strong>{$t("audiobooks.transcribePrecise")}</strong>
+                <small>{$t("audiobooks.transcribePreciseHelp")}</small>
+              </button>
+            </div>
+
+            <div class="status-row" class:ok={selectedReady} class:missing={!selectedReady}>
               <span class="status-icon">
-                <Icon name={whisperBaseReady ? "check" : "close"} size={15} />
+                <Icon name={selectedReady ? "check" : "close"} size={15} />
               </span>
               <div>
-                <strong>{$t("audiobooks.whisperBase")}</strong>
+                <strong>{selectedModelName}</strong>
                 <small>
-                  {#if whisperBaseReady}
+                  {#if selectedReady}
                     {$t("audiobooks.whisperInstalled")}
-                  {:else if baseDownloading}
+                  {:else if selectedDownloading}
                     {$t("audiobooks.whisperDownloading", {
-                      percent: Math.round(whisperProgress ?? 0),
+                      percent: Math.round(selectedProgress ?? 0),
                     })}
                   {:else}
-                    {$t("audiobooks.whisperDownload", { size: whisperSize })}
+                    {$t("audiobooks.whisperModelDownload", {
+                      model: selectedModelName,
+                      size: selectedSize,
+                    })}
                   {/if}
                 </small>
               </div>
-              {#if !whisperBaseReady && supported}
+              {#if !selectedReady && supported}
                 <button
                   class="download-button"
                   type="button"
-                  onclick={() => download("base")}
-                  disabled={baseDownloading}
+                  onclick={() => download(modelId)}
+                  disabled={selectedDownloading}
                 >
                   {$t("voice.download")}
                 </button>
               {/if}
             </div>
+
+            <p class="notice soft" role="status">
+              {$t("audiobooks.transcribeMobileHelp")}
+            </p>
+            {:else}
+              <div class="status-row" class:ok={whisperBaseReady} class:missing={!whisperBaseReady}>
+                <span class="status-icon">
+                  <Icon name={whisperBaseReady ? "check" : "close"} size={15} />
+                </span>
+                <div>
+                  <strong>{$t("audiobooks.whisperBase")}</strong>
+                  <small>
+                    {#if whisperBaseReady}
+                      {$t("audiobooks.whisperInstalled")}
+                    {:else if baseDownloading}
+                      {$t("audiobooks.whisperDownloading", {
+                        percent: Math.round(whisperProgress ?? 0),
+                      })}
+                    {:else}
+                      {$t("audiobooks.whisperDownload", { size: whisperSize })}
+                    {/if}
+                  </small>
+                </div>
+                {#if !whisperBaseReady && supported}
+                  <button
+                    class="download-button"
+                    type="button"
+                    onclick={() => download("base")}
+                    disabled={baseDownloading}
+                  >
+                    {$t("voice.download")}
+                  </button>
+                {/if}
+              </div>
+            {/if}
           {:else if !nativeImport}
             <div class="status-row" class:ok={aiReady}>
               <span class="status-icon">
@@ -385,7 +477,8 @@
         </Button>
         <Button
           variant="primary"
-          onclick={() => onChoose(kind, detection)}
+          onclick={() =>
+            onChoose(kind, detection, kind === "transcribe" ? modelId : null)}
           loading={busy}
           disabled={busy || !ready}
         >
@@ -636,6 +729,40 @@
     border-radius: 8px;
     background: var(--surface);
     color: var(--accent);
+  }
+
+  .model-select {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .model-select button {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--text);
+    text-align: left;
+    font: inherit;
+  }
+
+  .model-select button.active {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+  }
+
+  .model-select strong {
+    font-size: 0.74rem;
+  }
+
+  .model-select small {
+    color: var(--muted);
+    font-size: 0.66rem;
+    line-height: 1.35;
   }
 
   .detection-grid {

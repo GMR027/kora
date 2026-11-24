@@ -44,7 +44,7 @@ pnpm tauri build --bundles deb
 Salida:
 
 ```text
-target/release/bundle/deb/Kora_0.1.4_<arch>.deb
+target/release/bundle/deb/Kora_0.1.5_<arch>.deb
 ```
 
 Copia el paquete a `artifacts/` si quieres conservarlo antes de ejecutar
@@ -52,7 +52,7 @@ Copia el paquete a `artifacts/` si quieres conservarlo antes de ejecutar
 
 ```bash
 mkdir -p artifacts
-cp target/release/bundle/deb/Kora_0.1.4_amd64.deb artifacts/
+cp target/release/bundle/deb/Kora_0.1.5_amd64.deb artifacts/
 ```
 
 Si compilas en un contenedor sin Node, puedes construir el frontend en el host
@@ -80,8 +80,17 @@ máquina x86_64 o el workflow `.github/workflows/android.yml`, que valida la
 compilación en un runner x86_64.
 
 El APK núcleo incluye EPUB/PDF con `pdf.js`, TTS nativo, sync, diario, logros,
-Pomodoro, temas, i18n y exportación EPUB. No incluye OCR, clonación, Piper,
-Whisper, audiolibros nativos ni PDFium embebido.
+Pomodoro, temas, i18n y exportación EPUB. También incluye la importación de
+audiolibros y Whisper (`whisper-rs` + `whisper.cpp`) para transcribir en el
+dispositivo. No incluye OCR, clonación, Piper, PDFium embebido ni la generación
+de voces.
+
+Whisper se compila con CMake dentro de `whisper-rs`. El wrapper de
+`scripts/tauri.mjs` y `scripts/android-cmake-toolchain.cmake` detectan el NDK,
+eligen la ABI de Cargo y desactivan bindgen para usar los bindings empaquetados.
+Si compilas con el CLI directamente, exporta `ANDROID_NDK_HOME`,
+`CMAKE_TOOLCHAIN_FILE=scripts/android-cmake-toolchain.cmake` y
+`WHISPER_DONT_GENERATE_BINDINGS=1`.
 
 ### Hooks para funciones nativas
 
@@ -95,8 +104,9 @@ Whisper, audiolibros nativos ni PDFium embebido.
    ABI.
 
 Librerías previstas: `libpdfium.so`, `libtesseract.so`, `liblept.so`,
-`libonnxruntime.so`, `libwhisper.so`, `libkora_neutts.so` y las dependencias de
-ffmpeg que necesite el pipeline M4B.
+`libonnxruntime.so`, `libkora_neutts.so` y las dependencias de ffmpeg que
+necesite el pipeline M4B. `libwhisper` ya no se empaqueta aparte: se enlaza de
+forma estática dentro de `libkora_lib.so`.
 
 ### Comandos Android
 

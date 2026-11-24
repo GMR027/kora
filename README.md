@@ -4,12 +4,26 @@ Lector de EPUB/PDF local-first con síntesis de voz, clonación de voz y
 sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 **Svelte 5**, con objetivos Linux y Android.
 
+## Descarga
+
+Kora se descarga únicamente desde el clúster oficial:
+
+- Landing y descargas: <https://kora.iguzman.com.mx/#descargas>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.5-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.5_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.5-1.x86_64.rpm>
+
+La app consulta `https://kora.iguzman.com.mx/downloads/latest.json` y descarga
+la actualización desde ese mismo host. GitHub se usa solo para el código
+fuente: no se publican binarios, releases ni GitHub Pages.
+
 > **Estado: fase 12 + utilidades de biblioteca.** La biblioteca
 > importa EPUB/PDF por SHA-256. El lector abre EPUB con capítulos saneados y PDF
 > con `pdf.js`, incluyendo progreso por página, selección, OCR local para PDFs
 > escaneados y auto-índice. El motor TTS añade lectura por frases con resaltado
 > sincronizado, pausa/reanudación, velocidad 0.5×–3×, preprocesador expresivo,
-> voces por personaje, modo ensayo con Whisper y TTS nativo en Android. Las
+> voces por personaje, modo ensayo con Whisper y TTS nativo en Android, además
+> de transcripción local de audiolibros en el propio teléfono. Las
 > fases 6–8 añadieron clonación de voz, audiolibros M4B, Tejido y anotaciones
 > superpuestas. La fase 9 añadió descubrimiento mDNS, transporte QUIC con TLS
 > mutuo Ed25519, diff por hash, CRDT con `yrs`, handoff y lectura en espejo. La
@@ -108,6 +122,7 @@ Ubuntu 24.04.
 | OCR | Tesseract 5 vía `leptess` (solo escritorio) |
 | TTS escritorio | Piper (`piper-rs` + ONNX Runtime) y reproducción con `rodio`/`cpal` |
 | TTS Android | `TextToSpeech` nativo + plugin Kotlin propio + `MediaSessionService` de Media3 |
+| Transcripción Android | `MediaExtractor`/`MediaCodec` + `whisper-rs` compilado con el NDK |
 | Modo ensayo | `cpal` para grabar y `whisper-rs` (`tiny`/`base`) para transcribir |
 | Notas ricas | Quill 2 (Delta JSON en `notes.content_json`) |
 | Notas de voz | `cpal` + `opus`/`ogg` (Ogg/Opus en `assets/notes_audio/`) |
@@ -597,17 +612,20 @@ lectura publica una `MediaSession` de Media3 dentro de un
 `MediaSessionService`: la reproducción continúa en segundo plano, con la
 pantalla apagada y con controles en la notificación y la pantalla de bloqueo.
 Los audiolibros M4B/MP3 usan **Media3 ExoPlayer** dentro de otro
-`MediaSessionService` con el mismo tipo de controles.
+`MediaSessionService` con el mismo tipo de controles. En Android también se
+pueden importar audiolibros y transcribirlos localmente con Whisper: el audio
+se decodifica con `MediaExtractor`/`MediaCodec` y Whisper se compila para la
+ABI con `whisper-rs` + NDK. La generación de audiolibros con voces sigue
+reservada a escritorio.
 El temporizador de sueño y el ajuste opcional de mantener la pantalla encendida
-también viven en el servicio nativo. La generación, importación y transcripción
-de audiolibros siguen reservadas a escritorio. El código nativo del reproductor
-está en `app/src/main/java/dev/kora/reader/audio/` y el del TTS en
+también viven en el servicio nativo. El código nativo del reproductor está en
+`app/src/main/java/dev/kora/reader/audio/` y el del TTS en
 `app/src/main/java/dev/kora/reader/tts/`; si vuelves a ejecutar
 `tauri android init`, revisa que el generador no haya sobrescrito esas clases.
 Las dependencias nativas de OCR (Tesseract/Leptonica), PDFium, Piper/ONNX y
-Whisper quedan detrás de `cfg` y devuelven un error claro hasta empaquetarlas
-por ABI. El código de escritorio es la referencia para completar ese
-empaquetado en una máquina x86_64 o CI.
+las partes de audio de escritorio quedan detrás de `cfg` y devuelven un error
+claro hasta empaquetarlas por ABI. Whisper ya se compila para Android; el
+código de escritorio sigue siendo la referencia para el resto.
 
 ## Lector EPUB
 
@@ -1284,11 +1302,10 @@ Ajustes → Modo ensayo.
 
 1. Empaquetar `libonnxruntime` y el modelo de embeddings en el instalador, y
    habilitar la búsqueda semántica en Android.
-2. Empaquetado Android de PDFium/Tesseract/Piper/Whisper/ffmpeg y
+2. Empaquetado Android de PDFium/Tesseract/Piper/ffmpeg y
    `kora-neutts` por ABI, además del modo ensayo y las notas de voz nativas,
-   y validación de mDNS/QUIC en Android. La importación de audiolibros ya usa
-   metadatos nativos y capítulos fijos de diez minutos; falta la transcripción
-   en el móvil.
+   y validación de mDNS/QUIC en Android. La importación y la transcripción de
+   audiolibros ya funcionan en el móvil con Whisper local.
 3. Lector de QR de shares en móvil, compartir perfiles de voz y propagación
    automática de revocaciones.
 4. Sincronización de audiolibros M4B y perfiles `.koravoice`.

@@ -70,6 +70,51 @@ abstract class BuildTask : DefaultTask() {
                 args("--release")
             }
             args(listOf("--target", target))
+
+            // whisper-rs compila whisper.cpp con CMake. En Android hay que
+            // apuntar CMake al toolchain del NDK y fijar la ABI del target.
+            val ndk = findNdkHome()
+            if (ndk != null) {
+                environment("NDK_HOME", ndk)
+                environment("ANDROID_NDK_HOME", ndk)
+                environment(
+                    "CMAKE_TOOLCHAIN_FILE",
+                    File(
+                        File(projectDir, rootDirRel),
+                        "scripts/android-cmake-toolchain.cmake",
+                    ).absolutePath,
+                )
+                environment("CMAKE_ANDROID_ARCH_ABI", abiForTarget(target))
+                environment("CMAKE_ANDROID_API", "24")
+            }
+            // Usa los bindings empaquetados y evita depender de libclang al
+            // compilar para Android.
+            environment("WHISPER_DONT_GENERATE_BINDINGS", "1")
         }.assertNormalExitValue()
+    }
+
+    private fun abiForTarget(target: String): String = when (target) {
+        "aarch64" -> "arm64-v8a"
+        "armv7" -> "armeabi-v7a"
+        "i686" -> "x86"
+        "x86_64" -> "x86_64"
+        else -> throw GradleException("ABI desconocida para el target $target")
+    }
+
+    private fun findNdkHome(): String? {
+        val direct = listOf(
+            System.getenv("NDK_HOME"),
+            System.getenv("ANDROID_NDK_HOME"),
+        ).firstOrNull { !it.isNullOrBlank() && File(it).isDirectory }
+        if (direct != null) return direct
+
+        val sdk = System.getenv("ANDROID_HOME")
+            ?: System.getenv("ANDROID_SDK_ROOT")
+            ?: return null
+        val directory = File(sdk, "ndk")
+        return directory.listFiles()
+            ?.filter { it.isDirectory }
+            ?.maxByOrNull { it.name }
+            ?.absolutePath
     }
 }

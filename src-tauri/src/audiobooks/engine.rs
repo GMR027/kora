@@ -38,6 +38,13 @@ pub struct AudiobookProgressEvent {
 }
 
 pub fn emit_progress(app: &AppHandle, event: AudiobookProgressEvent) {
+    #[cfg(target_os = "android")]
+    if matches!(
+        event.phase.as_str(),
+        "transcribing" | "building" | "done" | "cancelled" | "error"
+    ) {
+        let _ = super::player::update_transcription_service(event.percent, &event.message);
+    }
     let _ = app.emit("audiobook::progress", event);
 }
 

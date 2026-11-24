@@ -1,7 +1,6 @@
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod audio;
-#[cfg(not(target_os = "android"))]
 pub mod download;
 pub mod engine;
 pub mod expressive;

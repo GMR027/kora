@@ -48,6 +48,8 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            // La build de desarrollo usa la etiqueta "Kora Dev" para
+            // distinguirse de la release (ver src/debug/res/values/strings.xml).
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true

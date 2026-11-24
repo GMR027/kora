@@ -1,15 +1,17 @@
-#![cfg(not(target_os = "android"))]
-
-use std::fs::{self, File};
+#[cfg(not(target_os = "android"))]
+use std::fs;
+use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
 use crate::error::{KoraError, Result};
 
+#[cfg(not(target_os = "android"))]
 use super::piper::{find_voice, installed, voice_dir};
 
 /// Descarga una voz Piper desde HuggingFace y la deja en
 /// `assets/tts/<voice_id>/model.onnx` + `config.json`.
+#[cfg(not(target_os = "android"))]
 pub fn download_voice(
     root: &Path,
     voice_id: &str,

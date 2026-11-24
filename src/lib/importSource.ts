@@ -5,6 +5,7 @@ interface KoraChromeBridge {
   stageImportFile?: (uri: string) => string;
   discardImportFile?: (path: string) => void;
   probeAudio?: (path: string) => string;
+  saveExportFile?: (uri: string, path: string) => string;
 }
 
 export type { AndroidAudioMetadata };
@@ -59,4 +60,17 @@ export function discardImportSource(path: string) {
   } catch {
     // La caché del sistema terminará limpiando la copia.
   }
+}
+
+/**
+ * En Android el diálogo de guardado devuelve un `content://`. El archivo se
+ * escribe en una ruta temporal y el puente nativo lo copia al destino.
+ */
+export function materializeExportTarget(uri: string, path: string) {
+  if (!uri.startsWith("content://")) return;
+  const error = chromeBridge()?.saveExportFile?.(uri, path);
+  if (typeof error !== "string") {
+    throw new Error(translate("library.exportFailed"));
+  }
+  if (error) throw new Error(error);
 }

@@ -34,14 +34,20 @@
   let {
     initial,
     account,
+    platform = "",
     onChanged,
     onDone,
   }: {
     initial: AppearanceState;
     account: AccountView | null;
+    platform?: string;
     onChanged: (state: AppearanceState) => void;
     onDone: () => void;
   } = $props();
+
+  // En Android no hay una ruta de archivo que el usuario pueda escribir: la
+  // acción principal debe abrir directamente el selector del sistema.
+  const isMobile = $derived(platform === "android" || platform === "ios");
 
   let step = $state(0);
   // La onboarding captura los valores iniciales; los cambios posteriores se
@@ -176,7 +182,12 @@
   }
 
   async function importPath(path: string) {
-    if (!path.trim()) return;
+    // Si no hay ruta escrita, el botón principal del onboarding actúa como
+    // selector de archivos en vez de quedarse en silencio sin hacer nada.
+    if (!path.trim()) {
+      await chooseFile();
+      return;
+    }
     importing = true;
     error = null;
     let staged = path.trim();
@@ -390,35 +401,43 @@
       <h1>{$t("onboarding.importTitle")}</h1>
       <p class="lead">{$t("onboarding.importHelp")}</p>
       <div class="import-zone" class:drop-active={dropActive}>
-        <div class="import-row">
-          <input
-            bind:value={pathValue}
-            placeholder={$t("onboarding.pathPlaceholder")}
-            aria-label={$t("onboarding.importTitle")}
-            onkeydown={(event) => {
-              if (event.key === "Enter") void importPath(pathValue);
-            }}
-          />
-          <Button variant="primary" onclick={() => importPath(pathValue)} loading={importing}>
-            {$t("library.import")}
-          </Button>
-        </div>
-        <div class="folder-row">
-          <Button variant="ghost" onclick={() => chooseFrom("documents")}>
-            <Icon name="folder" /> {$t("onboarding.documents")}
-          </Button>
-          <Button variant="ghost" onclick={() => chooseFrom("downloads")}>
-            <Icon name="folder" /> {$t("onboarding.downloads")}
-          </Button>
-          <Button variant="ghost" onclick={() => chooseFile()}>
-            <Icon name="folder" /> {$t("onboarding.chooseFile")}
-          </Button>
-        </div>
-        <p class="hint drop-hint">
-          {dropActive
-            ? $t("onboarding.dropActive")
-            : $t("onboarding.dropHint")}
-        </p>
+        {#if isMobile}
+          <div class="mobile-import">
+            <Button variant="primary" onclick={() => chooseFile()} loading={importing}>
+              <Icon name="folder" /> {$t("onboarding.chooseFile")}
+            </Button>
+          </div>
+        {:else}
+          <div class="import-row">
+            <input
+              bind:value={pathValue}
+              placeholder={$t("onboarding.pathPlaceholder")}
+              aria-label={$t("onboarding.importTitle")}
+              onkeydown={(event) => {
+                if (event.key === "Enter") void importPath(pathValue);
+              }}
+            />
+            <Button variant="primary" onclick={() => importPath(pathValue)} loading={importing}>
+              {$t("library.import")}
+            </Button>
+          </div>
+          <div class="folder-row">
+            <Button variant="ghost" onclick={() => chooseFrom("documents")}>
+              <Icon name="folder" /> {$t("onboarding.documents")}
+            </Button>
+            <Button variant="ghost" onclick={() => chooseFrom("downloads")}>
+              <Icon name="folder" /> {$t("onboarding.downloads")}
+            </Button>
+            <Button variant="ghost" onclick={() => chooseFile()}>
+              <Icon name="folder" /> {$t("onboarding.chooseFile")}
+            </Button>
+          </div>
+          <p class="hint drop-hint">
+            {dropActive
+              ? $t("onboarding.dropActive")
+              : $t("onboarding.dropHint")}
+          </p>
+        {/if}
       </div>
       {#if imported}
         <p class="ok" role="status">{$t("common.ready")}: {imported.title}</p>
@@ -913,6 +932,14 @@
     flex-wrap: wrap;
     gap: 0.5rem;
     margin-top: 0.65rem;
+  }
+
+  .mobile-import {
+    display: flex;
+  }
+
+  .mobile-import :global(.ui-button) {
+    flex: 1;
   }
 
   .drop-hint {

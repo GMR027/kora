@@ -52,9 +52,9 @@ La landing espera estos nombres dentro de `landing/downloads/`:
 
 | Plataforma | Archivo |
 |---|---|
-| Android | `Kora-0.1.4-android.apk` |
-| Linux Debian/Ubuntu | `Kora_0.1.4_amd64.deb` |
-| Linux Fedora/RPM | `Kora-0.1.4-1.x86_64.rpm` |
+| Android | `Kora-0.1.5-android.apk` |
+| Linux Debian/Ubuntu | `Kora_0.1.5_amd64.deb` |
+| Linux Fedora/RPM | `Kora-0.1.5-1.x86_64.rpm` |
 
 `deploy.sh` sustituye el APK por `artifacts/kora-release.apk`. Para publicar los
 paquetes de escritorio, cópialos a `landing/downloads/` antes de desplegar:
@@ -63,8 +63,8 @@ paquetes de escritorio, cópialos a `landing/downloads/` antes de desplegar:
 pnpm build:linux
 pnpm build:helper:release && pnpm tauri build --bundles rpm
 
-cp target/release/bundle/deb/Kora_0.1.4_amd64.deb landing/downloads/
-cp target/release/bundle/rpm/Kora-0.1.4-1.x86_64.rpm landing/downloads/
+cp target/release/bundle/deb/Kora_0.1.5_amd64.deb landing/downloads/
+cp target/release/bundle/rpm/Kora-0.1.5-1.x86_64.rpm landing/downloads/
 ```
 
 > El `.rpm` debe compilarse en Fedora 42 (o un contenedor Fedora): Ubuntu enlaza
@@ -77,13 +77,14 @@ cp target/release/bundle/rpm/Kora-0.1.4-1.x86_64.rpm landing/downloads/
 
 Se publican el APK de Android y los instaladores `.deb` y `.rpm` de Linux.
 `deploy.sh` copia todo `landing/downloads/`, así que los paquetes deben existir
-ahí antes de desplegar y falla si falta alguno.
+ahí antes de desplegar y falla si falta alguno. GitHub no es un canal de
+descarga: los binarios viven solo en el clúster.
 
 ## Actualizaciones
 
 `deploy.sh` genera `downloads/latest.json` dentro de la imagen con la versión de
-`package.json`, las URLs de los tres artefactos y sus hashes SHA-256. La app usa
-por defecto:
+`package.json`, las URLs de los tres artefactos y sus hashes SHA-256. La app
+consulta:
 
 ```text
 https://kora.iguzman.com.mx/downloads/latest.json
@@ -98,7 +99,10 @@ conservan la caché de una hora. Para publicar una actualización:
 3. Copia los paquetes a `landing/downloads/`, actualiza `landing/index.html` y
    ejecuta `./deploy.sh`.
 
-El campo «URL del manifiesto» de Ajustes permite usar otra URL sin recompilar.
+Las builds nuevas consultan siempre este manifiesto y ya no tienen campo
+editable en Ajustes. La URL solo se puede sobrescribir con
+`KORA_UPDATE_MANIFEST_URL` en builds de desarrollo. GitHub no es un canal de
+descarga ni de actualizaciones.
 
 ## Verificación rápida
 
@@ -107,7 +111,7 @@ kubectl get pods,svc,ingress -n kora
 kubectl get certificate -n kora
 helm list -n kora
 curl -I https://kora.iguzman.com.mx
-curl -I https://kora.iguzman.com.mx/downloads/Kora-0.1.4-android.apk
+curl -I https://kora.iguzman.com.mx/downloads/Kora-0.1.5-android.apk
 curl -fsS https://kora.iguzman.com.mx/downloads/latest.json | jq
 curl -sS https://kora.iguzman.com.mx/healthz
 ```

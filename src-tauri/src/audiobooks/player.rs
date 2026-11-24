@@ -397,6 +397,72 @@ mod android {
             .map_err(|error| anyhow!("reproductor Android: {error}"))
     }
 
+    /// Decodifica un fragmento del audiolibro a un WAV mono de 16 kHz usando
+    /// `MediaExtractor` + `MediaCodec`. Bloquea hasta que el plugin nativo
+    /// termina; debe llamarse desde una tarea bloqueante.
+    pub fn decode_audio_range(
+        input: &Path,
+        output: &Path,
+        start_ms: i64,
+        duration_ms: i64,
+    ) -> Result<()> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Args {
+            input_path: String,
+            output_path: String,
+            start_ms: i64,
+            duration_ms: i64,
+        }
+
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let args = Args {
+            input_path: input.to_string_lossy().to_string(),
+            output_path: output.to_string_lossy().to_string(),
+            start_ms,
+            duration_ms,
+        };
+        let _: serde_json::Value = handle
+            .run_mobile_plugin("decodeAudioRange", args)
+            .map_err(|error| anyhow!("decodificador Android: {error}"))?;
+        Ok(())
+    }
+
+    pub fn start_transcription_service(title: &str) -> Result<()> {
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let _: serde_json::Value = handle
+            .run_mobile_plugin("startTranscription", serde_json::json!({ "title": title }))
+            .map_err(|error| anyhow!("servicio de transcripción: {error}"))?;
+        Ok(())
+    }
+
+    pub fn update_transcription_service(percent: f64, message: &str) -> Result<()> {
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let _: serde_json::Value = handle
+            .run_mobile_plugin(
+                "updateTranscription",
+                serde_json::json!({ "percent": percent, "message": message }),
+            )
+            .map_err(|error| anyhow!("servicio de transcripción: {error}"))?;
+        Ok(())
+    }
+
+    pub fn stop_transcription_service() -> Result<()> {
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let _: serde_json::Value = handle
+            .run_mobile_plugin("stopTranscription", serde_json::json!({}))
+            .map_err(|error| anyhow!("servicio de transcripción: {error}"))?;
+        Ok(())
+    }
+
     fn chapters_json(manifest: &AudiobookManifest) -> Result<String> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -712,7 +778,9 @@ mod android {
 
 #[cfg(target_os = "android")]
 pub use android::{
-    AudiobookPlayback, init_plugin as init_mobile_plugin, set_keep_screen_on, set_sleep_timer,
+    AudiobookPlayback, decode_audio_range, init_plugin as init_mobile_plugin, set_keep_screen_on,
+    set_sleep_timer, start_transcription_service, stop_transcription_service,
+    update_transcription_service,
 };
 #[cfg(not(target_os = "android"))]
 pub use desktop::AudiobookPlayback;

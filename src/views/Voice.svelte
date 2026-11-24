@@ -1,6 +1,7 @@
 <script lang="ts">
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { appCacheDir, join } from "@tauri-apps/api/path";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { onMount, tick } from "svelte";
   import {
@@ -29,6 +30,11 @@
     voiceSampleStop,
     updateVoiceProfile,
   } from "../lib/api";
+  import {
+    discardImportSource,
+    materializeExportTarget,
+    stageImportSource,
+  } from "../lib/importSource";
   import {
     formatBytes,
     formatDate,
@@ -1321,7 +1327,13 @@
     if (!destination) return;
     busy = `export-${profile.id}`;
     try {
-      await exportVoiceProfile(`clone:${profile.id}`, destination);
+      // En Android el diálogo entrega un `content://`; exportamos a una ruta
+      // temporal y el puente nativo copia el archivo al destino.
+      const temporary = destination.startsWith("content://")
+        ? await join(await appCacheDir(), `voice-export-${profile.id}.koravoice`)
+        : destination;
+      await exportVoiceProfile(`clone:${profile.id}`, temporary);
+      materializeExportTarget(destination, temporary);
       notifySuccess($t("voice.profileExported", { name: profile.name }));
     } catch (cause) {
       notifyError(cause);
@@ -1348,8 +1360,11 @@
     }
     if (typeof source !== "string") return;
     busy = "import";
+    let staged: string | null = null;
     try {
-      const profile = await importVoiceProfile(source, true);
+      // En Android el selector entrega `content://`; Rust necesita una ruta.
+      staged = stageImportSource(source);
+      const profile = await importVoiceProfile(staged, true);
       profiles = [profile, ...profiles.filter((item) => item.id !== profile.id)];
       notifySuccess($t("voice.profileImported", { name: profile.name }));
       await refreshVoices();
@@ -1357,6 +1372,7 @@
     } catch (cause) {
       notifyError(cause);
     } finally {
+      if (staged) discardImportSource(staged);
       busy = null;
     }
   }
@@ -1741,7 +1757,9 @@
       <div class="hero-kicker">
         <span class="studio-badge">
           <Icon name="sparkles" size={13} />
-          {$t("voice.studioBadge")}
+          {capabilities.cloning
+            ? $t("voice.studioBadge")
+            : $t("voice.studioBadgeAndroid")}
         </span>
         <span class="engine-status">
           <span

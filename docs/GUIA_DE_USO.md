@@ -8,11 +8,18 @@ barra inferior con Biblioteca, Lector, Audiolibros, Diario y **Más**; desde
 como una pila con botón **Volver**.
 
 Si hay un audiolibro sonando, un mini-reproductor aparece sobre la barra
-inferior con portada, capítulo, tiempo, retroceso de 15 s y pausa. En la
-pantalla de Audiolibros se sustituye por el reproductor completo. En escritorio,
-fuera de la pantalla de Audiolibros, el mismo reproductor aparece en la barra
-superior con la portada, el capítulo, el progreso y los controles de pausa y
-retroceso.
+inferior con portada, capítulo, play/pausa y un botón para abrirlo. Al empezar
+la reproducción, el reproductor ocupa toda la pantalla con la portada grande,
+el título, el capítulo, la onda de progreso, los controles y el karaoke. Para
+volver al mini-reproductor, desliza hacia abajo sobre la portada o pulsa
+**Minimizar**; toca el mini-reproductor para abrirlo de nuevo. En escritorio se
+mantiene el reproductor de la barra superior cuando estás fuera de Audiolibros.
+
+Con la pantalla bloqueada o desde la cortina de notificaciones, el audiolibro
+aparece como en una app de música: portada, título, capítulo, tiempo, barra de
+progreso y controles de pausa, anterior y siguiente. Los botones de los
+auriculares y del Bluetooth también controlan la reproducción, y el audio sigue
+sonando con la pantalla apagada.
 
 Cada cambio de pantalla tiene una transición suave y respeta
 `prefers-reduced-motion`.
@@ -147,7 +154,10 @@ Cada cambio de pantalla tiene una transición suave y respeta
   reproducción, el temporizador de sueño sigue funcionando aunque el WebView esté
   suspendido y el botón del sol del reproductor permite mantener la pantalla
   encendida mientras escuchas. La importación de audio está disponible en el
-  móvil; la generación y la transcripción automática siguen siendo de escritorio.
+  móvil, igual que la transcripción automática con Whisper Tiny/Base; la
+  generación de audiolibros con voces sigue siendo de escritorio. La
+  transcripción muestra progreso continuo y sigue trabajando con la pantalla
+  apagada mediante un servicio en primer plano.
 - La **lectura sincronizada** muestra la frase que suena bajo el reproductor y
   resalta la palabra actual. **Leer y escuchar** abre el capítulo completo con
   todas las frases sincronizadas: toca una frase para saltar a ese punto. En
@@ -187,6 +197,11 @@ Cada cambio de pantalla tiene una transición suave y respeta
 - **Voces clonadas**: crea un perfil con un clip de 3–30 s, una transcripción y
   consentimiento; importa/exporta `.koravoice`; prueba o borra perfiles.
 - **Modelos**: descarga los modelos NeuTTS/NeuCodec por idioma.
+- En Android el estudio usa el motor TTS del teléfono: puedes buscar y filtrar
+  voces, probarlas con tu propio texto y ajustar la velocidad. La grabación, la
+  clonación y la descarga de modelos NeuTTS siguen siendo de escritorio; en el
+  teléfono sí puedes importar, renombrar, exportar y borrar perfiles
+  `.koravoice`.
 
 ## Sync
 

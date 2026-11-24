@@ -856,6 +856,7 @@ async fn run_audio_only_tools(h: &Harness) {
             model_id: None,
         },
         None,
+        None,
     )
     .await
     .expect("importar solo audio");

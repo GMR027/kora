@@ -101,19 +101,20 @@ fn validate_http_url(value: &str) -> Result<()> {
     }
 }
 
-#[tauri::command]
-pub async fn check_app_update(app: AppHandle, manifest_url: Option<String>) -> Result<UpdateCheck> {
-    let current_version = app.package_info().version.to_string();
-    let manifest_url = manifest_url
+/// Las builds de producción consultan siempre el clúster oficial. El entorno
+/// solo se usa para pruebas de desarrollo; la interfaz no permite cambiarlo.
+fn resolve_manifest_url() -> String {
+    std::env::var("KORA_UPDATE_MANIFEST_URL")
+        .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| {
-            std::env::var("KORA_UPDATE_MANIFEST_URL")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or_else(|| DEFAULT_MANIFEST_URL.to_string());
+        .unwrap_or_else(|| DEFAULT_MANIFEST_URL.to_string())
+}
+
+#[tauri::command]
+pub async fn check_app_update(app: AppHandle) -> Result<UpdateCheck> {
+    let current_version = app.package_info().version.to_string();
+    let manifest_url = resolve_manifest_url();
     validate_http_url(&manifest_url)?;
 
     let client = reqwest::Client::builder()

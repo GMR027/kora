@@ -70,6 +70,44 @@ if (binding) {
   process.env.NAPI_RS_NATIVE_LIBRARY_PATH = binding;
 }
 
+// whisper.cpp se compila con CMake y necesita el toolchain del NDK. Tauri
+// invoca Cargo desde su propio proceso, así que configuramos el entorno antes
+// de arrancar el CLI para que lo hereden los build scripts.
+function configureAndroidCmake() {
+  const args = process.argv.slice(2);
+  if (!args.includes("android")) return;
+
+  const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  let ndk = process.env.NDK_HOME || process.env.ANDROID_NDK_HOME;
+  if (!ndk && sdk) {
+    const ndkRoot = join(sdk, "ndk");
+    if (existsSync(ndkRoot)) {
+      const versions = readdirSync(ndkRoot)
+        .filter((entry) =>
+          existsSync(join(ndkRoot, entry, "build/cmake/android.toolchain.cmake")),
+        )
+        .sort((a, b) =>
+          a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+        );
+      const latest = versions.at(-1);
+      if (latest) ndk = join(ndkRoot, latest);
+    }
+  }
+  if (!ndk || !existsSync(join(ndk, "build/cmake/android.toolchain.cmake"))) {
+    return;
+  }
+
+  process.env.NDK_HOME = ndk;
+  process.env.ANDROID_NDK_HOME = ndk;
+  process.env.CMAKE_TOOLCHAIN_FILE = resolve(
+    root,
+    "scripts/android-cmake-toolchain.cmake",
+  );
+  process.env.WHISPER_DONT_GENERATE_BINDINGS = "1";
+}
+
+configureAndroidCmake();
+
 let cli;
 try {
   cli = require("@tauri-apps/cli");
