@@ -13,17 +13,18 @@ use crate::error::{KoraError, Result};
 
 use super::{AiLocalProgress, AiLocalStatus};
 
-pub const MODEL_ID: &str = "qwen2.5-0.5b-instruct-q4_k_m";
+pub const MODEL_ID: &str = "qwen2.5-0.5b-instruct-q4_0";
 pub const MODEL_NAME: &str = "Qwen2.5 0.5B Instruct";
 pub const MODEL_LICENSE: &str = "Apache-2.0";
-const MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
+const MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_0.gguf";
+const LEGACY_MODEL_FILE: &str = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
 const TOKENIZER_FILE: &str = "tokenizer.json";
-const MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+const MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf";
 const TOKENIZER_URL: &str =
     "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct/resolve/main/tokenizer.json";
-const MODEL_SHA256: &str = "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db";
+const MODEL_SHA256: &str = "7671c0c304e6ce5a7fc577bcb12aba01e2c155cc2efd29b2213c95b18edaf6ed";
 const TOKENIZER_SHA256: &str = "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539";
-const MODEL_SIZE: u64 = 491_400_032;
+const MODEL_SIZE: u64 = 428_730_208;
 const TOKENIZER_SIZE: u64 = 7_031_645;
 
 struct LoadedModel {
@@ -39,6 +40,22 @@ pub struct LocalAiEngine {
 
 impl LocalAiEngine {
     pub fn new(directory: PathBuf) -> Self {
+        // En móviles big.LITTLE, usar todos los núcleos suele provocar
+        // contención térmica. Cuatro hilos mantienen la inferencia estable.
+        // SAFETY: se configura antes de crear el pool de Candle, durante el
+        // arranque de la app y antes de lanzar inferencias.
+        unsafe {
+            std::env::set_var("RAYON_NUM_THREADS", "4");
+            std::env::set_var("CANDLE_NUM_THREADS", "4");
+        }
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build_global();
+        // El modelo Q4_K_M era más lento en Candle; al actualizar se libera.
+        let legacy = directory.join(LEGACY_MODEL_FILE);
+        if legacy.is_file() {
+            let _ = std::fs::remove_file(legacy);
+        }
         Self {
             directory,
             model: Mutex::new(None),
@@ -278,13 +295,13 @@ impl LocalAiEngine {
             .encode(prompt.as_str(), true)
             .map_err(|error| KoraError::Internal(format!("tokenizador de IA: {error}")))?;
         let prompt_tokens = encoding.get_ids().to_vec();
-        let max_tokens = max_tokens.clamp(16, 640) as usize;
+        let max_tokens = max_tokens.clamp(16, 192) as usize;
         if prompt_tokens.is_empty() {
             return Err(KoraError::InvalidInput(
                 "el mensaje de IA está vacío".into(),
             ));
         }
-        if prompt_tokens.len() + max_tokens > 4096 {
+        if prompt_tokens.len() + max_tokens > 2048 {
             return Err(KoraError::InvalidInput(
                 "el texto es demasiado largo para el asistente local".into(),
             ));

@@ -1479,7 +1479,7 @@
                   <p>
                     {aiLocal.installed
                       ? $t("settings.aiLocalHelp")
-                      : $t("settings.aiLocalInstallHelp", { size: "475 MB" })}
+                      : $t("settings.aiLocalInstallHelp", { size: "409 MB" })}
                   </p>
                 </div>
               </div>

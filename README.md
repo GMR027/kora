@@ -9,9 +9,9 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 Kora se descarga únicamente desde el clúster oficial:
 
 - Landing y descargas: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.7-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.7_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.7-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.8-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.8_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.8-1.x86_64.rpm>
 
 La app consulta `https://kora.iguzman.com.mx/downloads/latest.json` y descarga
 la actualización desde ese mismo host. GitHub se usa solo para el código
@@ -986,7 +986,7 @@ depender de `sqlite-vec` ni de una extensión nativa de SQLite.
 
 Kora no envía libros ni notas a servicios en la nube. En Android, **Ajustes →
 IA local → Descargar y activar** descarga el modelo **Qwen2.5 0.5B Instruct
-Q4_K_M** (~475 MB) y lo ejecuta en el teléfono con Candle, sin internet. El
+Q4_0** (~409 MB) y lo ejecuta en el teléfono con Candle, sin internet. El
 lector ofrece resumen de escena, términos clave, personajes, consultas de
 términos y chat sobre el capítulo actual. La descarga se verifica con SHA-256 y
 puede borrarse con «Liberar espacio».

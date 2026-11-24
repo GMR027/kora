@@ -3482,6 +3482,7 @@ dependencies = [
  "qrcode",
  "quinn",
  "rand 0.8.8",
+ "rayon",
  "rbook",
  "rcgen",
  "regex",

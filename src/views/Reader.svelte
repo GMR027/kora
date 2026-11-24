@@ -2,13 +2,14 @@
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { fade } from "svelte/transition";
   import AnnotationPanel from "../lib/components/AnnotationPanel.svelte";
   import Icon from "../lib/components/Icon.svelte";
   import PdfView from "./PdfView.svelte";
   import { appearance } from "../lib/appearance";
   import { t, translate } from "../lib/i18n";
+  import { readerOverlayOpen } from "../lib/readerOverlay";
   import {
     addMarker,
     addNote,
@@ -431,6 +432,14 @@
     ].join(";");
   });
 
+  $effect(() => {
+    readerOverlayOpen.set(aiOpen);
+  });
+
+  onDestroy(() => {
+    readerOverlayOpen.set(false);
+  });
+
   onMount(() => {
     disposed = false;
     void loadLibrary();
@@ -821,12 +830,13 @@
 
   function aiContext(): string {
     if (!session) return "";
+    const limit = aiStatusState?.provider === "local" ? 1_000 : 7_000;
     return [
       `Libro: ${session.document.title}`,
       `Autor: ${session.document.author ?? "desconocido"}`,
       `Capítulo: ${chapter?.title ?? chapterLabel(chapterIndex)}`,
       "Fragmento:",
-      `"""${chapterPlainText()}"""`,
+      `"""${chapterPlainText(limit)}"""`,
     ].join("\n");
   }
 
@@ -837,6 +847,7 @@
       "No inventes hechos, no cites fuentes externas y no adelantes acontecimientos posteriores al capítulo.",
       "Si la respuesta no está en el texto, dilo con claridad.",
       `Responde en ${aiLanguage()}, con prosa clara y concisa.`,
+      "Empieza directamente con la respuesta, sin repetir la tarea ni el título.",
     ].join(" ");
   }
 
@@ -990,10 +1001,10 @@
       if (!context) return;
       const task =
         kind === "summary"
-          ? "Resume la escena en 3 o 4 frases. Capta la acción, el tono y la tensión principal."
+          ? "Resume la escena en 3 o 4 frases. Capta la acción, el tono y la tensión principal. No repitas la tarea ni el título."
           : kind === "terms"
-            ? "Extrae entre 4 y 6 términos, símbolos o referencias clave. Para cada uno, da una definición breve basada en el fragmento."
-            : "Enumera los personajes que aparecen o se mencionan. Para cada uno, indica en una línea su papel en la escena.";
+            ? "Extrae entre 4 y 6 términos, símbolos o referencias clave. Para cada uno, da una definición breve basada en el fragmento. No repitas la tarea."
+            : "Enumera los personajes que aparecen o se mencionan. Para cada uno, indica en una línea su papel en la escena. No repitas la tarea.";
       const reply = await aiChat([
         { role: "system", content: aiSystemPrompt() },
         {

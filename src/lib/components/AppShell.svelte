@@ -23,6 +23,7 @@
   import { openUpdatesRequest } from "../updates";
   import type { AppTab } from "../navigation";
   import type { LibraryOverview, PlaybackSnapshot } from "../types";
+  import { readerOverlayOpen } from "../readerOverlay";
   import Icon from "./Icon.svelte";
   import ComfortHost from "./ComfortHost.svelte";
 
@@ -94,7 +95,10 @@
   let nowBook = $derived(overview?.current ?? null);
   let inProgress = $derived(overview?.inProgress ?? 0);
   let currentCover = $derived(playback?.coverPath ?? null);
-  let playerVisible = $derived(playback !== null && tab !== "audiobooks");
+  const playerTabs = new Set<AppTab>(["library", "reader", "notes", "diary"]);
+  let playerVisible = $derived(
+    playback !== null && playerTabs.has(tab) && !$readerOverlayOpen,
+  );
   let playerPercent = $derived.by(() => {
     if (!playback || playback.durationMs <= 0) return 0;
     return Math.min(

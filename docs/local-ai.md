@@ -8,10 +8,10 @@ con un servidor de modelos en la red local.
 
 1. Abre **Ajustes → IA local**.
 2. Pulsa **Descargar y activar**.
-3. Espera la descarga única de unos 475 MB.
+3. Espera la descarga única de unos 409 MB.
 4. Pulsa **Probar** para comprobar que responde.
 
-Kora descarga **Qwen2.5 0.5B Instruct Q4_K_M**, verifica su SHA-256 y lo ejecuta
+Kora descarga **Qwen2.5 0.5B Instruct Q4_0**, verifica su SHA-256 y lo ejecuta
 en el teléfono con Candle. Después funciona sin internet y sin servidores
 externos. El modelo se puede borrar con **Liberar espacio** y volver a descargar
 cuando se necesite.

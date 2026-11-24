@@ -48,7 +48,8 @@ impl Default for AiConfig {
         {
             config.provider = "local".to_string();
             config.model = local::MODEL_ID.to_string();
-            config.max_tokens = 512;
+            config.max_tokens = 128;
+            config.temperature = 0.35;
         }
         config
     }
@@ -515,16 +516,23 @@ impl AiService {
             let local = self.local.as_ref().ok_or_else(|| {
                 KoraError::Unsupported("el asistente local no está inicializado".into())
             })?;
-            let content = local
-                .chat(
+            let content = tokio::time::timeout(
+                Duration::from_secs(90),
+                local.chat(
                     messages
                         .iter()
                         .map(|message| (message.role.clone(), message.content.clone()))
                         .collect(),
                     temperature,
                     max_tokens,
+                ),
+            )
+            .await
+            .map_err(|_| {
+                KoraError::Internal(
+                    "el asistente local tardó demasiado; prueba con un texto más corto".into(),
                 )
-                .await?;
+            })??;
             return Ok(AiReply {
                 content,
                 provider: "local".to_string(),
