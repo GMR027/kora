@@ -35,9 +35,9 @@ La sección de descargas espera estos archivos:
 
 | Plataforma | Archivo |
 |---|---|
-| Android | `downloads/Kora-0.1.5-android.apk` |
-| Linux Debian/Ubuntu | `downloads/Kora_0.1.5_amd64.deb` |
-| Linux Fedora/RPM | `downloads/Kora-0.1.5-1.x86_64.rpm` |
+| Android | `downloads/Kora-0.1.6-android.apk` |
+| Linux Debian/Ubuntu | `downloads/Kora_0.1.6_amd64.deb` |
+| Linux Fedora/RPM | `downloads/Kora-0.1.6-1.x86_64.rpm` |
 
 En este workspace el APK es un enlace simbólico a `artifacts/kora-release.apk`.
 Los paquetes `.deb` y `.rpm` se generan con:

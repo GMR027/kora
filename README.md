@@ -9,9 +9,9 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 Kora se descarga únicamente desde el clúster oficial:
 
 - Landing y descargas: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.5-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.5_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.5-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.6-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.6_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.6-1.x86_64.rpm>
 
 La app consulta `https://kora.iguzman.com.mx/downloads/latest.json` y descarga
 la actualización desde ese mismo host. GitHub se usa solo para el código
@@ -66,7 +66,7 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | APK debug universal | ✅ compilado localmente para las cuatro ABI |
 | Audiolibros Android | ✅ Media3 ExoPlayer, `MediaSessionService`, notificación, segundo plano y pantalla apagada |
 | TTS Android | ✅ `TextToSpeech` + `MediaSessionService`, tarjeta de pantalla de bloqueo y portada de respaldo |
-| APK release firmado | ✅ 28 MB, firma V2 verificada con la llave de Kora |
+| APK release firmado | ✅ 78 MB, `arm64` + `x86_64`, firma V2 verificada con la llave de Kora |
 | Icono Android adaptativo | ✅ fondo propio y primer plano con margen seguro; sin esquinas negras ni recorte del arte |
 | Búsqueda semántica | ✅ chunking UTF-16, coseno y ranking con proveedor determinista |
 | IA local | ✅ Ollama/llama.cpp, configuración y detección de modelos |

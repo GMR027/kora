@@ -44,7 +44,7 @@ pnpm tauri build --bundles deb
 Salida:
 
 ```text
-target/release/bundle/deb/Kora_0.1.5_<arch>.deb
+target/release/bundle/deb/Kora_0.1.6_<arch>.deb
 ```
 
 Copia el paquete a `artifacts/` si quieres conservarlo antes de ejecutar
@@ -52,7 +52,7 @@ Copia el paquete a `artifacts/` si quieres conservarlo antes de ejecutar
 
 ```bash
 mkdir -p artifacts
-cp target/release/bundle/deb/Kora_0.1.5_amd64.deb artifacts/
+cp target/release/bundle/deb/Kora_0.1.6_amd64.deb artifacts/
 ```
 
 Si compilas en un contenedor sin Node, puedes construir el frontend en el host
