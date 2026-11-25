@@ -29,6 +29,23 @@ pub struct VoiceDescriptor {
     pub size_bytes: u64,
     /// `true` para perfiles clonados; la UI los marca y aplica la marca de agua.
     pub cloned: bool,
+    /// `true` para las voces del pack opcional Supertonic.
+    #[serde(default)]
+    pub enhanced: bool,
+    /// Calidad declarada por el motor nativo (100–500). Solo se usa para
+    /// curar el catálogo; no se muestra como número.
+    #[serde(default)]
+    pub quality: Option<u16>,
+    /// Latencia declarada por el motor nativo (100–500). Menor es mejor.
+    #[serde(default)]
+    pub latency: Option<u16>,
+    /// `true` si la voz necesita red (Google TTS la marca así).
+    #[serde(default)]
+    pub requires_network: bool,
+    /// Etiqueta BCP-47 del motor (`es-ES`, `en-US`). Ayuda a elegir una voz
+    /// por acento sin mostrar los códigos internos.
+    #[serde(default)]
+    pub locale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

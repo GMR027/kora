@@ -1,11 +1,11 @@
 use crate::storage::AssetKind;
 use crate::storage::model::{
     AnnotationKind, AudiobookOrigin, AudiobookStatus, BookFormat, BookOrigin, CategoryAssignSource,
-    NewAchievement, NewAnnotation, NewAudiobook, NewBook, NewCategory, NewCategorySuggestion,
-    NewCharacterVoice, NewDiaryEntry, NewExtract, NewNote, NewPracticeAttempt, NewReaction,
-    NewReaderSettings, NewReadingProgress, NewShare, NewTtsPreferences, NewTtsSequence, NewVoice,
-    NewVoiceNote, OffsetUnit, ReactionKind, ResourceType, SuggestionSource, SuggestionStatus,
-    SyncState, VoiceKind,
+    NewAchievement, NewAnnotation, NewAudiobook, NewAudiobookAlbum, NewBook, NewCategory,
+    NewCategorySuggestion, NewCharacterVoice, NewDiaryEntry, NewExtract, NewNote,
+    NewPracticeAttempt, NewReaction, NewReaderSettings, NewReadingProgress, NewShare,
+    NewTtsPreferences, NewTtsSequence, NewVoice, NewVoiceNote, OffsetUnit, ReactionKind,
+    ResourceType, SuggestionSource, SuggestionStatus, SyncState, VoiceKind,
 };
 use crate::storage::test_support::TestStorage;
 
@@ -2345,5 +2345,186 @@ async fn replaces_pdf_content_with_epub_and_cleans_pdf_tables() {
             .is_favorite(&book.id)
             .await
             .expect("favorito")
+    );
+}
+
+#[tokio::test]
+async fn audiobook_albums_group_order_hide_and_cascade() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let first_book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("album-first"), "Primero"))
+        .await
+        .expect("libro uno");
+    let second_book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("album-second"), "Segundo"))
+        .await
+        .expect("libro dos");
+
+    let create_audiobook = |book_id: String| {
+        let storage = test.storage.clone();
+        let owner = owner.clone();
+        async move {
+            storage
+                .audiobooks
+                .create(NewAudiobook {
+                    book_id,
+                    voice_id: None,
+                    status: AudiobookStatus::Done,
+                    manifest_hash: None,
+                    manifest_ext: None,
+                    audio_hash: None,
+                    audio_ext: None,
+                    scope: None,
+                    origin: AudiobookOrigin::Generated,
+                    duration_ms: Some(60_000),
+                    narration: None,
+                    cast: None,
+                    owner_account_id: owner,
+                    origin_share_id: None,
+                })
+                .await
+                .expect("audiolibro")
+        }
+    };
+    let first_audio = create_audiobook(first_book.id.clone()).await;
+    let second_audio = create_audiobook(second_book.id.clone()).await;
+
+    let album = test
+        .storage
+        .audiobook_albums
+        .create(NewAudiobookAlbum {
+            title: "Colección".into(),
+            description: Some("Dos audiolibros".into()),
+            sort_order: 0,
+            owner_account_id: owner.clone(),
+        })
+        .await
+        .expect("álbum");
+    assert!(
+        test.storage
+            .audiobook_albums
+            .get_owned(&album.id, "otra-cuenta")
+            .await
+            .expect("propietario")
+            .is_none()
+    );
+
+    test.storage
+        .audiobook_albums
+        .add_items(
+            &album.id,
+            &owner,
+            &[first_audio.id.clone(), second_audio.id.clone()],
+        )
+        .await
+        .expect("añadir");
+    test.storage
+        .audiobook_albums
+        .add_items(&album.id, &owner, std::slice::from_ref(&first_audio.id))
+        .await
+        .expect("añadir idempotente");
+    assert_eq!(
+        test.storage
+            .audiobook_albums
+            .list_visible_items(&album.id, &owner)
+            .await
+            .expect("elementos"),
+        vec![first_audio.id.clone(), second_audio.id.clone()]
+    );
+
+    test.storage
+        .audiobook_albums
+        .reorder(
+            &album.id,
+            &[second_audio.id.clone(), first_audio.id.clone()],
+        )
+        .await
+        .expect("reordenar");
+    assert_eq!(
+        test.storage
+            .audiobook_albums
+            .list_visible_items(&album.id, &owner)
+            .await
+            .expect("reordenado"),
+        vec![second_audio.id.clone(), first_audio.id.clone()]
+    );
+
+    test.storage
+        .books
+        .set_deleted(&first_book.id, true)
+        .await
+        .expect("papelera");
+    assert_eq!(
+        test.storage
+            .audiobook_albums
+            .list_visible_items(&album.id, &owner)
+            .await
+            .expect("visibles con papelera"),
+        vec![second_audio.id.clone()]
+    );
+    assert_eq!(
+        test.storage
+            .audiobook_albums
+            .list_items(&album.id)
+            .await
+            .expect("pertenencia conservada"),
+        vec![second_audio.id.clone(), first_audio.id.clone()]
+    );
+    test.storage
+        .books
+        .set_deleted(&first_book.id, false)
+        .await
+        .expect("restaurar");
+
+    test.storage
+        .audiobook_albums
+        .remove_item(&album.id, &first_audio.id)
+        .await
+        .expect("quitar");
+    assert_eq!(
+        test.storage
+            .audiobook_albums
+            .list_visible_items(&album.id, &owner)
+            .await
+            .expect("tras quitar"),
+        vec![second_audio.id.clone()]
+    );
+
+    test.storage
+        .audiobook_albums
+        .add_items(&album.id, &owner, std::slice::from_ref(&first_audio.id))
+        .await
+        .expect("volver a añadir");
+    test.storage
+        .audiobooks
+        .delete(&first_audio.id)
+        .await
+        .expect("borrar audiolibro");
+    assert_eq!(
+        test.storage
+            .audiobook_albums
+            .list_items(&album.id)
+            .await
+            .expect("cascada de audiolibro"),
+        vec![second_audio.id.clone()]
+    );
+
+    test.storage
+        .audiobook_albums
+        .delete(&album.id)
+        .await
+        .expect("borrar álbum");
+    assert!(
+        test.storage
+            .audiobooks
+            .get(&second_audio.id)
+            .await
+            .expect("audiolibro tras álbum")
+            .is_some()
     );
 }

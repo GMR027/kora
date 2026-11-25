@@ -2062,21 +2062,24 @@ impl Inner {
                 peer.addresses.clone()
             };
             let mut port = peer.port;
-            // Algunos entornos (CI, contenedores o mDNS con solo loopback)
-            // descubren el peer sin una dirección conectable. Si el usuario
-            // escribió una IP, se usa como respaldo sin perder el ticket ni la
-            // huella del peer descubierto.
-            if hosts.is_empty()
-                && let Some(address) = input
-                    .address
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|address| !address.is_empty())
+            // Algunos entornos (CI, contenedores o mDNS con solo loopback o
+            // IPv6 link-local) descubren el peer sin una dirección conectable.
+            // Si el usuario escribió una IP, se añade como candidata y se
+            // prueba antes de rendirse, sin perder el ticket ni la huella del
+            // peer descubierto.
+            if let Some(address) = input
+                .address
+                .as_deref()
+                .map(str::trim)
+                .filter(|address| !address.is_empty())
             {
                 if let Some(parsed) = parse_candidate(address, port) {
-                    hosts.push(parsed.ip().to_string());
+                    let host = parsed.ip().to_string();
+                    if !hosts.iter().any(|candidate| candidate == &host) {
+                        hosts.push(host);
+                    }
                     port = parsed.port();
-                } else {
+                } else if !hosts.iter().any(|candidate| candidate == address) {
                     hosts.push(address.to_string());
                 }
             }

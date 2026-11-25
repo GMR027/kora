@@ -43,6 +43,9 @@ Cada cambio de pantalla tiene una transición suave y respeta
   previa del texto, modo de capítulos y la opción de reemplazar el PDF o crear
   un EPUB nuevo. Si reemplazas, se conservan progreso, categorías, anotaciones
   y audiolibros.
+- En el menú de cualquier libro, **Crear audiolibro** abre el generador con el
+  libro ya seleccionado. En un EPUB, **Exportar EPUB** guarda una copia del
+  texto en disco.
 - **Editar metadatos** permite corregir título, autor, idioma, editorial y
   descripción. Los metadatos del EPUB/PDF se leen al importar y al abrir.
 - **Papelera** guarda los libros borrados con sus notas, marcadores, progreso y
@@ -115,8 +118,13 @@ Cada cambio de pantalla tiene una transición suave y respeta
 ## Audiolibros
 
 - Genera un M4B completo, por capítulo o por selección desde el botón
-  **Generar audiolibro**; el modal permite elegir libro, alcance, estilo de
-  narración (neutro, calmado, dramático o enérgico), velocidad base y voz.
+  **Generar audiolibro** o desde **Crear audiolibro** en el menú de un libro;
+  el modal permite elegir libro, alcance, estilo de narración (neutro, calmado,
+  dramático o enérgico), velocidad base y voz.
+- En **Android** la generación también está disponible con las voces del
+  sistema. Usa un muxer AAC nativo y un servicio en primer plano, así que
+  puede seguir con la pantalla apagada. Los capítulos se navegan dentro de
+  Kora; el M4B exportado puede no mostrar capítulos en reproductores externos.
 - La muestra de voz aplica el estilo y la velocidad elegidos, y cada audiolibro
   guarda esos ajustes en su manifiesto para mostrarlos en la tarjeta.
 - Al iniciar la síntesis, el trabajo entra en una **cola persistente**. Si no
@@ -127,11 +135,24 @@ Cada cambio de pantalla tiene una transición suave y respeta
   franja de tarea activa. La cancelación descarta el audio parcial. Si cierras
   la app, la cola pendiente se conserva; el trabajo que estaba en curso vuelve
   a la cola y se reintenta al volver a abrirla.
+- **Álbumes**: agrupa audiolibros por sagas, cursos o temas, ordénalos y
+  reprodúcelos en cola continua. Borrar un álbum no borra sus audiolibros.
 - Filtra por **Todos**, **Generados**, **Importados**, **Tejido** o **En proceso**,
   busca por título, autor o voz y ordena por fecha, título, duración o progreso.
 - Cada tarjeta muestra portada, origen, voz, duración, porcentaje completado y
   última escucha. Los iconos permiten abrir el texto, descargar el audio,
-  revisar capítulos o borrar el audiolibro.
+  revisar capítulos, añadir a un álbum o borrar el audiolibro.
+- Si un audiolibro está marcado como **Solo audio**, el icono del libro abre
+  **Convertir a EPUB**: elige Whisper Tiny o Base, descarga el modelo si falta
+  y espera la transcripción. El EPUB aparece en la biblioteca sin borrar el
+  audiolibro. Si ya tiene texto, ese mismo texto se puede exportar como EPUB
+  desde la biblioteca.
+- El conmutador **Audiolibros / Álbumes** abre las colecciones. Crea un álbum,
+  añade audiolibros, reordénalos con las flechas y pulsa **Reproducir todo**.
+  Un audiolibro puede pertenecer a varios álbumes; borrar un álbum no borra los
+  audiolibros. La cola avanza al siguiente título mientras la app está en
+  primer plano. Los álbumes son locales: no viajan en la sincronización normal
+  porque los audiolibros solo se comparten explícitamente.
 - Si una generación falla o se cancela, la tarjeta muestra **Reintentar
   generación**. El reintento reutiliza la voz, el alcance, el estilo y el
   reparto guardados, y conserva los marcadores de voz del audiolibro.
@@ -154,10 +175,10 @@ Cada cambio de pantalla tiene una transición suave y respeta
   reproducción, el temporizador de sueño sigue funcionando aunque el WebView esté
   suspendido y el botón del sol del reproductor permite mantener la pantalla
   encendida mientras escuchas. La importación de audio está disponible en el
-  móvil, igual que la transcripción automática con Whisper Tiny/Base; la
-  generación de audiolibros con voces sigue siendo de escritorio. La
-  transcripción muestra progreso continuo y sigue trabajando con la pantalla
-  apagada mediante un servicio en primer plano.
+  móvil, igual que la transcripción automática con Whisper Tiny/Base y la
+  generación de audiolibros con las voces del sistema. La transcripción y la
+  generación muestran progreso continuo y siguen trabajando con la pantalla
+  apagada mediante servicios en primer plano.
 - La **lectura sincronizada** muestra la frase que suena bajo el reproductor y
   resalta la palabra actual. **Leer y escuchar** abre el capítulo completo con
   todas las frases sincronizadas: toca una frase para saltar a ese punto. En
@@ -193,15 +214,22 @@ Cada cambio de pantalla tiene una transición suave y respeta
 
 ## Voz
 
-- **Voces del sistema**: instala/descarga voces y pruébalas.
+- **Voces del sistema**: Kora muestra una selección curada (una por acento
+  local). El botón **Todas las variantes** despliega el catálogo técnico
+  completo del sistema, con las voces de red marcadas como «Red».
+- **Voces mejoradas**: en **Ajustes → Voz** descarga el pack Supertonic 3
+  (~383 MB), acepta la licencia OpenRAIL-M y actívalo. Añade tres voces
+  neuronales por idioma (español e inglés) en Android y escritorio. El modelo
+  se carga solo al narrar y se libera tras 90 segundos de inactividad; el botón
+  **Liberar memoria** lo descarga al instante.
 - **Voces clonadas**: crea un perfil con un clip de 3–30 s, una transcripción y
   consentimiento; importa/exporta `.koravoice`; prueba o borra perfiles.
 - **Modelos**: descarga los modelos NeuTTS/NeuCodec por idioma.
-- En Android el estudio usa el motor TTS del teléfono: puedes buscar y filtrar
-  voces, probarlas con tu propio texto y ajustar la velocidad. La grabación, la
-  clonación y la descarga de modelos NeuTTS siguen siendo de escritorio; en el
-  teléfono sí puedes importar, renombrar, exportar y borrar perfiles
-  `.koravoice`.
+- En Android el estudio usa el motor TTS del teléfono y el pack Supertonic 3
+  opcional: puedes buscar y filtrar voces, probarlas con tu propio texto y
+  ajustar la velocidad. La grabación, la clonación y la descarga de modelos
+  NeuTTS siguen siendo de escritorio; en el teléfono sí puedes importar,
+  renombrar, exportar y borrar perfiles `.koravoice`.
 
 ## Sync
 

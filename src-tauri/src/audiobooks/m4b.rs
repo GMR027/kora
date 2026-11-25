@@ -27,6 +27,7 @@ fn ffmpeg_command() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn ensure_available() -> Result<()> {
     let output = Command::new(ffmpeg_command())
         .arg("-version")
@@ -40,6 +41,13 @@ pub fn ensure_available() -> Result<()> {
     if !output.status.success() {
         bail!("ffmpeg no respondió correctamente");
     }
+    Ok(())
+}
+
+/// En Android el empaquetado AAC/MP4 lo hace el plugin nativo, así que no se
+/// necesita `ffmpeg` para generar un audiolibro.
+#[cfg(target_os = "android")]
+pub fn ensure_available() -> Result<()> {
     Ok(())
 }
 
@@ -68,6 +76,7 @@ pub struct ProbeChapter {
     pub title: String,
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn mux(
     chapters: &[MuxChapter],
     output: &Path,
@@ -160,10 +169,51 @@ pub fn mux(
     Ok(())
 }
 
+/// Empaqueta los WAV de cada capítulo en un MP4/AAC usando MediaCodec y
+/// MediaMuxer dentro del plugin Android. Los capítulos siguen viviendo en el
+/// manifiesto JSON de Kora; el contenedor no incluye átomos de capítulos para
+/// reproductores externos en esta primera versión.
+#[cfg(target_os = "android")]
+pub fn mux(
+    chapters: &[MuxChapter],
+    output: &Path,
+    title: &str,
+    author: &str,
+    metadata: &[(&str, &str)],
+) -> Result<()> {
+    if chapters.is_empty() {
+        bail!("no hay capítulos para codificar");
+    }
+    let chapters_json = serde_json::to_string(
+        &chapters
+            .iter()
+            .map(|chapter| {
+                serde_json::json!({
+                    "path": chapter.path.to_string_lossy(),
+                    "title": chapter.title,
+                    "durationMs": chapter.duration_ms,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
+    .context("no se pudo serializar los capítulos para el muxer Android")?;
+    let metadata_json = serde_json::to_string(
+        &metadata
+            .iter()
+            .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
+            .collect::<Vec<_>>(),
+    )
+    .context("no se pudo serializar los metadatos del audiolibro")?;
+    let output = output.to_string_lossy().to_string();
+    super::player::mux_audiobook(&chapters_json, &output, title, author, &metadata_json)
+}
+
+#[cfg_attr(target_os = "android", allow(dead_code))]
 fn escape_concat(path: &Path) -> String {
     path.to_string_lossy().replace('\'', "'\\''")
 }
 
+#[cfg_attr(target_os = "android", allow(dead_code))]
 fn escape_metadata(value: &str) -> String {
     value
         .replace('\\', "\\\\")

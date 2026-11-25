@@ -1660,7 +1660,7 @@
 
   .panel-cta {
     flex: 0 0 auto;
-    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 14px calc(10px + var(--safe-bottom));
     border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
     background: color-mix(in srgb, var(--surface-2) 70%, var(--surface));
   }

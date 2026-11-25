@@ -36,6 +36,7 @@
   let readerBookId = $state<string | null>(null);
   let readerLocator = $state<Locator | null>(null);
   let readerAutoListen = $state(false);
+  let audiobookIntent = $state<{ bookId: string } | null>(null);
 
   function openReader(id: string, locator: Locator | null = null) {
     readerAutoListen = false;
@@ -49,6 +50,11 @@
     readerBookId = id;
     readerLocator = section > 0 ? { section, offset: 0 } : null;
     tab = "reader";
+  }
+
+  function openAudiobookGenerator(bookId: string) {
+    audiobookIntent = { bookId };
+    navigate("audiobooks");
   }
 
   async function boot(attempt = 0) {
@@ -208,7 +214,12 @@
             <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
           {:then module}
             {@const View = module.default}
-            <View onRead={openReader} onListen={openReaderListen} onNavigate={navigate} />
+            <View
+              onRead={openReader}
+              onListen={openReaderListen}
+              onNavigate={navigate}
+              onCreateAudiobook={openAudiobookGenerator}
+            />
           {/await}
         {:else if tab === "reader"}
           {@const view = loadView("reader")}
@@ -230,7 +241,13 @@
             <div class="view-loading"><Spinner label={$t("common.loading")} /></div>
           {:then module}
             {@const View = module.default}
-            <View onRead={openReader} onNavigate={navigate} />
+            <View
+              onRead={openReader}
+              onNavigate={navigate}
+              initialBookId={audiobookIntent?.bookId ?? ""}
+              autoOpenGenerator={audiobookIntent !== null}
+              onIntentConsumed={() => (audiobookIntent = null)}
+            />
           {/await}
         {:else if tab === "notes"}
           {@const view = loadView("notes")}

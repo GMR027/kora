@@ -49,3 +49,4 @@ src-tauri/binaries/
 
 # Despliegue
 /.deploy-tag
+/src-tauri/target-fedora

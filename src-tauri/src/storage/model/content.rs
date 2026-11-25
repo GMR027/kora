@@ -583,6 +583,28 @@ pub struct NewAudiobook {
     pub origin_share_id: Option<String>,
 }
 
+/// Colección ordenada de audiolibros. Es local de la cuenta: no viaja en la
+/// sincronización normal porque los audiolibros tampoco lo hacen.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct AudiobookAlbum {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub sort_order: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub owner_account_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAudiobookAlbum {
+    pub title: String,
+    pub description: Option<String>,
+    pub sort_order: i64,
+    pub owner_account_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "snake_case")]

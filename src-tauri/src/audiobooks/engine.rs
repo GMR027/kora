@@ -39,13 +39,28 @@ pub struct AudiobookProgressEvent {
 
 pub fn emit_progress(app: &AppHandle, event: AudiobookProgressEvent) {
     #[cfg(target_os = "android")]
-    if matches!(
-        event.phase.as_str(),
-        "transcribing" | "building" | "done" | "cancelled" | "error"
-    ) {
-        let _ = super::player::update_transcription_service(event.percent, &event.message);
+    {
+        let _ = super::player::update_generation_service(event.percent, &event.message);
+        if matches!(
+            event.phase.as_str(),
+            "transcribing" | "building" | "done" | "cancelled" | "error"
+        ) {
+            let _ = super::player::update_transcription_service(event.percent, &event.message);
+        }
     }
     let _ = app.emit("audiobook::progress", event);
+}
+
+/// Mantiene vivo el proceso Android mientras se sintetiza y empaqueta un
+/// audiolibro. El servicio se detiene al salir de `synthesize_sections`.
+#[cfg(target_os = "android")]
+struct AndroidGenerationService;
+
+#[cfg(target_os = "android")]
+impl Drop for AndroidGenerationService {
+    fn drop(&mut self) {
+        let _ = super::player::stop_generation_service();
+    }
 }
 
 /// Resultado de sintetizar un conjunto de secciones sin tocar la base de
@@ -77,6 +92,11 @@ pub async fn synthesize_sections(
     workspace: &std::path::Path,
 ) -> Result<SynthesizedAudio> {
     std::fs::create_dir_all(workspace)?;
+    #[cfg(target_os = "android")]
+    let _service = app.map(|_| {
+        let _ = super::player::start_generation_service(title);
+        AndroidGenerationService
+    });
 
     let narration = narration.clamped();
     let mut cast_resolver = CastResolver::single(CastVoice {

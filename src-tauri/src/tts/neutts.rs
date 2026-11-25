@@ -425,6 +425,11 @@ impl TtsEngine for NeuTtsEngine {
                 installed: true,
                 size_bytes: 0,
                 cloned: true,
+                enhanced: false,
+                quality: None,
+                latency: None,
+                requires_network: false,
+                locale: None,
             })
             .collect())
     }

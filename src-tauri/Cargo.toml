@@ -39,6 +39,7 @@ base64.workspace = true
 chrono.workspace = true
 lopdf.workspace = true
 mdns-sd.workspace = true
+ndarray = "0.17"
 quinn.workspace = true
 rcgen.workspace = true
 rbook.workspace = true
@@ -78,11 +79,26 @@ piper-rs = { path = "vendor/piper-rs" }
 rodio = { version = "0.23", default-features = false, features = ["playback", "mp3", "mp4"] }
 ogg = "0.9"
 opus = "0.4"
+ort = { version = "2.0.0-rc.15", default-features = false, features = [
+    "download-binaries",
+    "tls-rustls",
+    "ndarray",
+    "std",
+] }
 ureq = "3"
 whisper-rs = "0.16"
 
 [target.'cfg(target_os = "android")'.dependencies]
 tauri-plugin-barcode-scanner = "2"
+# En Android se enlaza estáticamente ONNX Runtime desde la distribución de
+# pyke (incluye el proveedor NNAPI). Evita depender de un .so externo.
+ort = { version = "2.0.0-rc.15", default-features = false, features = [
+    "download-binaries",
+    "tls-rustls",
+    "nnapi",
+    "ndarray",
+    "std",
+] }
 ureq = "3"
 whisper-rs = "0.16"
 candle-core = { version = "0.11.1", default-features = false }

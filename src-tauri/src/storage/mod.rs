@@ -17,6 +17,7 @@ pub use assets::{AssetKind, AssetRef, LocalAssetStore};
 pub use model::*;
 pub use paths::StorageLayout;
 pub use repos::accounts::{AccountRepo, ConnectionKeyRepo, DeviceRepo};
+pub use repos::albums::AudiobookAlbumRepo;
 pub use repos::annotations::{AnnotationRepo, ExtractRepo, NoteRepo, ReactionRepo, VoiceNoteRepo};
 pub use repos::appearance::AppearanceRepo;
 pub use repos::books::{BookRepo, ReadingProgressRepo};
@@ -72,6 +73,7 @@ pub struct Storage {
     pub reactions: ReactionRepo,
     pub voices: VoiceRepo,
     pub audiobooks: AudiobookRepo,
+    pub audiobook_albums: AudiobookAlbumRepo,
     pub diary: DiaryRepo,
     pub achievements: AchievementRepo,
     pub settings: SettingsRepo,
@@ -125,6 +127,7 @@ impl Storage {
             reactions: ReactionRepo::new(pool.clone()),
             voices: VoiceRepo::new(pool.clone()),
             audiobooks: AudiobookRepo::new(pool.clone()),
+            audiobook_albums: AudiobookAlbumRepo::new(pool.clone()),
             diary: DiaryRepo::new(pool.clone()),
             achievements: AchievementRepo::new(pool.clone()),
             settings: SettingsRepo::new(pool.clone()),

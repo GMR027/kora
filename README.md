@@ -9,9 +9,9 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 Kora se descarga únicamente desde el clúster oficial:
 
 - Landing y descargas: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.8-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.8_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.8-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.9-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.9_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.9-1.x86_64.rpm>
 
 La app consulta `https://kora.iguzman.com.mx/downloads/latest.json` y descarga
 la actualización desde ese mismo host. GitHub se usa solo para el código
@@ -44,10 +44,12 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 > con Ollama/llama.cpp opcionales), la
 > **clasificación asistida** de libros y audiolibros con sugerencias de
 > categoría, la **conversión PDF→EPUB** con reubicación de anotaciones, la
-> **papelera con restauración**, las **copias de seguridad** y la optimización
-> de consultas de la biblioteca. La cuenta local permite editar el nombre y
-> subir una foto de perfil que se recorta en círculo. El escritorio se
-> empaqueta como `.deb`/`rpm`/AppImage; el APK núcleo se valida en CI.
+> **conversión entre texto y audio** (EPUB/PDF→M4B y audiolibro sin texto→EPUB
+> con Whisper), los **álbumes de audiolibros**, la **papelera con restauración**,
+> las **copias de seguridad** y la optimización de consultas de la biblioteca.
+> La cuenta local permite editar el nombre y subir una foto de perfil que se
+> recorta en círculo. El escritorio se empaqueta como `.deb`/`rpm`/AppImage; el
+> APK núcleo se valida en CI.
 
 ### Verificación de esta fase
 
@@ -57,7 +59,7 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | `pnpm check` (svelte-check) | ✅ 0 errores, 0 warnings |
 | `cargo fmt --check` | ✅ |
 | `cargo clippy --workspace --all-targets -- -D warnings` | ✅ |
-| `cargo test --workspace` | ✅ 221 unitarios + 5 M4B + 5 flujo de audiolibros + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
+| `cargo test --workspace` | ✅ 226 unitarios + 5 M4B + 5 flujo de audiolibros + 4 PDF/OCR + 2 TTS + 1 clonación (E2E opcional); 3 ignorados |
 | Temas y texturas | ✅ 4 temas integrados + temas por cuenta, 10 texturas y contraste |
 | i18n | ✅ español/inglés tipado con paridad de claves |
 | Accesibilidad | ✅ 48dp, foco visible, skip link, ARIA y reduced-motion |
@@ -66,15 +68,18 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | Android APK núcleo | ✅ workflow x86_64 y build local x86_64; en aarch64 no es nativo |
 | APK debug universal | ✅ compilado localmente para las cuatro ABI |
 | Audiolibros Android | ✅ Media3 ExoPlayer, `MediaSessionService`, notificación, segundo plano y pantalla apagada |
-| TTS Android | ✅ `TextToSpeech` + `MediaSessionService`, tarjeta de pantalla de bloqueo y portada de respaldo |
-| APK release firmado | ✅ 86 MB, `arm64` + `x86_64`, firma V2 verificada con la llave de Kora |
+| TTS Android | ✅ `TextToSpeech` + `MediaSessionService`; pack opcional Supertonic 3 con 6 voces neuronales |
+| APK release firmado | ✅ 64 MB, `arm64`, firma V2 verificada con la llave de Kora |
 | Icono Android adaptativo | ✅ fondo propio y primer plano con margen seguro; sin esquinas negras ni recorte del arte |
 | Búsqueda semántica | ✅ chunking UTF-16, coseno y ranking con proveedor determinista |
 | IA local | ✅ asistente Qwen2.5 0.5B en Android con activación de un botón y modo avanzado para Ollama/llama.cpp |
-| Voces soportadas | ✅ solo español e inglés; las voces del sistema en otros idiomas se filtran |
+| Voces soportadas | ✅ solo español e inglés; catálogo nativo curado y opción «Todas las variantes» |
 | Modo avanzado | ✅ código de acceso oculta proveedor, URL, modelo y parámetros técnicos |
 | Clasificación automática | ✅ reglas, metadatos, embeddings, IA y sugerencias |
 | Conversión PDF→EPUB | ✅ capítulos, OCR, reubicación de anotaciones y portada |
+| Conversión texto↔audio | ✅ EPUB/PDF→M4B desde la biblioteca y audiolibro sin texto→EPUB con Whisper |
+| Álbumes de audiolibros | ✅ colecciones ordenadas, mosaico de portadas y reproducción en cola |
+| Generación M4B en Android | ✅ MediaCodec/MediaMuxer, servicio en primer plano y capítulos en el manifiesto |
 | Papelera y copias | ✅ restauración, ZIP verificado y purga |
 | CI de escritorio | ✅ workflow Linux añadido; mismas comprobaciones ejecutadas localmente |
 | Arranque de escritorio | ✅ `pnpm tauri dev` inicia la app y la base SQLite |
@@ -125,8 +130,8 @@ Ubuntu 24.04.
 | PDF (visor) | `pdf.js` (`pdfjs-dist`) en el WebView |
 | PDF (texto/OCR) | `pdfium-render` + `libpdfium` del sistema (`lopdf` como plan B) |
 | OCR | Tesseract 5 vía `leptess` (solo escritorio) |
-| TTS escritorio | Piper (`piper-rs` + ONNX Runtime) y reproducción con `rodio`/`cpal` |
-| TTS Android | `TextToSpeech` nativo + plugin Kotlin propio + `MediaSessionService` de Media3 |
+| TTS escritorio | Piper (`piper-rs` + ONNX Runtime), Supertonic 3 opcional y reproducción con `rodio`/`cpal` |
+| TTS Android | `TextToSpeech` nativo, Supertonic 3 opcional (ONNX Runtime estático), plugin Kotlin propio y `MediaSessionService` de Media3 |
 | Transcripción Android | `MediaExtractor`/`MediaCodec` + `whisper-rs` compilado con el NDK |
 | Modo ensayo | `cpal` para grabar y `whisper-rs` (`tiny`/`base`) para transcribir |
 | Notas ricas | Quill 2 (Delta JSON en `notes.content_json`) |
@@ -196,6 +201,7 @@ assets/audiobooks/       manifiestos y audio generado
 assets/generated_books/  exportaciones generadas
 assets/ocr/              capas de texto por página: <book_id>/page_<n>.json
 assets/tts/              voces Piper: <voice_id>/model.onnx + config.json
+assets/tts/supertonic/   pack opcional Supertonic 3: onnx/, voice_styles/, state.json
 assets/tts/practice/     grabaciones del modo ensayo: <book_id>/*.wav
 assets/whisper/          modelos GGML de Whisper: ggml-tiny.bin, ggml-base.bin
 assets/models/embeddings/ modelo ONNX/tokenizer de búsqueda semántica
@@ -261,6 +267,7 @@ conexión del pool y `audit_log` es append-only.
 | `library_list` | Lista libros con portada y progreso |
 | `library_overview` | Libro en curso y contador para la barra superior |
 | `library_import` | Copia un EPUB/PDF por SHA-256 y crea el libro |
+| `export_book` | Copia el EPUB de un libro al destino elegido |
 | `library_update` | Corrige título, autor, idioma, editorial y descripción |
 | `library_delete` | Mueve el libro a la papelera lógica conservando notas y assets |
 | `library_trash` / `library_restore` / `library_purge_book` / `library_empty_trash` | Papelera, restauración y borrado definitivo |
@@ -321,8 +328,10 @@ conexión del pool y `audit_log` es append-only.
 | `voice_clone_preview` | Genera una muestra WAV con marca de agua |
 | `reader_add_extract` / `reader_list_extracts` | Guardan y listan extractos por libro |
 | `list_all_extracts` / `reader_delete_extract` | Extractos para Tejido y borrado |
-| `generate_audiobook` | Genera un M4B con estilo de narración, velocidad base y reparto de voces |
+| `generate_audiobook` | Genera un M4B con estilo de narración, velocidad base y reparto de voces; en Android empaqueta con MediaCodec/MediaMuxer |
 | `enqueue_audiobook` / `audiobook_queue_status` | Cola persistente de generación con progreso, reparto y elementos pendientes |
+| `audiobook_album_list` / `audiobook_album_create` / `audiobook_album_update` / `audiobook_album_delete` | CRUD de álbumes de audiolibros |
+| `audiobook_album_add` / `audiobook_album_remove` / `audiobook_album_reorder` | Pertenencia y orden de los audiolibros de un álbum |
 | `retry_audiobook` / `move_queued_audiobook` | Reintenta una generación fallida y reordena la cola |
 | `audiobook_characters` | Detecta personajes del alcance para el multivot |
 | `pause_audiobook_generation` / `resume_audiobook_generation` / `cancel_audiobook_generation` | Control de la generación activa |
@@ -622,8 +631,12 @@ Los audiolibros M4B/MP3 usan **Media3 ExoPlayer** dentro de otro
 `MediaSessionService` con el mismo tipo de controles. En Android también se
 pueden importar audiolibros y transcribirlos localmente con Whisper: el audio
 se decodifica con `MediaExtractor`/`MediaCodec` y Whisper se compila para la
-ABI con `whisper-rs` + NDK. La generación de audiolibros con voces sigue
-reservada a escritorio.
+ABI con `whisper-rs` + NDK. La generación con voces del sistema también está
+disponible en Android: el motor TTS sintetiza cada fragmento, un muxer nativo
+(`MediaCodec` + `MediaMuxer`) empaqueta AAC/MP4 y un servicio en primer plano
+mantiene el proceso vivo con la pantalla apagada. Los capítulos se guardan en
+el manifiesto de Kora; el contenedor no incluye átomos de capítulos para
+reproductores externos en esta versión.
 El temporizador de sueño y el ajuste opcional de mantener la pantalla encendida
 también viven en el servicio nativo. El código nativo del reproductor está en
 `app/src/main/java/dev/kora/reader/audio/` y el del TTS en
@@ -1180,7 +1193,31 @@ donde se quedó.
 
 `generate_audiobook` acepta un estilo de narración (neutro, calmado, dramático
 o enérgico) y una velocidad base; ambos se guardan en el manifiesto y ajustan
-la prosodia de cada fragmento durante la síntesis.
+la prosodia de cada fragmento durante la síntesis. En escritorio el M4B se
+empaqueta con `ffmpeg`; en Android, `AudiobookMuxer` usa `MediaCodec` y
+`MediaMuxer` y `AudiobookGenerationService` mantiene la generación en primer
+plano. La vista de audiolibros expone **Crear audiolibro** desde el menú de un
+libro y muestra un aviso claro si falta la voz, ffmpeg o el soporte nativo.
+
+### Conversión entre texto y audio
+
+- **Texto → audiolibro**: el menú de un libro EPUB o PDF abre el generador con
+  el libro preseleccionado. La generación reutiliza la cola persistente, el
+  reparto de voces y el mismo pipeline M4B.
+- **Audiolibro sin texto → EPUB**: la tarjeta de un audiolibro marcado como
+  **Solo audio** ofrece **Convertir a EPUB**. El modal permite elegir Whisper
+  Tiny o Base, descargar el modelo y seguir el progreso; al terminar, el libro
+  aparece en la biblioteca y el audiolibro se conserva.
+- **Audiolibro con EPUB**: si el audiolibro nació de un EPUB o ya fue
+  transcrito, el texto se puede **exportar** con `export_book` desde la
+  biblioteca. Si nació de un PDF, se reutiliza la conversión PDF→EPUB existente.
+- Los álbumes agrupan audiolibros en colecciones ordenadas. La migración
+  `0026_audiobook_albums.sql` añade `audiobook_albums` y
+  `audiobook_album_items`; la vista muestra un mosaico de portadas, permite
+  reordenar y ofrece **Reproducir todo**. La cola de reproducción avanza al
+  siguiente audiolibro mientras la app está en primer plano. Los álbumes son
+  locales de la cuenta y no viajan en la sincronización normal porque los
+  audiolibros solo se transfieren con un share explícito.
 
 El **multivot por personaje** reutiliza el detector expresivo del lector. Antes
 de generar, `audiobook_characters` devuelve los personajes del alcance con su

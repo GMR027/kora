@@ -467,6 +467,27 @@ export interface VoiceDescriptor {
   installed: boolean;
   sizeBytes: number;
   cloned: boolean;
+  enhanced: boolean;
+  quality: number | null;
+  latency: number | null;
+  requiresNetwork: boolean;
+  locale: string | null;
+}
+
+export interface SupertonicStatus {
+  installed: boolean;
+  enabled: boolean;
+  licenseAccepted: boolean;
+  license: string;
+  totalBytes: number;
+  downloadedBytes: number;
+}
+
+export interface SupertonicDownloadProgress {
+  downloaded: number;
+  total: number;
+  done: boolean;
+  error: string | null;
 }
 
 export interface SynthesisRequest {
@@ -1130,8 +1151,20 @@ export interface AudiobookInfo {
   categoryIds: string[];
 }
 
+export interface AudiobookAlbumInfo {
+  id: string;
+  title: string;
+  description: string | null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  audiobookIds: string[];
+}
+
 export interface AudiobookCapabilities {
   platformSupported: boolean;
+  generationSupported: boolean;
+  nativeMux: boolean;
   audioImportSupported: boolean;
   nativeAudioImport: boolean;
   transcriptionSupported: boolean;

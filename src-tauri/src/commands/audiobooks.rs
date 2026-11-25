@@ -14,17 +14,18 @@ use crate::audiobooks::{
     NarrationSettings, PlaybackSnapshot, lines_from_text, m4b, marker_anchor, queue, read_manifest,
     resolve_sections,
 };
-use crate::audiobooks::{AudiobookProgressEvent, emit_progress, transcribe_existing};
+use crate::audiobooks::{
+    AudiobookProgressEvent, emit_progress, generate, regenerate, transcribe_existing,
+};
 #[cfg(not(target_os = "android"))]
 use crate::audiobooks::{
-    DEFAULT_WAVEFORM_BUCKETS, MAX_WAVEFORM_BUCKETS, MIN_WAVEFORM_BUCKETS, generate, import,
-    import_audio as import_audio_only, reanalyze_audio_chapters, regenerate,
+    DEFAULT_WAVEFORM_BUCKETS, MAX_WAVEFORM_BUCKETS, MIN_WAVEFORM_BUCKETS, import,
+    import_audio as import_audio_only, reanalyze_audio_chapters,
 };
 use crate::commands::reader::owned_book;
 use crate::error::{KoraError, Result};
 use crate::reader::SourceText;
 use crate::state::AppState;
-#[cfg(not(target_os = "android"))]
 use crate::storage::NewAudiobookQueueItem;
 use crate::storage::{
     AssetKind, AssetRef, Audiobook, AudiobookOrigin, AudiobookProgress, AudiobookStatus, Book,
@@ -71,6 +72,11 @@ pub struct AudiobookInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AudiobookCapabilities {
     pub platform_supported: bool,
+    /// La síntesis y el empaquetado M4B/M4A están disponibles. En escritorio
+    /// depende de ffmpeg; en Android usa el muxer AAC nativo.
+    pub generation_supported: bool,
+    /// Android empaqueta con MediaCodec/MediaMuxer y no necesita ffmpeg.
+    pub native_mux: bool,
     pub audio_import_supported: bool,
     pub native_audio_import: bool,
     pub transcription_supported: bool,
@@ -147,15 +153,18 @@ pub async fn audiobook_set_favorite(
 
 #[tauri::command]
 pub fn audiobook_capabilities(state: State<'_, AppState>) -> AudiobookCapabilities {
-    let platform_supported = cfg!(not(target_os = "android"));
+    let native_mux = cfg!(target_os = "android");
+    let ffmpeg = !native_mux && m4b::ensure_available().is_ok();
     AudiobookCapabilities {
-        platform_supported,
+        platform_supported: true,
+        generation_supported: native_mux || ffmpeg,
+        native_mux,
         audio_import_supported: true,
-        native_audio_import: cfg!(target_os = "android"),
+        native_audio_import: native_mux,
         transcription_supported: true,
         playback_supported: true,
-        background_playback: cfg!(target_os = "android"),
-        ffmpeg: platform_supported && m4b::ensure_available().is_ok(),
+        background_playback: native_mux,
+        ffmpeg,
         whisper_base: practice::installed(&state.layout.assets, "base"),
     }
 }
@@ -170,57 +179,46 @@ pub async fn generate_audiobook(
     narration: Option<NarrationSettings>,
     cast: Option<CastInput>,
 ) -> Result<AudiobookInfo> {
-    #[cfg(target_os = "android")]
-    {
-        let _ = (&state, &app, &book_id, &scope, &voice_id, &narration, &cast);
-        return Err(KoraError::Unsupported(
-            "la generación de audiolibros aún no está disponible en Android".into(),
-        ));
-    }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let _guard = state.audiobook_jobs.run_lock.lock().await;
-        let title = state
-            .storage
-            .books
-            .get(&book_id)
-            .await?
-            .map(|book| book.title)
-            .unwrap_or_else(|| "Audiolibro".to_string());
-        let voice_name = state.tts.voices().await.ok().and_then(|voices| {
-            voices
-                .into_iter()
-                .find(|voice| voice.id == voice_id)
-                .map(|voice| voice.name)
-        });
-        let cast = cast.unwrap_or_default().normalized();
-        let narration = narration.unwrap_or_default().clamped();
-        let narration = NarrationSettings {
-            multi_voice: cast.enabled,
-            ..narration
-        };
-        let control = state.audiobook_jobs.begin(&title, voice_name.as_deref());
-        queue::notify_queue(&app);
-        let result = generate(
-            &state,
-            &app,
-            &book_id,
-            scope,
-            &voice_id,
-            AudiobookOrigin::Generated,
-            narration,
-            cast,
-            Some(control.as_ref()),
-        )
-        .await;
-        state.audiobook_jobs.finish();
-        queue::notify_queue(&app);
-        drop(_guard);
-        queue::start_worker(app.clone());
-        let audiobook = result?;
-        info_for(&state, &audiobook, None).await
-    }
+    let _guard = state.audiobook_jobs.run_lock.lock().await;
+    let title = state
+        .storage
+        .books
+        .get(&book_id)
+        .await?
+        .map(|book| book.title)
+        .unwrap_or_else(|| "Audiolibro".to_string());
+    let voice_name = state.tts.voices().await.ok().and_then(|voices| {
+        voices
+            .into_iter()
+            .find(|voice| voice.id == voice_id)
+            .map(|voice| voice.name)
+    });
+    let cast = cast.unwrap_or_default().normalized();
+    let narration = narration.unwrap_or_default().clamped();
+    let narration = NarrationSettings {
+        multi_voice: cast.enabled,
+        ..narration
+    };
+    let control = state.audiobook_jobs.begin(&title, voice_name.as_deref());
+    queue::notify_queue(&app);
+    let result = generate(
+        &state,
+        &app,
+        &book_id,
+        scope,
+        &voice_id,
+        AudiobookOrigin::Generated,
+        narration,
+        cast,
+        Some(control.as_ref()),
+    )
+    .await;
+    state.audiobook_jobs.finish();
+    queue::notify_queue(&app);
+    drop(_guard);
+    queue::start_worker(app.clone());
+    let audiobook = result?;
+    info_for(&state, &audiobook, None).await
 }
 
 #[tauri::command]
@@ -233,56 +231,45 @@ pub async fn enqueue_audiobook(
     narration: Option<NarrationSettings>,
     cast: Option<CastInput>,
 ) -> Result<AudiobookGenerationView> {
-    #[cfg(target_os = "android")]
-    {
-        let _ = (&state, &app, &book_id, &scope, &voice_id, &narration, &cast);
-        return Err(KoraError::Unsupported(
-            "la generación de audiolibros aún no está disponible en Android".into(),
+    if voice_id.trim().is_empty() {
+        return Err(KoraError::InvalidInput(
+            "elige una voz para generar el audiolibro".into(),
         ));
     }
-
-    #[cfg(not(target_os = "android"))]
-    {
-        if voice_id.trim().is_empty() {
-            return Err(KoraError::InvalidInput(
-                "elige una voz para generar el audiolibro".into(),
-            ));
-        }
-        let book = state
-            .storage
-            .books
-            .get(&book_id)
-            .await?
-            .ok_or_else(|| KoraError::NotFound(format!("libro {book_id}")))?;
-        if book.owner_account_id != state.identity.account.id {
-            return Err(KoraError::NotFound(format!("libro {book_id}")));
-        }
-        m4b::ensure_available()?;
-
-        let cast = cast.unwrap_or_default().normalized();
-        let narration = narration.unwrap_or_default().clamped();
-        let narration = NarrationSettings {
-            multi_voice: cast.enabled,
-            ..narration
-        };
-        let owner = state.identity.account.id.clone();
-        state
-            .storage
-            .audiobooks
-            .enqueue(NewAudiobookQueueItem {
-                book_id,
-                scope: serde_json::to_string(&scope)?,
-                voice_id,
-                narration: Some(serde_json::to_string(&narration)?),
-                cast: Some(serde_json::to_string(&cast)?),
-                origin: AudiobookOrigin::Generated,
-                owner_account_id: owner,
-            })
-            .await?;
-        queue::notify_queue(&app);
-        queue::start_worker(app.clone());
-        generation_view(&state).await
+    let book = state
+        .storage
+        .books
+        .get(&book_id)
+        .await?
+        .ok_or_else(|| KoraError::NotFound(format!("libro {book_id}")))?;
+    if book.owner_account_id != state.identity.account.id {
+        return Err(KoraError::NotFound(format!("libro {book_id}")));
     }
+    m4b::ensure_available()?;
+
+    let cast = cast.unwrap_or_default().normalized();
+    let narration = narration.unwrap_or_default().clamped();
+    let narration = NarrationSettings {
+        multi_voice: cast.enabled,
+        ..narration
+    };
+    let owner = state.identity.account.id.clone();
+    state
+        .storage
+        .audiobooks
+        .enqueue(NewAudiobookQueueItem {
+            book_id,
+            scope: serde_json::to_string(&scope)?,
+            voice_id,
+            narration: Some(serde_json::to_string(&narration)?),
+            cast: Some(serde_json::to_string(&cast)?),
+            origin: AudiobookOrigin::Generated,
+            owner_account_id: owner,
+        })
+        .await?;
+    queue::notify_queue(&app);
+    queue::start_worker(app.clone());
+    generation_view(&state).await
 }
 
 #[tauri::command]
@@ -291,73 +278,62 @@ pub async fn retry_audiobook(
     app: AppHandle,
     audiobook_id: String,
 ) -> Result<AudiobookInfo> {
-    #[cfg(target_os = "android")]
-    {
-        let _ = (&state, &app, &audiobook_id);
-        return Err(KoraError::Unsupported(
-            "la generación de audiolibros aún no está disponible en Android".into(),
+    let audiobook = owned_audiobook(&state, &audiobook_id).await?;
+    if !matches!(
+        audiobook.status,
+        AudiobookStatus::Failed | AudiobookStatus::Cancelled
+    ) {
+        return Err(KoraError::Conflict(
+            "solo se pueden reintentar audiolibros fallidos o cancelados".into(),
         ));
     }
+    let title = state
+        .storage
+        .books
+        .get(&audiobook.book_id)
+        .await?
+        .map(|book| book.title)
+        .unwrap_or_else(|| "Audiolibro".to_string());
+    let voice_name = if let Some(voice_id) = audiobook.voice_id.as_deref() {
+        state
+            .tts
+            .voices()
+            .await
+            .ok()
+            .and_then(|voices| voices.into_iter().find(|voice| voice.id == voice_id))
+            .map(|voice| voice.name)
+    } else {
+        None
+    };
+    let narration = audiobook
+        .narration
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_default();
+    let cast = audiobook
+        .cast
+        .as_deref()
+        .and_then(|value| serde_json::from_str(value).ok())
+        .unwrap_or_default();
 
-    #[cfg(not(target_os = "android"))]
-    {
-        let audiobook = owned_audiobook(&state, &audiobook_id).await?;
-        if !matches!(
-            audiobook.status,
-            AudiobookStatus::Failed | AudiobookStatus::Cancelled
-        ) {
-            return Err(KoraError::Conflict(
-                "solo se pueden reintentar audiolibros fallidos o cancelados".into(),
-            ));
-        }
-        let title = state
-            .storage
-            .books
-            .get(&audiobook.book_id)
-            .await?
-            .map(|book| book.title)
-            .unwrap_or_else(|| "Audiolibro".to_string());
-        let voice_name = if let Some(voice_id) = audiobook.voice_id.as_deref() {
-            state
-                .tts
-                .voices()
-                .await
-                .ok()
-                .and_then(|voices| voices.into_iter().find(|voice| voice.id == voice_id))
-                .map(|voice| voice.name)
-        } else {
-            None
-        };
-        let narration = audiobook
-            .narration
-            .as_deref()
-            .and_then(|value| serde_json::from_str(value).ok())
-            .unwrap_or_default();
-        let cast = audiobook
-            .cast
-            .as_deref()
-            .and_then(|value| serde_json::from_str(value).ok())
-            .unwrap_or_default();
-
-        let _guard = state.audiobook_jobs.run_lock.lock().await;
-        let control = state.audiobook_jobs.begin(&title, voice_name.as_deref());
-        queue::notify_queue(&app);
-        let result = regenerate(
-            &state,
-            &app,
-            &audiobook_id,
-            narration,
-            cast,
-            Some(control.as_ref()),
-        )
-        .await;
-        state.audiobook_jobs.finish();
-        queue::notify_queue(&app);
-        drop(_guard);
-        queue::start_worker(app.clone());
-        let audiobook = result?;
-        info_for(&state, &audiobook, None).await
-    }
+    let _guard = state.audiobook_jobs.run_lock.lock().await;
+    let control = state.audiobook_jobs.begin(&title, voice_name.as_deref());
+    queue::notify_queue(&app);
+    let result = regenerate(
+        &state,
+        &app,
+        &audiobook_id,
+        narration,
+        cast,
+        Some(control.as_ref()),
+    )
+    .await;
+    state.audiobook_jobs.finish();
+    queue::notify_queue(&app);
+    drop(_guard);
+    queue::start_worker(app.clone());
+    let audiobook = result?;
+    info_for(&state, &audiobook, None).await
 }
 
 #[tauri::command]

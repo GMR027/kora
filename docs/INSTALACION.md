@@ -5,9 +5,9 @@
 La app se descarga solo desde el clúster:
 
 - Landing: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.8-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.8_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.8-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.9-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.9_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.9-1.x86_64.rpm>
 
 GitHub es únicamente el repositorio de código: no hay releases, binarios ni
 GitHub Pages con descargas. Las secciones siguientes describen cómo generar los
@@ -20,14 +20,14 @@ paquetes desde el código para desarrollo.
 El artefacto se genera en:
 
 ```text
-target/release/bundle/deb/Kora_0.1.8_<arch>.deb
+target/release/bundle/deb/Kora_0.1.9_<arch>.deb
 ```
 
 El sufijo depende de la arquitectura del host (`amd64` en x86_64, `arm64` en
 aarch64). Instálalo con:
 
 ```bash
-sudo apt install ./Kora_0.1.8_amd64.deb
+sudo apt install ./Kora_0.1.9_amd64.deb
 ```
 
 > Usa `apt install ./archivo.deb`, no `dpkg -i`: `apt` descarga las
@@ -37,7 +37,7 @@ sudo apt install ./Kora_0.1.8_amd64.deb
 >
 > ```bash
 > sudo apt-get -f install
-> sudo apt install ./Kora_0.1.8_amd64.deb
+> sudo apt install ./Kora_0.1.9_amd64.deb
 > ```
 
 El paquete declara estas dependencias de ejecución: `espeak-ng`, `libasound2`
@@ -72,6 +72,7 @@ Kora funciona sin ellas, pero habilitan funciones adicionales:
 |---|---|
 | PDF con texto/OCR | `libpdfium` (`KORA_PDFIUM_PATH`) y Tesseract 5 |
 | TTS de escritorio | voces Piper descargadas desde **Voz** |
+| Voces mejoradas | pack Supertonic 3 desde **Ajustes → Voz** (~383 MB, opcional) |
 | Audiolibros M4B | `ffmpeg` en el `PATH` |
 | Clonación de voz | modelos NeuTTS/NeuCodec descargados desde **Voz** |
 | Modo ensayo | modelos Whisper descargados desde **Ajustes** |
@@ -88,8 +89,10 @@ capítulos en bloques de diez minutos. La transcripción automática con Whisper
 también funciona en el teléfono: descarga **Whisper Base** o **Tiny** desde el
 modal de importación (147 MB / 78 MB), elige **Audio + texto** y mantén la app o
 la pantalla bloqueada; un servicio en primer plano evita que Android corte la
-tarea. La generación de audiolibros con voces sigue siendo exclusiva del
-escritorio.
+tarea. La generación de audiolibros con voces del sistema también está
+disponible: Kora sintetiza cada fragmento y lo empaqueta con un muxer AAC
+nativo (`MediaCodec`/`MediaMuxer`) mientras un servicio en primer plano
+mantiene la tarea viva con la pantalla apagada.
 
 ### Primer arranque
 
@@ -148,8 +151,9 @@ Incluye:
 - Diario, logros, Pomodoro y sync LAN.
 - Exportación EPUB del diario.
 
-No incluye todavía OCR, clonación NeuTTS, Piper, Whisper, audiolibros M4B
-nativos ni PDFium/Tesseract embebidos. El directorio
+No incluye todavía OCR, clonación NeuTTS, Piper embebido, PDFium ni Tesseract.
+Incluye Whisper, importación nativa de audio y generación de audiolibros con
+voces del sistema. El directorio
 `src-tauri/gen/android/app/src/main/jniLibs/` queda preparado para añadir esas
 librerías por ABI. Consulta `docs/COMPILACION.md`.
 
@@ -164,7 +168,8 @@ del dispositivo, permitiendo instalaciones de fuentes desconocidas.
   rápidos y usa los controles TTS.
 - **Audiolibros**: reproduce, cambia la velocidad, salta por capítulos o abre
   el texto en la posición actual.
-- **Voz**: descarga voces del sistema, crea perfiles clonados y expórtalos.
+- **Voz**: elige entre las voces curadas del sistema, descarga el pack opcional
+  Supertonic 3 y crea o exporta perfiles clonados.
 - **Sync**: inicia el anuncio, empareja desde **Cuenta** y elige categorías por
   dispositivo.
 - **Diario**: revisa el heatmap, logros, Pomodoro y exporta EPUB/audiolibro.

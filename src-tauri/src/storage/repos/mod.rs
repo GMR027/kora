@@ -1,4 +1,5 @@
 pub mod accounts;
+pub mod albums;
 pub mod annotations;
 pub mod appearance;
 pub mod books;

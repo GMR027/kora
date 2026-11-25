@@ -531,7 +531,7 @@
     .modal-foot {
       flex-direction: column;
       align-items: stretch;
-      padding: 12px 15px calc(12px + env(safe-area-inset-bottom));
+      padding: 12px 15px calc(12px + var(--safe-bottom));
     }
 
     .foot-actions :global(.ui-button) {

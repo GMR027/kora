@@ -115,6 +115,14 @@ struct NativeVoice {
     id: String,
     name: String,
     language: String,
+    #[serde(default)]
+    locale: String,
+    #[serde(default)]
+    quality: Option<u16>,
+    #[serde(default)]
+    latency: Option<u16>,
+    #[serde(default)]
+    requires_network: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -127,6 +135,59 @@ struct UtteranceStatus {
     state: String,
     #[serde(default)]
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaySpeechArgs<'a> {
+    path: &'a str,
+    volume: f32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct SpeechFileStatus {
+    pub state: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+pub(crate) fn play_speech_file(path: &str, volume: f32) -> Result<()> {
+    let handle = plugin_handle()?;
+    let _: serde_json::Value = handle
+        .run_mobile_plugin("playSpeechFile", PlaySpeechArgs { path, volume })
+        .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))?;
+    Ok(())
+}
+
+pub(crate) fn speech_file_status() -> Result<SpeechFileStatus> {
+    let handle = plugin_handle()?;
+    handle
+        .run_mobile_plugin("speechFileStatus", json!({}))
+        .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))
+}
+
+pub(crate) fn pause_speech_file() -> Result<()> {
+    let handle = plugin_handle()?;
+    let _: serde_json::Value = handle
+        .run_mobile_plugin("pauseSpeechFile", json!({}))
+        .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))?;
+    Ok(())
+}
+
+pub(crate) fn resume_speech_file() -> Result<()> {
+    let handle = plugin_handle()?;
+    let _: serde_json::Value = handle
+        .run_mobile_plugin("resumeSpeechFile", json!({}))
+        .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))?;
+    Ok(())
+}
+
+pub(crate) fn stop_speech_file() -> Result<()> {
+    let handle = plugin_handle()?;
+    let _: serde_json::Value = handle
+        .run_mobile_plugin("stopSpeechFile", json!({}))
+        .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))?;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -284,6 +345,11 @@ impl TtsEngine for AndroidTtsEngine {
                 installed: true,
                 size_bytes: 0,
                 cloned: false,
+                enhanced: false,
+                quality: voice.quality,
+                latency: voice.latency,
+                requires_network: voice.requires_network,
+                locale: Some(voice.locale.clone()).filter(|value| !value.is_empty()),
             })
             .collect())
     }

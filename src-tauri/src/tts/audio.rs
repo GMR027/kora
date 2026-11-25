@@ -7,6 +7,10 @@ use crate::error::Result;
 /// en Android el propio motor nativo reproduce y no usa este trait.
 #[async_trait]
 pub trait AudioPlayer: Send + Sync {
+    /// Prepara una locución nueva y descarta cualquier orden de parada previa.
+    async fn reset(&self) -> Result<()> {
+        Ok(())
+    }
     /// Reproduce el bloque completo y vuelve cuando termina o se detiene.
     async fn play(&self, chunk: AudioChunk) -> Result<()>;
     async fn pause(&self) -> Result<()>;
@@ -158,6 +162,124 @@ mod desktop {
 
 #[cfg(not(target_os = "android"))]
 pub use desktop::RodioPlayer;
+
+#[cfg(target_os = "android")]
+mod android {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+
+    use super::super::engine::AudioChunk;
+    use super::AudioPlayer;
+    use crate::error::{KoraError, Result};
+
+    /// Reproduce los WAV que sintetiza Supertonic con Media3.
+    ///
+    /// El motor de Android resuelve la voz nativa por su cuenta; este
+    /// reproductor solo se usa para audio PCM generado en Rust.
+    pub struct AndroidAudioPlayer {
+        directory: PathBuf,
+        generation: Arc<AtomicU64>,
+        stopped: Arc<AtomicBool>,
+    }
+
+    impl AndroidAudioPlayer {
+        pub fn new(directory: PathBuf) -> Self {
+            Self {
+                directory,
+                generation: Arc::new(AtomicU64::new(0)),
+                stopped: Arc::new(AtomicBool::new(false)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AudioPlayer for AndroidAudioPlayer {
+        async fn reset(&self) -> Result<()> {
+            self.stopped.store(false, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn play(&self, chunk: AudioChunk) -> Result<()> {
+            let directory = self.directory.clone();
+            let generation = self.generation.load(Ordering::SeqCst);
+            let stopped = self.stopped.clone();
+            let generation_slot = self.generation.clone();
+
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                if stopped.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                std::fs::create_dir_all(&directory)?;
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|value| value.as_millis())
+                    .unwrap_or(0);
+                let path = directory.join(format!("speech-{stamp}.wav"));
+                let wav = super::super::wav::encode_wav(&chunk)?;
+                std::fs::write(&path, wav)?;
+
+                let path_text = path
+                    .to_str()
+                    .ok_or_else(|| KoraError::Internal("ruta de audio no válida".into()))?
+                    .to_string();
+
+                if let Err(error) = super::super::android::play_speech_file(&path_text, 1.0) {
+                    let _ = std::fs::remove_file(&path);
+                    return Err(error);
+                }
+
+                let result = loop {
+                    if stopped.load(Ordering::SeqCst)
+                        || generation_slot.load(Ordering::SeqCst) != generation
+                    {
+                        let _ = super::super::android::stop_speech_file();
+                        break Ok(());
+                    }
+                    match super::super::android::speech_file_status() {
+                        Ok(status) => match status.state.as_str() {
+                            "finished" | "idle" => break Ok(()),
+                            "error" => {
+                                break Err(KoraError::Internal(
+                                    status
+                                        .error
+                                        .unwrap_or_else(|| "error de reproducción".into()),
+                                ));
+                            }
+                            _ => std::thread::sleep(Duration::from_millis(80)),
+                        },
+                        Err(error) => break Err(error),
+                    }
+                };
+
+                let _ = std::fs::remove_file(&path);
+                result
+            })
+            .await
+            .map_err(|error| KoraError::Internal(format!("tarea de audio Android: {error}")))?
+        }
+
+        async fn pause(&self) -> Result<()> {
+            super::super::android::pause_speech_file()
+        }
+
+        async fn resume(&self) -> Result<()> {
+            super::super::android::resume_speech_file()
+        }
+
+        async fn stop(&self) -> Result<()> {
+            self.stopped.store(true, Ordering::SeqCst);
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            super::super::android::stop_speech_file()
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+pub use android::AndroidAudioPlayer;
 
 #[cfg(all(test, not(target_os = "android")))]
 mod audio_tests {

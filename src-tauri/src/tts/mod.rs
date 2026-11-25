@@ -11,9 +11,12 @@ pub mod piper;
 pub mod practice;
 pub mod recording;
 pub mod session;
+pub mod supertonic;
 pub mod voice_cloner;
 pub mod wav;
 
+#[cfg(target_os = "android")]
+pub use audio::AndroidAudioPlayer;
 #[cfg(not(target_os = "android"))]
 pub use audio::RodioPlayer;
 pub use audio::{AudioPlayer, NullAudioPlayer};
@@ -33,6 +36,7 @@ pub use practice::{
     diff_words, find_model as find_whisper_model, model_path as whisper_model_path, whisper_dir,
 };
 pub use session::{PhraseEvent, SessionEvent, SessionPlan, TtsSessionManager, TtsState, TtsStatus};
+pub use supertonic::{SupertonicEngine, SupertonicService, SupertonicStatus};
 pub use voice_cloner::{
     CLONE_PREFIX, ModelKind, ProfileFile, VOICE_MODELS, VoiceModelSpec, VoiceProfile,
     VoiceProfileService, clone_voice_id, models_for_language, strip_clone_prefix,
@@ -93,18 +97,29 @@ impl TtsService {
         })
     }
 
-    /// Enruta las voces clonadas al motor NeuTTS y las del catálogo al motor
-    /// nativo (Piper en escritorio, TextToSpeech en Android).
+    /// Enruta las voces clonadas a NeuTTS, las mejoradas a Supertonic y el
+    /// resto al motor nativo (Piper en escritorio, TextToSpeech en Android).
     fn engine_for(&self, voice_id: &str) -> Result<&Arc<dyn TtsEngine>> {
-        if voice_id.starts_with(CLONE_PREFIX) {
+        let required = if voice_id.starts_with(CLONE_PREFIX) {
+            Some("neutts")
+        } else if voice_id.starts_with(supertonic::PREFIX) {
+            Some(supertonic::ENGINE_ID)
+        } else {
+            None
+        };
+
+        if let Some(id) = required {
             return self
                 .engines
                 .iter()
-                .find(|engine| engine.info().id == "neutts")
+                .find(|engine| engine.info().id == id)
                 .ok_or_else(|| {
-                    KoraError::Unsupported(
-                        "la clonación de voz no está disponible en esta plataforma".into(),
-                    )
+                    KoraError::Unsupported(if id == "neutts" {
+                        "la clonación de voz no está disponible en esta plataforma".into()
+                    } else {
+                        "las voces mejoradas no están disponibles; descarga el pack en Ajustes"
+                            .into()
+                    })
                 });
         }
         self.engine()

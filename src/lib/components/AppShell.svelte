@@ -10,6 +10,7 @@
     playAudiobook,
     seekAudiobook,
   } from "../api";
+  import { advanceAlbumPlayback } from "../albumQueue";
   import { t, formatDuration, locale, type MessageKey } from "../i18n";
   import {
     notifications,
@@ -24,6 +25,7 @@
   import type { AppTab } from "../navigation";
   import type { LibraryOverview, PlaybackSnapshot } from "../types";
   import { readerOverlayOpen } from "../readerOverlay";
+  import { audiobookPlayerHidden } from "../playerUi";
   import Icon from "./Icon.svelte";
   import ComfortHost from "./ComfortHost.svelte";
 
@@ -97,7 +99,13 @@
   let currentCover = $derived(playback?.coverPath ?? null);
   const playerTabs = new Set<AppTab>(["library", "reader", "notes", "diary"]);
   let playerVisible = $derived(
-    playback !== null && playerTabs.has(tab) && !$readerOverlayOpen,
+    playback !== null &&
+      playerTabs.has(tab) &&
+      !$readerOverlayOpen &&
+      !$audiobookPlayerHidden,
+  );
+  let playerRestoreVisible = $derived(
+    playback !== null && $audiobookPlayerHidden,
   );
   let playerPercent = $derived.by(() => {
     if (!playback || playback.durationMs <= 0) return 0;
@@ -117,7 +125,7 @@
 
   async function loadPlayback() {
     try {
-      playback = await getAudiobookProgress();
+      playback = await advanceAlbumPlayback(await getAudiobookProgress());
     } catch {
       playback = null;
     }
@@ -151,6 +159,14 @@
     }
   }
 
+  function hideMobilePlayer() {
+    audiobookPlayerHidden.set(true);
+  }
+
+  function restoreMobilePlayer() {
+    audiobookPlayerHidden.set(false);
+  }
+
   onMount(() => {
     void loadShelf();
     void loadPlayback();
@@ -173,6 +189,11 @@
     if (!playback?.playing) return;
     const timer = setTimeout(() => void loadPlayback(), 1500);
     return () => clearTimeout(timer);
+  });
+
+  // Si la reproducción desaparece, el estado oculto deja de tener sentido.
+  $effect(() => {
+    if (!playback) audiobookPlayerHidden.set(false);
   });
 
   $effect(() => {
@@ -375,6 +396,15 @@
           >
             <Icon name="chevron" size={14} />
           </button>
+          <button
+            class="mini-button"
+            type="button"
+            onclick={hideMobilePlayer}
+            aria-label={$t("audiobooks.hidePlayer")}
+            title={$t("audiobooks.hidePlayer")}
+          >
+            <Icon name="close" size={13} />
+          </button>
         </div>
       {:else}
         <button class="now-pill" onclick={openNow} title={$t("nav.reader")}>
@@ -433,6 +463,17 @@
             </span>
           {/if}
         </button>
+        {#if playerRestoreVisible}
+          <button
+            class="topbar-icon player-restore"
+            aria-label={$t("audiobooks.showPlayer")}
+            title={$t("audiobooks.showPlayer")}
+            onclick={restoreMobilePlayer}
+          >
+            <Icon name="headphones" size={19} />
+            <span class="player-restore-dot" aria-hidden="true"></span>
+          </button>
+        {/if}
         <button
           class="topbar-icon sync-shortcut"
           aria-label={$t("nav.sync")}
@@ -526,6 +567,14 @@
         aria-label={playback.playing ? $t("audiobooks.pause") : $t("audiobooks.play")}
       >
         <Icon name={playback.playing ? "pause" : "play"} size={17} />
+      </button>
+      <button
+        class="mobile-player-hide"
+        onclick={hideMobilePlayer}
+        aria-label={$t("audiobooks.hidePlayer")}
+        title={$t("audiobooks.hidePlayer")}
+      >
+        <Icon name="close" size={14} />
       </button>
     </div>
   {/if}
@@ -1224,6 +1273,23 @@
     line-height: 1;
   }
 
+  .topbar-icon.player-restore {
+    position: relative;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .player-restore-dot {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    width: 7px;
+    height: 7px;
+    border: 1.5px solid var(--surface);
+    border-radius: 50%;
+    background: var(--accent-2);
+  }
+
   .notifications-backdrop {
     position: fixed;
     inset: 0;
@@ -1234,7 +1300,7 @@
 
   .notifications-panel {
     position: fixed;
-    top: calc(66px + env(safe-area-inset-top));
+    top: calc(66px + var(--safe-top));
     right: 12px;
     z-index: 75;
     display: flex;
@@ -1436,7 +1502,7 @@
 
   @media (max-width: 900px) {
     .notifications-panel {
-      top: calc(70px + env(safe-area-inset-top));
+      top: calc(70px + var(--safe-top));
       right: 10px;
       left: 10px;
       width: auto;
@@ -1496,9 +1562,28 @@
     padding: 24px 40px 64px;
   }
 
+  .app-shell.reading {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-shell.reading .content {
+    height: 100%;
+    min-height: 0;
+  }
+
   .app-shell.reading main {
+    height: 100%;
+    min-height: 0;
     max-width: none;
     padding: 0;
+  }
+
+  .app-shell.reading :global(.screen) {
+    height: 100%;
+    min-height: 0;
   }
 
   .bottom-nav,
@@ -1551,15 +1636,15 @@
 
     .content {
       margin-left: 0;
-      padding-top: calc(68px + env(safe-area-inset-top));
+      padding-top: calc(68px + var(--safe-top));
     }
 
     .topbar {
       left: 0;
       right: 0;
       top: 0;
-      height: calc(68px + env(safe-area-inset-top));
-      padding: env(safe-area-inset-top) 16px 0;
+      height: calc(68px + var(--safe-top));
+      padding: var(--safe-top) 16px 0;
       background: color-mix(in srgb, var(--bg) 92%, transparent);
       border-bottom: 0;
       box-shadow: none;
@@ -1625,15 +1710,28 @@
     }
 
     .app-shell {
-      padding-bottom: calc(72px + env(safe-area-inset-bottom));
+      padding-bottom: calc(72px + var(--safe-bottom));
     }
 
     .app-shell.reading {
-      padding-bottom: calc(72px + env(safe-area-inset-bottom));
+      padding-bottom: 0;
+    }
+
+    .app-shell.reading .content {
+      height: 100dvh;
+      padding-bottom: calc(72px + var(--safe-bottom));
     }
 
     .app-shell.has-mobile-player {
-      padding-bottom: calc(142px + env(safe-area-inset-bottom));
+      padding-bottom: calc(142px + var(--safe-bottom));
+    }
+
+    .app-shell.reading.has-mobile-player {
+      padding-bottom: 0;
+    }
+
+    .app-shell.reading.has-mobile-player .content {
+      padding-bottom: calc(142px + var(--safe-bottom));
     }
 
     main {
@@ -1653,7 +1751,7 @@
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 0.1rem;
-      padding: 0.35rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom));
+      padding: 0.35rem 0.35rem calc(0.35rem + var(--safe-bottom));
       border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
       background: color-mix(in srgb, var(--surface) 98%, transparent);
       box-shadow: 0 -10px 28px -26px var(--shadow-color);
@@ -1704,9 +1802,9 @@
       position: fixed;
       left: 0;
       right: 0;
-      bottom: calc(64px + env(safe-area-inset-bottom));
+      bottom: calc(64px + var(--safe-bottom));
       z-index: 75;
-      padding: 1rem 0.9rem calc(1rem + env(safe-area-inset-bottom));
+      padding: 1rem 0.9rem calc(1rem + var(--safe-bottom));
       border-top: 1px solid var(--border);
       border-radius: 22px 22px 0 0;
       background: var(--surface);
@@ -1770,11 +1868,11 @@
     .mobile-player {
       position: fixed;
       right: 10px;
-      bottom: calc(66px + env(safe-area-inset-bottom));
+      bottom: calc(66px + var(--safe-bottom));
       left: 10px;
       z-index: 65;
       display: grid;
-      grid-template-columns: 40px minmax(0, 1fr) auto auto auto;
+      grid-template-columns: 40px minmax(0, 1fr) auto auto auto auto;
       align-items: center;
       gap: 8px;
       padding: 7px 8px;
@@ -1898,6 +1996,25 @@
       color: var(--accent-contrast);
     }
 
+    .mobile-player .mobile-player-hide {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      min-width: 34px;
+      min-height: 34px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--muted);
+    }
+
+    .mobile-player .mobile-player-hide:hover {
+      background: var(--surface-3);
+      color: var(--text);
+    }
+
     .mobile-player button:disabled {
       opacity: 0.5;
     }
@@ -1923,7 +2040,7 @@
     }
 
     .app-shell.stack .content {
-      padding-top: calc(58px + env(safe-area-inset-top));
+      padding-top: calc(58px + var(--safe-top));
     }
 
     .app-shell.stack {
@@ -1943,8 +2060,8 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      height: calc(58px + env(safe-area-inset-top));
-      padding: env(safe-area-inset-top) 14px 0;
+      height: calc(58px + var(--safe-top));
+      padding: var(--safe-top) 14px 0;
       border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
       background: color-mix(in srgb, var(--surface) 97%, transparent);
     }
@@ -1987,11 +2104,11 @@
     }
 
     .app-shell.stack .mobile-player {
-      bottom: calc(10px + env(safe-area-inset-bottom));
+      bottom: calc(10px + var(--safe-bottom));
     }
 
     .app-shell.stack.has-mobile-player {
-      padding-bottom: calc(78px + env(safe-area-inset-bottom));
+      padding-bottom: calc(78px + var(--safe-bottom));
     }
   }
 

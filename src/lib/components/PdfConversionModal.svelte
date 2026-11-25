@@ -863,7 +863,7 @@
     align-items: center;
     justify-content: flex-end;
     gap: 9px;
-    padding: 14px 20px calc(14px + env(safe-area-inset-bottom));
+    padding: 14px 20px calc(14px + var(--safe-bottom));
     border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
     background: var(--surface-2);
   }
@@ -915,7 +915,7 @@
     }
 
     .modal-foot {
-      padding: 12px 15px calc(12px + env(safe-area-inset-bottom));
+      padding: 12px 15px calc(12px + var(--safe-bottom));
     }
   }
 </style>

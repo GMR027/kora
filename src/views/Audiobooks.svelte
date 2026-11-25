@@ -3,6 +3,11 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
+  import AudiobookAlbumAddModal from "../lib/components/AudiobookAlbumAddModal.svelte";
+  import AudiobookAlbumCard from "../lib/components/AudiobookAlbumCard.svelte";
+  import AudiobookAlbumEditorModal from "../lib/components/AudiobookAlbumEditorModal.svelte";
+  import AudiobookAlbumModal from "../lib/components/AudiobookAlbumModal.svelte";
+  import AudiobookAlbumPickerModal from "../lib/components/AudiobookAlbumPickerModal.svelte";
   import AudiobookCard from "../lib/components/AudiobookCard.svelte";
   import AudiobookChapterEditor from "../lib/components/AudiobookChapterEditor.svelte";
   import AudiobookChaptersModal from "../lib/components/AudiobookChaptersModal.svelte";
@@ -10,13 +15,16 @@
   import AudiobookImportModal from "../lib/components/AudiobookImportModal.svelte";
   import AudiobookKaraokeModal from "../lib/components/AudiobookKaraokeModal.svelte";
   import AudiobookShareModal from "../lib/components/AudiobookShareModal.svelte";
+  import AudiobookTranscribeModal from "../lib/components/AudiobookTranscribeModal.svelte";
   import AudiobookTreatmentModal from "../lib/components/AudiobookTreatmentModal.svelte";
   import AudiobookVoiceMarksModal from "../lib/components/AudiobookVoiceMarksModal.svelte";
   import Button from "../lib/components/Button.svelte";
   import EmptyState from "../lib/components/EmptyState.svelte";
   import Icon from "../lib/components/Icon.svelte";
   import Spinner from "../lib/components/Spinner.svelte";
+  import { audiobookPlayerHidden } from "../lib/playerUi";
   import {
+    addAudiobooksToAlbum,
     applyAudiobookTreatment,
     audiobookCapabilities,
     audiobookChapters,
@@ -30,18 +38,22 @@
     cancelAudiobookGeneration,
     categoryList,
     clearAudiobookQueue,
+    createAudiobookAlbum,
     createAudiobookShare,
     deleteAnnotation,
     deleteAudiobook,
+    deleteAudiobookAlbum,
     enqueueAudiobook,
     errorMessage,
     exportAudiobook,
+    exportBook,
     getAudiobookProgress,
     importAudioAudiobook,
     importExternalAudiobook,
     libraryClassify,
     libraryList,
     listAllExtracts,
+    listAudiobookAlbums,
     listAudiobooks,
     moveQueuedAudiobook,
     pauseAudiobook,
@@ -52,7 +64,9 @@
     readerDeleteExtract,
     readerOpen,
     reanalyzeAudiobookChapters,
+    removeAudiobookFromAlbum,
     removeQueuedAudiobook,
+    reorderAudiobookAlbum,
     resumeAudiobookGeneration,
     retryAudiobook,
     saveVoiceMarkerPhrase,
@@ -69,6 +83,7 @@
     transcribeAudiobookLater,
     ttsEngines,
     ttsVoices,
+    updateAudiobookAlbum,
     updateAudiobookChapters,
     voiceMarkerStatus,
     weaveExtracts,
@@ -86,6 +101,12 @@
     stageImportSource,
   } from "../lib/importSource";
   import {
+    advanceAlbumPlayback,
+    albumPlayback,
+    clearAlbumQueue,
+    startAlbumQueue,
+  } from "../lib/albumQueue";
+  import {
     lineIndexAt,
     prepareKaraoke,
     wordIndexAt,
@@ -100,6 +121,7 @@
     AudioTreatment,
     AudioWaveform,
     AudiobookActiveGeneration,
+    AudiobookAlbumInfo,
     AudiobookCapabilities,
     AudiobookCastInput,
     AudiobookChapterInfo,
@@ -130,9 +152,15 @@
   let {
     onRead,
     onNavigate,
+    initialBookId = "",
+    autoOpenGenerator = false,
+    onIntentConsumed,
   }: {
     onRead?: (bookId: string, locator?: Locator) => void;
     onNavigate?: (tab: AppTab) => void;
+    initialBookId?: string;
+    autoOpenGenerator?: boolean;
+    onIntentConsumed?: () => void;
   } = $props();
 
   type FilterId =
@@ -148,8 +176,24 @@
   let voices = $state<VoiceDescriptor[]>([]);
   let engines = $state<EngineInfo[]>([]);
   let audiobooks = $state<AudiobookInfo[]>([]);
+  let albums = $state<AudiobookAlbumInfo[]>([]);
   let categories = $state<Category[]>([]);
   let extracts = $state<Extract[]>([]);
+  let viewMode = $state<"audiobooks" | "albums">("audiobooks");
+  let albumQuery = $state("");
+  let albumEditorOpen = $state(false);
+  let albumEditing = $state<AudiobookAlbumInfo | null>(null);
+  let albumEditorBusy = $state(false);
+  let albumEditorError = $state<string | null>(null);
+  let albumDetailId = $state<string | null>(null);
+  let albumAddOpen = $state(false);
+  let albumBusy = $state<string | null>(null);
+  let albumPickerFor = $state<AudiobookInfo | null>(null);
+  let albumPickerBusy = $state(false);
+  let albumPickerError = $state<string | null>(null);
+  let convertItem = $state<AudiobookInfo | null>(null);
+  let convertBusy = $state(false);
+  let intentHandled = false;
   let playback = $state<PlaybackSnapshot | null>(null);
   let progress = $state<AudiobookProgressEvent | null>(null);
   let generationActive = $state<AudiobookActiveGeneration | null>(null);
@@ -245,6 +289,7 @@
   let unlistenVoiceError: UnlistenFn | undefined;
   let progressHideTimer: ReturnType<typeof setTimeout> | undefined;
   let listeningSessionId: string | null = null;
+  let listeningBookId: string | null = null;
 
   let sleepMinutes = $state(0);
   let sleepRemaining = $state(0);
@@ -260,6 +305,54 @@
 
   let installedVoices = $derived(voices.filter((voice) => voice.installed));
   let booksById = $derived(new Map(books.map((book) => [book.id, book])));
+  let audiobooksById = $derived(new Map(audiobooks.map((item) => [item.id, item])));
+  let albumDetail = $derived(
+    albums.find((album) => album.id === albumDetailId) ?? null,
+  );
+  let playingAlbumId = $derived($albumPlayback?.albumId ?? null);
+  let filteredAlbums = $derived.by(() => {
+    const needle = albumQuery.trim().toLowerCase();
+    if (!needle) return albums;
+    return albums.filter((album) =>
+      `${album.title} ${album.description ?? ""}`
+        .toLowerCase()
+        .includes(needle),
+    );
+  });
+
+  function albumItems(album: AudiobookAlbumInfo): AudiobookInfo[] {
+    return album.audiobookIds
+      .map((id) => audiobooksById.get(id))
+      .filter((item): item is AudiobookInfo => Boolean(item));
+  }
+
+  function albumCovers(album: AudiobookAlbumInfo): (string | null)[] {
+    return albumItems(album).map((item) => item.coverPath);
+  }
+
+  function albumDuration(album: AudiobookAlbumInfo): number {
+    return albumItems(album).reduce(
+      (sum, item) => sum + Math.max(0, item.durationMs),
+      0,
+    );
+  }
+
+  function albumPercent(album: AudiobookAlbumInfo): number {
+    const items = albumItems(album);
+    const total = items.reduce((sum, item) => sum + Math.max(0, item.durationMs), 0);
+    if (total <= 0) return 0;
+    const listened = items.reduce(
+      (sum, item) =>
+        sum + Math.min(1, Math.max(0, item.percent)) * Math.max(0, item.durationMs),
+      0,
+    );
+    return listened / total;
+  }
+
+  function playableAlbumItems(album: AudiobookAlbumInfo): AudiobookInfo[] {
+    return albumItems(album).filter((item) => item.status === "done");
+  }
+
   let availableEngines = $derived(engines.filter((engine) => engine.available));
   let engineLabel = $derived(
     availableEngines.length > 0
@@ -267,6 +360,12 @@
       : $t("audiobooks.engineUnavailable"),
   );
   let platformSupported = $derived(capabilities?.platformSupported ?? true);
+  let generationSupported = $derived(
+    capabilities?.generationSupported ??
+      ((capabilities?.platformSupported ?? true) &&
+        (capabilities?.ffmpeg ?? true)),
+  );
+  let nativeMux = $derived(capabilities?.nativeMux ?? false);
   let audioImportSupported = $derived(
     capabilities?.audioImportSupported ?? true,
   );
@@ -493,7 +592,7 @@
     generationActive !== null ||
       busy === "import" ||
       busy === "reanalyze" ||
-      busy === "transcribe",
+      convertBusy,
   );
   let isGenerationPaused = $derived(
     generationPaused || generationActive?.paused === true,
@@ -574,6 +673,7 @@
   async function endListeningSession() {
     const id = listeningSessionId;
     listeningSessionId = null;
+    listeningBookId = null;
     if (!id) return;
     try {
       await sessionEnd(id, null);
@@ -584,6 +684,9 @@
 
   async function startListeningSession(bookId: string) {
     await endListeningSession();
+    // Marca el intento para que el sondeo no reintente cada segundo si el
+    // diario no está disponible.
+    listeningBookId = bookId;
     try {
       const started = await sessionStart(bookId, "listening", null, null);
       listeningSessionId = started.id;
@@ -605,6 +708,7 @@
         generation,
         voiceState,
         categoryListResult,
+        albumList,
       ] = await Promise.all([
         libraryList(),
         ttsVoices(),
@@ -616,11 +720,13 @@
         audiobookQueueStatus().catch(() => null),
         voiceMarkerStatus().catch(() => null),
         categoryList().catch(() => [] as Category[]),
+        listAudiobookAlbums().catch(() => [] as AudiobookAlbumInfo[]),
       ]);
       books = bookList;
       voices = voiceList;
       engines = engineList;
       audiobooks = audiobookList;
+      albums = albumList;
       categories = categoryListResult;
       extracts = extractList;
       playback = current;
@@ -658,6 +764,29 @@
       loaded = true;
     }
   }
+
+  $effect(() => {
+    if (!autoOpenGenerator || intentHandled || !loaded) {
+      return;
+    }
+    intentHandled = true;
+    onIntentConsumed?.();
+    if (books.length === 0) {
+      error = translate("audiobooks.empty");
+      return;
+    }
+    if (!generationSupported) {
+      notice = translate("audiobooks.ffmpegMissing");
+      return;
+    }
+    const bookId =
+      initialBookId && books.some((book) => book.id === initialBookId)
+        ? initialBookId
+        : books[0].id;
+    selectedBookId = bookId;
+    void loadSections(bookId);
+    openGenerator();
+  });
 
   function categoryLabelFor(item: AudiobookInfo): string | null {
     const names = item.categoryIds
@@ -768,6 +897,7 @@
         await stopVoiceIfListening();
         await endListeningSession();
         playback = await stopAudiobook();
+        audiobookPlayerHidden.set(false);
         playerExpanded = false;
         waveform = null;
         waveformKey = null;
@@ -1191,6 +1321,281 @@
       .catch(() => undefined);
   }
 
+  function applyAlbum(updated: AudiobookAlbumInfo) {
+    albums = albums.map((album) => (album.id === updated.id ? updated : album));
+  }
+
+  function openAlbumEditor(album: AudiobookAlbumInfo | null = null) {
+    albumEditing = album;
+    albumEditorError = null;
+    albumEditorOpen = true;
+  }
+
+  async function saveAlbum(input: { title: string; description: string | null }) {
+    albumEditorBusy = true;
+    albumEditorError = null;
+    const editing = albumEditing;
+    const creating = !editing;
+    try {
+      const saved = editing
+        ? await updateAudiobookAlbum(
+            editing.id,
+            input.title,
+            input.description,
+          )
+        : await createAudiobookAlbum(input.title, input.description);
+      if (creating) {
+        albums = [...albums, saved];
+        albumDetailId = saved.id;
+        notice = translate("albums.created");
+        viewMode = "albums";
+      } else {
+        applyAlbum(saved);
+        notice = translate("albums.updated");
+      }
+      albumEditorOpen = false;
+      albumEditing = null;
+    } catch (cause) {
+      albumEditorError = errorMessage(cause);
+    } finally {
+      albumEditorBusy = false;
+    }
+  }
+
+  function openAlbum(album: AudiobookAlbumInfo) {
+    albumDetailId = album.id;
+  }
+
+  async function removeAlbum(album: AudiobookAlbumInfo) {
+    if (
+      !window.confirm(
+        translate("albums.deleteConfirm", { title: album.title }),
+      )
+    ) {
+      return;
+    }
+    albumBusy = album.id;
+    try {
+      await deleteAudiobookAlbum(album.id);
+      albums = albums.filter((entry) => entry.id !== album.id);
+      if (albumDetailId === album.id) albumDetailId = null;
+      notice = translate("albums.deleted");
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      albumBusy = null;
+    }
+  }
+
+  async function addAlbumItems(ids: string[]) {
+    const album = albumDetail;
+    if (!album || ids.length === 0) {
+      albumAddOpen = false;
+      return;
+    }
+    albumBusy = album.id;
+    try {
+      applyAlbum(await addAudiobooksToAlbum(album.id, ids));
+      albumAddOpen = false;
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      albumBusy = null;
+    }
+  }
+
+  async function removeAlbumItem(
+    album: AudiobookAlbumInfo,
+    item: AudiobookInfo,
+  ) {
+    albumBusy = album.id;
+    try {
+      applyAlbum(await removeAudiobookFromAlbum(album.id, item.id));
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      albumBusy = null;
+    }
+  }
+
+  async function moveAlbumItem(
+    album: AudiobookAlbumInfo,
+    item: AudiobookInfo,
+    direction: -1 | 1,
+  ) {
+    const items = albumItems(album);
+    const index = items.findIndex((entry) => entry.id === item.id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= items.length) return;
+    const ids = items.map((entry) => entry.id);
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    albumBusy = album.id;
+    try {
+      applyAlbum(await reorderAudiobookAlbum(album.id, ids));
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      albumBusy = null;
+    }
+  }
+
+  function openAlbumPicker(item: AudiobookInfo) {
+    albumPickerError = null;
+    albumPickerFor = item;
+  }
+
+  async function saveAlbumPicker(albumIds: string[]) {
+    const item = albumPickerFor;
+    if (!item) return;
+    const current = new Set(
+      albums
+        .filter((album) => album.audiobookIds.includes(item.id))
+        .map((album) => album.id),
+    );
+    const desired = new Set(albumIds);
+    const toAdd = albums.filter(
+      (album) => desired.has(album.id) && !current.has(album.id),
+    );
+    const toRemove = albums.filter(
+      (album) => !desired.has(album.id) && current.has(album.id),
+    );
+    if (toAdd.length === 0 && toRemove.length === 0) {
+      albumPickerFor = null;
+      return;
+    }
+    albumPickerBusy = true;
+    albumPickerError = null;
+    try {
+      for (const album of toAdd) {
+        applyAlbum(await addAudiobooksToAlbum(album.id, [item.id]));
+      }
+      for (const album of toRemove) {
+        applyAlbum(await removeAudiobookFromAlbum(album.id, item.id));
+      }
+      albumPickerFor = null;
+    } catch (cause) {
+      albumPickerError = errorMessage(cause);
+    } finally {
+      albumPickerBusy = false;
+    }
+  }
+
+  async function startAlbumPlayback(
+    album: AudiobookAlbumInfo,
+    items: AudiobookInfo[],
+    index: number,
+  ) {
+    if (items.length === 0) {
+      error = translate("albums.emptyItems");
+      return;
+    }
+    startAlbumQueue(
+      album.id,
+      items.map((item) => item.id),
+      index,
+    );
+    try {
+      const first = items[index] ?? items[0];
+      playback = await playAudiobook(first.id);
+      applyPlayback(playback);
+      playerExpanded = true;
+      seekValue = playback?.positionMs ?? 0;
+      await startListeningSession(first.bookId);
+      await loadChapters(first.id);
+    } catch (cause) {
+      clearAlbumQueue();
+      error = errorMessage(cause);
+    }
+  }
+
+  async function playAlbum(album: AudiobookAlbumInfo) {
+    const items = playableAlbumItems(album);
+    if (items.length === 0) {
+      error = translate("albums.emptyItems");
+      return;
+    }
+    await startAlbumPlayback(album, items, 0);
+  }
+
+  async function playAlbumItem(album: AudiobookAlbumInfo, item: AudiobookInfo) {
+    const items = playableAlbumItems(album);
+    const index = items.findIndex((entry) => entry.id === item.id);
+    if (index < 0) {
+      error = translate("audiobooks.statusFailed");
+      return;
+    }
+    await startAlbumPlayback(album, items, index);
+  }
+
+  function openConvert(item: AudiobookInfo) {
+    if (convertBusy || item.status !== "done") return;
+    error = null;
+    notice = null;
+    if (item.audioOnly) {
+      if (!nativeAudioImport && !ffmpegReady) {
+        notice = translate("audiobooks.ffmpegMissing");
+        return;
+      }
+      convertItem = item;
+      if (whisperModels.length === 0) {
+        void practiceModels()
+          .then((models) => (whisperModels = models))
+          .catch(() => undefined);
+      }
+      return;
+    }
+    const book = booksById.get(item.bookId);
+    if (book?.format === "epub") {
+      void exportAudiobookText(item, book);
+      return;
+    }
+    notice = translate("audiobooks.pdfSourceHelp");
+  }
+
+  async function exportAudiobookText(
+    item: AudiobookInfo,
+    book: BookSummary,
+  ) {
+    try {
+      const destination = await save({
+        defaultPath: `${safeName(item.bookTitle)}.epub`,
+        filters: [{ name: "EPUB", extensions: ["epub"] }],
+      });
+      if (typeof destination !== "string") return;
+      const path = await exportBook(book.id, destination);
+      notice = translate("audiobooks.exportEpubDone", { path });
+    } catch (cause) {
+      error = errorMessage(cause);
+    }
+  }
+
+  async function confirmConvert(modelId: "tiny" | "base") {
+    const item = convertItem;
+    if (!item) return;
+    convertItem = null;
+    convertBusy = true;
+    error = null;
+    notice = null;
+    try {
+      const updated = await transcribeAudiobookLater(item.id, modelId);
+      notice = translate("audiobooks.convertDone", {
+        title: updated.bookTitle,
+      });
+      await load();
+      if (modalChapterId === updated.id) {
+        void loadModalChapters(updated.id);
+      }
+    } catch (cause) {
+      if (isCancelledError(cause)) {
+        notice = translate("audiobooks.generationCancelled");
+      } else {
+        error = errorMessage(cause);
+      }
+    } finally {
+      convertBusy = false;
+    }
+  }
+
   async function openCurrentText() {
     const item = playback
       ? (audiobooks.find((entry) => entry.id === playback?.audiobookId) ?? null)
@@ -1257,41 +1662,6 @@
       notice = translate("audiobooks.reanalyzedNotice", {
         title: updated.bookTitle,
         count: updated.chapterCount,
-      });
-      await load();
-      if (modalChapterId === updated.id) {
-        void loadModalChapters(updated.id);
-      }
-    } catch (cause) {
-      if (isCancelledError(cause)) {
-        notice = translate("audiobooks.generationCancelled");
-      } else {
-        error = errorMessage(cause);
-      }
-    } finally {
-      busy = null;
-    }
-  }
-
-  async function transcribeLater(id: string, title: string) {
-    if (
-      !window.confirm(
-        translate("audiobooks.transcribeConfirm", { title }),
-      )
-    ) {
-      return;
-    }
-    error = null;
-    notice = null;
-    busy = "transcribe";
-    hiddenProgress = false;
-    activeTaskTitleOverride = title;
-    activeTaskVoiceOverride = "Whisper";
-    activeTaskCoverOverride = null;
-    try {
-      const updated = await transcribeAudiobookLater(id);
-      notice = translate("audiobooks.transcribedNotice", {
-        title: updated.bookTitle,
       });
       await load();
       if (modalChapterId === updated.id) {
@@ -1588,6 +1958,7 @@
     try {
       if (playback?.audiobookId !== item.id || !playback.playing) {
         playback = await playAudiobook(item.id);
+        audiobookPlayerHidden.set(false);
         playerExpanded = true;
         const bookItem = audiobooks.find((entry) => entry.id === item.id);
         if (bookItem) await startListeningSession(bookItem.bookId);
@@ -1602,12 +1973,13 @@
 
   async function pollPlayback() {
     try {
-      const current = await getAudiobookProgress();
+      const current = await advanceAlbumPlayback(await getAudiobookProgress());
       playback = current;
       playbackAt = Date.now();
       frameClock = playbackAt;
       syncKaraoke(current);
       if (!current) {
+        audiobookPlayerHidden.set(false);
         playerExpanded = false;
         sheetDrag = 0;
         waveform = null;
@@ -1648,6 +2020,13 @@
       }
       if (listeningSessionId && (!current || !current.playing)) {
         void endListeningSession();
+      } else if (current?.playing) {
+        const currentBookId =
+          audiobooks.find((item) => item.id === current.audiobookId)?.bookId ??
+          null;
+        if (currentBookId && currentBookId !== listeningBookId) {
+          void startListeningSession(currentBookId);
+        }
       }
     } catch {
       // El sondeo no debe llenar la UI de errores.
@@ -1656,6 +2035,9 @@
 
   async function togglePlayback(item: AudiobookInfo) {
     error = null;
+    if ($albumPlayback && !$albumPlayback.audiobookIds.includes(item.id)) {
+      clearAlbumQueue();
+    }
     try {
       if (playback?.audiobookId === item.id && playback.playing) {
         playback = await pauseAudiobook();
@@ -1668,6 +2050,7 @@
         }
         playback = await playAudiobook(item.id);
         applyPlayback(playback);
+        audiobookPlayerHidden.set(false);
         playerExpanded = true;
         void loadWaveform(item);
         await startListeningSession(item.bookId);
@@ -1697,6 +2080,7 @@
       void setAudiobookSleepTimer(0).catch(() => undefined);
       playback = await stopAudiobook();
       applyPlayback(playback);
+      audiobookPlayerHidden.set(false);
       playerExpanded = false;
       sheetDrag = 0;
       waveform = null;
@@ -1735,8 +2119,10 @@
         await stopAudiobook().catch(() => undefined);
         await stopVoiceIfListening();
         playback = null;
+        audiobookPlayerHidden.set(false);
         playerExpanded = false;
       }
+      clearAlbumQueue();
       await deleteAudiobook(item.id);
       if (shareItem?.id === item.id) {
         shareOpen = false;
@@ -1941,6 +2327,7 @@
       if (playback?.audiobookId !== id || !playback.playing) {
         await stopVoiceIfListening();
         playback = await playAudiobook(id);
+        audiobookPlayerHidden.set(false);
         playerExpanded = true;
         const item = audiobooks.find((entry) => entry.id === id);
         if (item) await startListeningSession(item.bookId);
@@ -1964,10 +2351,19 @@
   }
 
   function openPlayer() {
+    audiobookPlayerHidden.set(false);
     playerExpanded = true;
   }
 
   function minimizePlayer() {
+    audiobookPlayerHidden.set(false);
+    playerExpanded = false;
+    sheetDrag = 0;
+    sheetDragging = false;
+  }
+
+  function hidePlayer() {
+    audiobookPlayerHidden.set(true);
     playerExpanded = false;
     sheetDrag = 0;
     sheetDragging = false;
@@ -2076,6 +2472,12 @@
       <p class="page-subtitle">{$t("audiobooks.subtitle")}</p>
     </div>
     <div class="head-actions">
+      {#if playback && $audiobookPlayerHidden}
+        <Button variant="subtle" onclick={() => audiobookPlayerHidden.set(false)}>
+          <Icon name="headphones" size={17} />
+          {$t("audiobooks.showPlayer")}
+        </Button>
+      {/if}
       <Button
         variant="ghost"
         onclick={() => openImport("audio")}
@@ -2088,7 +2490,7 @@
       <Button
         variant="primary"
         onclick={openGenerator}
-        disabled={!platformSupported || !ffmpegReady || busy !== null}
+        disabled={!generationSupported || busy !== null}
       >
         <Icon name="sparkles" size={17} />
         {$t("audiobooks.generateShort")}
@@ -2100,7 +2502,7 @@
     <p class="notice soft" role="status">{$t("audiobooks.mobileImportNotice")}</p>
   {:else if !platformSupported}
     <p class="notice soft" role="status">{$t("audiobooks.desktopOnly")}</p>
-  {:else if capabilities && !capabilities.ffmpeg}
+  {:else if capabilities && !capabilities.ffmpeg && !nativeMux}
     <p class="notice soft" role="status">
       {$t("audiobooks.ffmpegMissing")} · {$t("audiobooks.ffmpegMissingHelp")}
     </p>
@@ -2317,76 +2719,170 @@
   {/if}
 
   <section class="catalog-toolbar" aria-label={$t("audiobooks.library")}>
-    <div class="filter-tabs" role="group" aria-label={$t("audiobooks.library")}>
-      {#each filterTabs as tab (tab.id)}
-        <button
-          class:active={filter === tab.id}
-          aria-pressed={filter === tab.id}
-          onclick={() => (filter = tab.id)}
-        >
-          {#if tab.id === "favorites"}
-            <Icon name="star" size={13} />
-          {/if}
-          {tab.label}
-          <span>{tab.count}</span>
-        </button>
-      {/each}
+    <div class="view-switch" role="group" aria-label={$t("audiobooks.library")}>
+      <button
+        class:active={viewMode === "audiobooks"}
+        aria-pressed={viewMode === "audiobooks"}
+        onclick={() => (viewMode = "audiobooks")}
+      >
+        <Icon name="headphones" size={14} />
+        {$t("audiobooks.viewAudiobooks")}
+        <span>{audiobooks.length}</span>
+      </button>
+      <button
+        class:active={viewMode === "albums"}
+        aria-pressed={viewMode === "albums"}
+        onclick={() => (viewMode = "albums")}
+      >
+        <Icon name="grid" size={14} />
+        {$t("audiobooks.viewAlbums")}
+        <span>{albums.length}</span>
+      </button>
     </div>
-    <div class="toolbar-tools">
-      <label class="search-field">
-        <Icon name="search" size={17} />
-        <input
-          type="search"
-          bind:value={query}
-          placeholder={$t("audiobooks.searchPlaceholder")}
-          aria-label={$t("audiobooks.searchPlaceholder")}
-        />
-        {#if query}
+
+    {#if viewMode === "audiobooks"}
+      <div class="filter-tabs" role="group" aria-label={$t("audiobooks.library")}>
+        {#each filterTabs as tab (tab.id)}
           <button
-            class="clear-button"
-            type="button"
-            onclick={() => (query = "")}
-            aria-label={$t("common.close")}
-            title={$t("common.close")}
+            class:active={filter === tab.id}
+            aria-pressed={filter === tab.id}
+            onclick={() => (filter = tab.id)}
           >
-            <Icon name="close" size={14} />
+            {#if tab.id === "favorites"}
+              <Icon name="star" size={13} />
+            {/if}
+            {tab.label}
+            <span>{tab.count}</span>
           </button>
-        {/if}
-      </label>
-      <label class="sort-field">
-        <Icon name="sort" size={16} />
-        <select bind:value={sort} aria-label={$t("audiobooks.sort")}>
-          <option value="recent">{$t("audiobooks.sortRecent")}</option>
-          <option value="title">{$t("audiobooks.sortTitle")}</option>
-          <option value="duration">{$t("audiobooks.sortDuration")}</option>
-          <option value="progress">{$t("audiobooks.sortProgress")}</option>
-        </select>
-      </label>
-      <label class="sort-field">
-        <Icon name="sparkles" size={16} />
-        <select bind:value={categoryFilter} aria-label={$t("library.categories")}>
-          <option value="all">{$t("library.allCategories")}</option>
-          {#each categories as category (category.id)}
-            <option value={category.id}>{category.name}</option>
-          {/each}
-        </select>
-      </label>
-    </div>
+        {/each}
+      </div>
+      <div class="toolbar-tools">
+        <label class="search-field">
+          <Icon name="search" size={17} />
+          <input
+            type="search"
+            bind:value={query}
+            placeholder={$t("audiobooks.searchPlaceholder")}
+            aria-label={$t("audiobooks.searchPlaceholder")}
+          />
+          {#if query}
+            <button
+              class="clear-button"
+              type="button"
+              onclick={() => (query = "")}
+              aria-label={$t("common.close")}
+              title={$t("common.close")}
+            >
+              <Icon name="close" size={14} />
+            </button>
+          {/if}
+        </label>
+        <label class="sort-field">
+          <Icon name="sort" size={16} />
+          <select bind:value={sort} aria-label={$t("audiobooks.sort")}>
+            <option value="recent">{$t("audiobooks.sortRecent")}</option>
+            <option value="title">{$t("audiobooks.sortTitle")}</option>
+            <option value="duration">{$t("audiobooks.sortDuration")}</option>
+            <option value="progress">{$t("audiobooks.sortProgress")}</option>
+          </select>
+        </label>
+        <label class="sort-field">
+          <Icon name="sparkles" size={16} />
+          <select bind:value={categoryFilter} aria-label={$t("library.categories")}>
+            <option value="all">{$t("library.allCategories")}</option>
+            {#each categories as category (category.id)}
+              <option value={category.id}>{category.name}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
+    {:else}
+      <div class="toolbar-tools">
+        <label class="search-field">
+          <Icon name="search" size={17} />
+          <input
+            type="search"
+            bind:value={albumQuery}
+            placeholder={$t("audiobooks.albumSearchPlaceholder")}
+            aria-label={$t("audiobooks.albumSearchPlaceholder")}
+          />
+          {#if albumQuery}
+            <button
+              class="clear-button"
+              type="button"
+              onclick={() => (albumQuery = "")}
+              aria-label={$t("common.close")}
+              title={$t("common.close")}
+            >
+              <Icon name="close" size={14} />
+            </button>
+          {/if}
+        </label>
+        <button class="new-album" type="button" onclick={() => openAlbumEditor()}>
+          <Icon name="plus" size={16} />
+          {$t("audiobooks.createAlbum")}
+        </button>
+      </div>
+    {/if}
   </section>
 
   {#if !loaded}
     <div class="loading-state">
       <Spinner label={$t("common.loading")} />
     </div>
+  {:else if viewMode === "albums"}
+    {#if albums.length === 0}
+      <EmptyState
+        title={$t("audiobooks.albumsEmpty")}
+        description={$t("audiobooks.albumsEmptyHelp")}
+        action={$t("audiobooks.createAlbum")}
+        onAction={() => openAlbumEditor()}
+        icon="library"
+      />
+    {:else if filteredAlbums.length === 0}
+      <EmptyState
+        title={$t("audiobooks.albumSearchPlaceholder")}
+        description={$t("audiobooks.albumsEmptyHelp")}
+        action={$t("audiobooks.filterAll")}
+        onAction={() => (albumQuery = "")}
+        icon="search"
+      />
+    {:else}
+      <div class="album-grid">
+        {#each filteredAlbums as album (album.id)}
+          <AudiobookAlbumCard
+            {album}
+            covers={albumCovers(album)}
+            durationMs={albumDuration(album)}
+            percent={albumPercent(album)}
+            playing={playingAlbumId === album.id && Boolean(playback?.playing)}
+            onOpen={() => openAlbum(album)}
+            onPlay={() => void playAlbum(album)}
+            onEdit={() => openAlbumEditor(album)}
+            onDelete={() => void removeAlbum(album)}
+          />
+        {/each}
+        <button
+          class="quick-add"
+          type="button"
+          onclick={() => openAlbumEditor()}
+        >
+          <span class="quick-add-icon"><Icon name="plus" size={24} /></span>
+          <strong>{$t("audiobooks.createAlbum")}</strong>
+          <p>{$t("audiobooks.albumsEmptyHelp")}</p>
+          <span class="quick-add-link">{$t("albums.title")}</span>
+        </button>
+      </div>
+    {/if}
   {:else if audiobooks.length === 0}
     <EmptyState
       title={$t("audiobooks.empty")}
       description={$t("audiobooks.emptyHelp")}
-      action={platformSupported && ffmpegReady && busy === null
+      action={generationSupported && busy === null
         ? $t("audiobooks.generate")
         : undefined}
       onAction={() => {
-        if (platformSupported && ffmpegReady && busy === null) openGenerator();
+        if (generationSupported && busy === null) openGenerator();
       }}
       icon="headphones"
     />
@@ -2419,6 +2915,8 @@
           onShare={() => openShare(item)}
           onClassify={() => void classifyAudiobook(item)}
           onRetry={() => void retryAudiobookItem(item)}
+          onAlbum={() => openAlbumPicker(item)}
+          onConvert={() => openConvert(item)}
         />
       {/each}
       {#if filter === "all" && !query.trim()}
@@ -2426,7 +2924,7 @@
           class="quick-add"
           type="button"
           onclick={openGenerator}
-          disabled={!platformSupported || !ffmpegReady || busy !== null}
+          disabled={!generationSupported || busy !== null}
         >
           <span class="quick-add-icon"><Icon name="plus" size={24} /></span>
           <strong>{$t("audiobooks.quickAdd")}</strong>
@@ -2466,7 +2964,18 @@
             <Icon name="chevron" size={17} />
             <span>{$t("audiobooks.minimizePlayer")}</span>
           </button>
-          <span class="sheet-kicker">{$t("audiobooks.nowPlaying")}</span>
+          <span class="sheet-top-actions">
+            <span class="sheet-kicker">{$t("audiobooks.nowPlaying")}</span>
+            <button
+              class="sheet-hide"
+              type="button"
+              onclick={hidePlayer}
+              aria-label={$t("audiobooks.hidePlayer")}
+              title={$t("audiobooks.hidePlayer")}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          </span>
         </header>
       <div
         class="player-cover"
@@ -2754,7 +3263,7 @@
         {/if}
       </div>
       </section>
-    {:else}
+    {:else if !$audiobookPlayerHidden}
       <section class="player-mini" aria-label={$t("audiobooks.nowPlaying")}>
         <button
           class="mini-open"
@@ -2791,6 +3300,15 @@
           title={$t("audiobooks.expandPlayer")}
         >
           <Icon name="chevron" size={16} />
+        </button>
+        <button
+          class="mini-hide"
+          type="button"
+          onclick={hidePlayer}
+          aria-label={$t("audiobooks.hidePlayer")}
+          title={$t("audiobooks.hidePlayer")}
+        >
+          <Icon name="close" size={15} />
         </button>
         <span class="mini-progress" style:width={`${waveformPercent}%`}></span>
       </section>
@@ -3026,13 +3544,13 @@
   selectedId={modalChapterId}
   chapters={modalChapters}
   loading={modalChaptersLoading}
-  busy={busy === "reanalyze" || busy === "transcribe"}
+  busy={busy === "reanalyze" || convertBusy}
   onClose={() => (chaptersOpen = false)}
   onSelect={(id) => void loadModalChapters(id)}
   onPlayChapter={(chapter) => void playChapter(chapter)}
   onEdit={(item) => void openChapterEditor(item.id)}
   onReanalyze={(item, mode) => void reanalyzeChapters(item.id, mode)}
-  onTranscribe={(item) => void transcribeLater(item.id, item.bookTitle)}
+  onTranscribe={(item) => openConvert(item)}
 />
 
 <AudiobookChapterEditor
@@ -3106,6 +3624,83 @@
   onDownloadWhisper={downloadWhisper}
   onJump={jumpToVoiceMarker}
   onDelete={removeVoiceMarker}
+/>
+
+<AudiobookTranscribeModal
+  open={convertItem !== null}
+  audiobook={convertItem}
+  whisperModel={whisperBase}
+  whisperTiny={whisperTiny}
+  whisperProgress={whisperDownloadPercent}
+  whisperTinyProgress={whisperTinyDownloadPercent}
+  busy={convertBusy}
+  onClose={() => {
+    if (convertBusy) return;
+    convertItem = null;
+  }}
+  onConfirm={(modelId) => void confirmConvert(modelId)}
+  onDownloadModel={(modelId) => void downloadWhisper(modelId)}
+/>
+
+<AudiobookAlbumEditorModal
+  open={albumEditorOpen}
+  album={albumEditing}
+  busy={albumEditorBusy}
+  error={albumEditorError}
+  onClose={() => {
+    if (albumEditorBusy) return;
+    albumEditorOpen = false;
+    albumEditing = null;
+    albumEditorError = null;
+  }}
+  onSave={saveAlbum}
+/>
+
+<AudiobookAlbumModal
+  open={albumDetail !== null}
+  album={albumDetail}
+  items={albumDetail ? albumItems(albumDetail) : []}
+  busy={albumDetail ? albumBusy === albumDetail.id : false}
+  onClose={() => (albumDetailId = null)}
+  onPlay={() => {
+    if (albumDetail) void playAlbum(albumDetail);
+  }}
+  onPlayItem={(item) => {
+    if (albumDetail) void playAlbumItem(albumDetail, item);
+  }}
+  onEdit={() => {
+    if (albumDetail) openAlbumEditor(albumDetail);
+  }}
+  onAdd={() => (albumAddOpen = true)}
+  onRemove={(item) => {
+    if (albumDetail) void removeAlbumItem(albumDetail, item);
+  }}
+  onMove={(item, direction) => {
+    if (albumDetail) void moveAlbumItem(albumDetail, item, direction);
+  }}
+/>
+
+<AudiobookAlbumAddModal
+  open={albumAddOpen && albumDetail !== null}
+  album={albumDetail}
+  audiobooks={audiobooks}
+  busy={albumDetail ? albumBusy === albumDetail.id : false}
+  onClose={() => (albumAddOpen = false)}
+  onAdd={(ids) => void addAlbumItems(ids)}
+/>
+
+<AudiobookAlbumPickerModal
+  open={albumPickerFor !== null}
+  albums={albums}
+  audiobook={albumPickerFor}
+  busy={albumPickerBusy}
+  error={albumPickerError}
+  onClose={() => {
+    if (albumPickerBusy) return;
+    albumPickerFor = null;
+    albumPickerError = null;
+  }}
+  onSave={(ids) => void saveAlbumPicker(ids)}
 />
 
 <style>
@@ -3566,6 +4161,81 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
+  }
+
+  .view-switch {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid var(--accent-line);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
+  }
+
+  .view-switch button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0.3rem 0.72rem;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.72rem;
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .view-switch button:hover {
+    color: var(--text);
+  }
+
+  .view-switch button.active {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .view-switch button span {
+    display: inline-grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 14%, transparent);
+    font-size: 0.6rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .new-album {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 0 13px;
+    border: 1px solid var(--accent-line);
+    border-radius: 11px;
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.74rem;
+    font-weight: 650;
+  }
+
+  .new-album:hover {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+
+  .album-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+    align-items: stretch;
   }
 
   .filter-tabs {
@@ -4743,7 +5413,7 @@
 
   @media (max-width: 900px) {
     .player-dock {
-      bottom: calc(78px + env(safe-area-inset-bottom));
+      bottom: calc(78px + var(--safe-bottom));
       grid-template-columns: minmax(0, 1fr);
       gap: 0.5rem;
       max-height: min(44vh, 340px);
@@ -4810,8 +5480,20 @@
   }
 
   @media (max-width: 700px) {
-    .audiobook-grid {
+    .audiobook-grid,
+    .album-grid {
       grid-template-columns: 1fr;
+    }
+
+    .view-switch,
+    .new-album {
+      width: 100%;
+    }
+
+    .view-switch button,
+    .new-album {
+      flex: 1;
+      justify-content: center;
     }
 
     .page-head {
@@ -5010,7 +5692,7 @@
     flex: 0 0 auto;
     width: 100%;
     height: 34px;
-    padding-top: env(safe-area-inset-top);
+    padding-top: var(--safe-top);
     touch-action: none;
     cursor: grab;
   }
@@ -5057,6 +5739,32 @@
     transform: rotate(90deg);
   }
 
+  .sheet-top-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .sheet-hide {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--surface) 84%, transparent);
+    color: var(--muted);
+  }
+
+  .sheet-hide:hover {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
   .sheet-kicker {
     color: var(--accent);
     font-size: 0.65rem;
@@ -5088,7 +5796,7 @@
     width: 100%;
     max-width: 760px;
     min-height: 0;
-    padding: 0 18px calc(24px + env(safe-area-inset-bottom));
+    padding: 0 18px calc(24px + var(--safe-bottom));
     gap: 14px;
     overflow-y: auto;
     overflow-x: hidden;
@@ -5272,7 +5980,7 @@
     }
 
     .player-sheet .player-main {
-      padding: 0 15px calc(20px + env(safe-area-inset-bottom));
+      padding: 0 15px calc(20px + var(--safe-bottom));
       overflow-x: hidden;
     }
 
@@ -5296,7 +6004,7 @@
   /* ── Reproductor minimizado ──────────────────────────────────────── */
   .player-mini {
     position: sticky;
-    bottom: calc(78px + env(safe-area-inset-bottom));
+    bottom: calc(78px + var(--safe-bottom));
     z-index: 30;
     display: flex;
     align-items: center;
@@ -5369,7 +6077,8 @@
   }
 
   .mini-toggle,
-  .mini-expand {
+  .mini-expand,
+  .mini-hide {
     display: grid;
     place-items: center;
     flex: 0 0 auto;
@@ -5392,6 +6101,21 @@
 
   .mini-expand :global(svg) {
     transform: rotate(-90deg);
+  }
+
+  .mini-hide {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+  }
+
+  .mini-hide:hover {
+    background: var(--surface-3);
+    color: var(--text);
   }
 
   .mini-progress {

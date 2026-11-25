@@ -2581,7 +2581,7 @@
     width: calc(100% + 1.5rem);
     max-width: none;
     margin: 0 -0.75rem;
-    padding: 0.3rem 0.75rem calc(0.3rem + env(safe-area-inset-bottom));
+    padding: 0.3rem 0.75rem calc(0.3rem + var(--safe-bottom));
     border: 0;
     border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
     border-radius: 0;

@@ -20,7 +20,8 @@ use crate::storage::{LocalIdentity, Storage, StorageLayout};
 use crate::sync::{MirrorHub, SyncService, TauriEventSink};
 use crate::tts::recording::SampleRecorder;
 use crate::tts::{
-    NeuTtsEngine, PracticeManager, TtsService, TtsSessionManager, VoiceProfileService,
+    NeuTtsEngine, PracticeManager, SupertonicEngine, SupertonicService, TtsService,
+    TtsSessionManager, VoiceProfileService,
 };
 
 /// Estado compartido por todos los comandos. Solo contiene infraestructura:
@@ -34,6 +35,8 @@ pub struct AppState {
     pub tts: Arc<TtsService>,
     pub tts_session: Arc<TtsSessionManager>,
     pub voice_profiles: Arc<VoiceProfileService>,
+    /// Pack opcional de voces Supertonic. Se descarga desde Ajustes.
+    pub supertonic: Arc<SupertonicService>,
     /// Motor de clonación. En Android no se registra porque el binario auxiliar
     /// aún no se empaqueta por ABI.
     pub neutts: Option<Arc<NeuTtsEngine>>,
@@ -125,6 +128,21 @@ impl AppState {
         #[cfg(target_os = "android")]
         let neutts: Option<Arc<NeuTtsEngine>> = None;
 
+        #[cfg(not(target_os = "android"))]
+        let supertonic_player: Arc<dyn crate::tts::AudioPlayer> =
+            Arc::new(crate::tts::RodioPlayer::default());
+        #[cfg(target_os = "android")]
+        let supertonic_player: Arc<dyn crate::tts::AudioPlayer> = Arc::new(
+            crate::tts::AndroidAudioPlayer::new(layout.assets.join("tts").join("playback")),
+        );
+
+        let supertonic = Arc::new(SupertonicService::new(
+            crate::tts::supertonic::root_for(&layout.assets),
+            supertonic_player,
+        ));
+        supertonic.spawn_reaper();
+        tts.register(Arc::new(SupertonicEngine::new(supertonic.clone())));
+
         let mirror = MirrorHub::new();
         let device_identity = tauri::async_runtime::block_on(
             crate::sync::DeviceIdentity::load_or_create(&storage, &identity, &layout),
@@ -169,6 +187,7 @@ impl AppState {
             tts,
             tts_session,
             voice_profiles,
+            supertonic,
             neutts,
             audiobook_player: Arc::new(AudiobookPlayback::default()),
             audiobook_jobs: Arc::new(AudiobookJobManager::default()),

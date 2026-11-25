@@ -1485,7 +1485,7 @@
     }
 
     .modal-foot {
-      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      padding: 12px 16px calc(12px + var(--safe-bottom));
     }
 
     .modal-foot :global(.ui-button) {

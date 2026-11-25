@@ -949,7 +949,7 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-    padding: 13px 20px calc(13px + env(safe-area-inset-bottom));
+    padding: 13px 20px calc(13px + var(--safe-bottom));
     border-top: 1px solid var(--border);
     background: var(--surface-2);
   }
@@ -1017,7 +1017,7 @@
     }
 
     .modal-foot {
-      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      padding: 12px 16px calc(12px + var(--safe-bottom));
     }
 
     .modal-foot :global(.ui-button) {

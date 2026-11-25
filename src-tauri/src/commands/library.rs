@@ -60,6 +60,37 @@ pub async fn library_list(state: State<'_, AppState>) -> Result<Vec<BookSummary>
     Ok(books)
 }
 
+/// Copia el EPUB de un libro de la biblioteca al destino elegido. Se usa para
+/// exportar el texto de un audiolibro ya transcrito sin volver a sintetizar ni
+/// transcribir nada.
+#[tauri::command]
+pub async fn export_book(
+    state: State<'_, AppState>,
+    book_id: String,
+    destination: String,
+) -> Result<String> {
+    let book = owned_book(&state, &book_id).await?;
+    if book.format != BookFormat::Epub {
+        return Err(KoraError::Unsupported(
+            "solo se pueden exportar libros en formato EPUB".into(),
+        ));
+    }
+    let source = crate::commands::reader::book_asset_path(&state, &book)?;
+    let destination = PathBuf::from(destination);
+    if destination.as_os_str().is_empty() {
+        return Err(KoraError::InvalidInput(
+            "elige una ruta para guardar el EPUB".into(),
+        ));
+    }
+    if let Some(parent) = destination.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&source, &destination)?;
+    Ok(destination.to_string_lossy().to_string())
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContinueBook {

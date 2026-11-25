@@ -44,7 +44,7 @@ pnpm tauri build --bundles deb
 Salida:
 
 ```text
-target/release/bundle/deb/Kora_0.1.8_<arch>.deb
+target/release/bundle/deb/Kora_0.1.9_<arch>.deb
 ```
 
 Copia el paquete a `artifacts/` si quieres conservarlo antes de ejecutar
@@ -52,7 +52,7 @@ Copia el paquete a `artifacts/` si quieres conservarlo antes de ejecutar
 
 ```bash
 mkdir -p artifacts
-cp target/release/bundle/deb/Kora_0.1.8_amd64.deb artifacts/
+cp target/release/bundle/deb/Kora_0.1.9_amd64.deb artifacts/
 ```
 
 Si compilas en un contenedor sin Node, puedes construir el frontend en el host
@@ -81,9 +81,11 @@ compilación en un runner x86_64.
 
 El APK núcleo incluye EPUB/PDF con `pdf.js`, TTS nativo, sync, diario, logros,
 Pomodoro, temas, i18n y exportación EPUB. También incluye la importación de
-audiolibros y Whisper (`whisper-rs` + `whisper.cpp`) para transcribir en el
-dispositivo. No incluye OCR, clonación, Piper, PDFium embebido ni la generación
-de voces.
+audiolibros, Whisper (`whisper-rs` + `whisper.cpp`) para transcribir en el
+dispositivo y generación M4B con el muxer AAC nativo
+(`MediaCodec`/`MediaMuxer`) y un servicio en primer plano. Incluye el motor Supertonic 3 con ONNX Runtime enlazado
+estáticamente; los pesos (~383 MB) son opcionales y se descargan desde
+**Ajustes → Voz**. No incluye OCR, clonación, Piper ni PDFium embebido.
 
 Whisper se compila con CMake dentro de `whisper-rs`. El wrapper de
 `scripts/tauri.mjs` y `scripts/android-cmake-toolchain.cmake` detectan el NDK,
@@ -104,16 +106,17 @@ Si compilas con el CLI directamente, exporta `ANDROID_NDK_HOME`,
    ABI.
 
 Librerías previstas: `libpdfium.so`, `libtesseract.so`, `liblept.so`,
-`libonnxruntime.so`, `libkora_neutts.so` y las dependencias de ffmpeg que
-necesite el pipeline M4B. `libwhisper` ya no se empaqueta aparte: se enlaza de
-forma estática dentro de `libkora_lib.so`.
+`libkora_neutts.so` y las dependencias de ffmpeg que necesite el pipeline M4B.
+`libwhisper` y ONNX Runtime se enlazan de forma estática dentro de
+`libkora_lib.so`; por eso el APK crece ~17 MB por ABI y no requiere
+`libonnxruntime.so` aparte.
 
 ### Comandos Android
 
 ```bash
 pnpm tauri android init --ci
 pnpm tauri android dev
-pnpm tauri android build --apk --target aarch64 x86_64  # release 64 bits
+pnpm tauri android build --apk --target aarch64  # release para el teléfono
 pnpm tauri android build --apk --debug --target aarch64 # debug para el teléfono
 ```
 
@@ -123,8 +126,8 @@ grande porque incluye símbolos. El release firmado queda en
 `src-tauri/gen/android/app/build/outputs/apk/universal/release/`.
 
 Whisper usa bindings empaquetados de 64 bits: los targets `armv7` e `i686`
-no compilan `whisper-rs-sys`. Por eso el APK publicado incluye `arm64-v8a` y
-`x86_64`; para el teléfono basta `--target aarch64`.
+no compilan `whisper-rs-sys`. El APK publicado es `arm64-v8a` para mantener la
+descarga en ~64 MB; para un emulador compila con `--target x86_64`.
 
 ## i18n
 

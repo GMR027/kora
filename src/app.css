@@ -96,6 +96,14 @@
   --sidebar-width: 288px;
   --topbar-height: 64px;
 
+  /* Zonas seguras del sistema. En Android el padding lo aplica MainActivity
+     sobre la vista nativa; allí se anulan para no reservar el espacio dos
+     veces (barra de estado + env del WebView). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
   --font-sans:
     "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -113,6 +121,17 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* MainActivity ya reserva con padding nativo la barra de estado, la de
+   navegación y los recortes de pantalla. Si el WebView además devuelve
+   env(safe-area-inset-*), el encabezado quedaría separado del borde por una
+   banda vacía. En Android nativo las zonas seguras CSS son 0. */
+:root[data-platform="android"] {
+  --safe-top: 0px;
+  --safe-right: 0px;
+  --safe-bottom: 0px;
+  --safe-left: 0px;
 }
 
 [data-dark="true"] {

@@ -190,6 +190,10 @@
   let extractNotice = $state<string | null>(null);
   let annotationsOpen = $state(false);
   let ttsPanelOpen = $state(false);
+  let ttsPlayerHidden = $state(false);
+  let ttsDragY = $state(0);
+  let ttsDragging = $state(false);
+  let ttsDragStart = 0;
   let excerptTts = $state(false);
   let annotationsTab = $state<"marker" | "note" | "extract" | "reaction">("marker");
   let annotationsRefresh = $state(0);
@@ -693,6 +697,7 @@
       }
       excerptTts = false;
       ttsPanelOpen = false;
+      ttsPlayerHidden = false;
       ttsPhrase = null;
       ttsRects = [];
       if (disposed || request !== openRequest) return;
@@ -716,6 +721,7 @@
     ttsError = null;
     extractNotice = null;
     ttsPanelOpen = false;
+    ttsPlayerHidden = false;
     selection = null;
     activeAnnotation = null;
     panelAnchor = null;
@@ -2500,7 +2506,60 @@
     }
     ttsPhrase = null;
     ttsRects = [];
+    ttsPanelOpen = false;
+    ttsPlayerHidden = false;
+    ttsDragY = 0;
+    ttsDragging = false;
     if (session) void startReadingSession("reading");
+  }
+
+  function openTtsPanel() {
+    ttsPanelOpen = true;
+    ttsPlayerHidden = false;
+    ttsDragY = 0;
+  }
+
+  function minimizeTtsPanel() {
+    ttsPanelOpen = false;
+    ttsPlayerHidden = false;
+    ttsDragY = 0;
+    ttsDragging = false;
+  }
+
+  function hideTtsPanel() {
+    ttsPanelOpen = false;
+    ttsPlayerHidden = true;
+    ttsDragY = 0;
+    ttsDragging = false;
+  }
+
+  function onTtsPointerDown(event: PointerEvent) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const target = event.currentTarget as HTMLElement;
+    ttsDragging = true;
+    ttsDragStart = event.clientY;
+    ttsDragY = 0;
+    target.setPointerCapture(event.pointerId);
+  }
+
+  function onTtsPointerMove(event: PointerEvent) {
+    if (!ttsDragging) return;
+    ttsDragY = Math.max(0, event.clientY - ttsDragStart);
+  }
+
+  function onTtsPointerEnd(event: PointerEvent) {
+    if (!ttsDragging) return;
+    ttsDragging = false;
+    const shouldMinimize = ttsDragY > 70;
+    ttsDragY = 0;
+    if (shouldMinimize) {
+      minimizeTtsPanel();
+      return;
+    }
+    const target = event.currentTarget as HTMLElement;
+    if (target.hasPointerCapture?.(event.pointerId)) {
+      target.releasePointerCapture(event.pointerId);
+    }
   }
 
   function setTtsRate(value: number) {
@@ -2924,7 +2983,13 @@
             aria-expanded={ttsPanelOpen}
             aria-label={$t("reader.listen")}
             title={$t("reader.listen")}
-            onclick={() => (ttsPanelOpen = !ttsPanelOpen)}
+            onclick={() => {
+              if (ttsPanelOpen) {
+                ttsPanelOpen = false;
+              } else {
+                openTtsPanel();
+              }
+            }}
           >
             <Icon name="headphones" size={17} />
             <span class="control-label">{$t("reader.listen")}</span>
@@ -3096,20 +3161,43 @@
   {/if}
 
   {#if session && !isPdf && ttsPanelOpen}
-    <div class="tts-bar">
+    <div
+      class="tts-bar"
+      style:transform={`translateX(-50%) translateY(${ttsDragY}px)`}
+    >
+      <div
+        class="tts-grab"
+        onpointerdown={onTtsPointerDown}
+        onpointermove={onTtsPointerMove}
+        onpointerup={onTtsPointerEnd}
+        onpointercancel={onTtsPointerEnd}
+        aria-hidden="true"
+      >
+        <span></span>
+      </div>
       <header class="tts-head">
         <span class="tts-heading">
           <span class="tts-head-icon"><Icon name="headphones" size={16} /></span>
           <strong>{$t("reader.listen")}</strong>
         </span>
-        <button
-          class="tts-close"
-          aria-label={$t("common.close")}
-          title={$t("common.close")}
-          onclick={() => (ttsPanelOpen = false)}
-        >
-          <Icon name="close" size={16} />
-        </button>
+        <span class="tts-head-actions">
+          <button
+            class="tts-minimize"
+            aria-label={$t("reader.minimizePlayer")}
+            title={$t("reader.minimizePlayer")}
+            onclick={minimizeTtsPanel}
+          >
+            <Icon name="chevron" size={16} />
+          </button>
+          <button
+            class="tts-close"
+            aria-label={$t("reader.hidePlayer")}
+            title={$t("reader.hidePlayer")}
+            onclick={hideTtsPanel}
+          >
+            <Icon name="close" size={16} />
+          </button>
+        </span>
       </header>
 
       <div class="tts-main">
@@ -3597,6 +3685,55 @@
         style:width={`${focusWidth}px`}
         aria-hidden="true"
       ></div>
+    {/if}
+
+    {#if ttsActive && !excerptTts && !ttsPanelOpen && !ttsPlayerHidden}
+      <div class="tts-mini" role="region" aria-label={$t("reader.listen")}>
+        <button
+          class="tts-mini-open"
+          onclick={openTtsPanel}
+          aria-label={$t("reader.showPlayer")}
+          title={$t("reader.showPlayer")}
+        >
+          <span class="tts-mini-icon"><Icon name="headphones" size={15} /></span>
+          <span class="tts-mini-copy">
+            <strong>{$t("reader.listen")}</strong>
+            <small>{session.document.title}</small>
+          </span>
+        </button>
+        <button
+          class="tts-mini-toggle"
+          onclick={toggleTts}
+          aria-label={ttsState === "playing" ? $t("reader.pause") : $t("reader.resume")}
+          title={ttsState === "playing" ? $t("reader.pause") : $t("reader.resume")}
+        >
+          <Icon name={ttsState === "playing" ? "pause" : "play"} size={16} />
+        </button>
+        <button
+          class="tts-mini-stop"
+          onclick={stopTts}
+          aria-label={$t("reader.stop")}
+          title={$t("reader.stop")}
+        >
+          <Icon name="stop" size={13} />
+        </button>
+        <button
+          class="tts-mini-expand"
+          onclick={openTtsPanel}
+          aria-label={$t("reader.showPlayer")}
+          title={$t("reader.showPlayer")}
+        >
+          <Icon name="chevron" size={15} />
+        </button>
+        <button
+          class="tts-mini-hide"
+          onclick={() => (ttsPlayerHidden = true)}
+          aria-label={$t("reader.hidePlayer")}
+          title={$t("reader.hidePlayer")}
+        >
+          <Icon name="close" size={14} />
+        </button>
+      </div>
     {/if}
 
     <nav
@@ -4491,7 +4628,7 @@
     display: flex;
     flex-direction: column;
     width: 100%;
-    height: 100vh;
+    height: 100%;
     gap: 0;
     overflow: hidden;
     background: var(--bg);
@@ -5741,7 +5878,7 @@
     gap: 0.35rem;
     width: 100%;
     max-width: none;
-    padding: 0.3rem 0.75rem calc(0.3rem + env(safe-area-inset-bottom));
+    padding: 0.3rem 0.75rem calc(0.3rem + var(--safe-bottom));
     border: 0;
     border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
     border-radius: 0;
@@ -6364,7 +6501,7 @@
 
   /* ── Ajustes de apariencia Lumina Reader ───────────────────────────── */
   .reader {
-    height: calc(100vh - var(--topbar-height));
+    height: 100%;
     min-height: 0;
     background: var(--bg);
   }
@@ -6559,7 +6696,7 @@
     justify-content: space-between;
     width: min(var(--reader-column-width, 840px), 100%);
     margin: 0 auto;
-    padding: 8px 24px calc(10px + env(safe-area-inset-bottom));
+    padding: 8px 24px calc(10px + var(--safe-bottom));
     border-top: 0;
     background: transparent;
     backdrop-filter: none;
@@ -6657,6 +6794,151 @@
     font-size: 0.76rem;
   }
 
+  .tts-grab {
+    display: grid;
+    place-items: center;
+    height: 16px;
+    margin: -5px 0 3px;
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .tts-grab:active {
+    cursor: grabbing;
+  }
+
+  .tts-grab span {
+    width: 42px;
+    height: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--muted) 30%, transparent);
+  }
+
+  .tts-head-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+  }
+
+  .tts-minimize {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+
+  .tts-minimize:hover {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .tts-minimize :global(svg) {
+    transform: rotate(90deg);
+  }
+
+  .tts-mini {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+    width: min(var(--reader-column-width, 840px), 100%);
+    margin: 0 auto;
+    padding: 6px 10px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+    background: color-mix(in srgb, var(--surface) 98%, transparent);
+  }
+
+  .tts-mini-open {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 40px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+  }
+
+  .tts-mini-icon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .tts-mini-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .tts-mini-copy strong {
+    overflow: hidden;
+    font-size: 0.72rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tts-mini-copy small {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.62rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tts-mini-toggle,
+  .tts-mini-stop,
+  .tts-mini-expand,
+  .tts-mini-hide {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+  }
+
+  .tts-mini-toggle {
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+
+  .tts-mini-expand :global(svg) {
+    transform: rotate(-90deg);
+  }
+
+  .tts-mini-stop:hover,
+  .tts-mini-expand:hover,
+  .tts-mini-hide:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
   .tts-bar .primary {
     border-radius: 999px;
     background: linear-gradient(110deg, var(--accent-2), var(--accent-3));
@@ -6713,7 +6995,7 @@
 
   @media (max-width: 900px) {
     .reader {
-      height: calc(100vh - 68px - 72px - env(safe-area-inset-bottom));
+      height: 100%;
     }
 
     .toolbar {
@@ -6770,7 +7052,7 @@
     }
 
     .reader-pager {
-      padding: 6px 10px calc(8px + env(safe-area-inset-bottom));
+      padding: 6px 10px calc(8px + var(--safe-bottom));
     }
 
     .pager-status {
@@ -7200,7 +7482,7 @@
     .ai-panel {
       top: auto;
       right: 0;
-      bottom: calc(64px + env(safe-area-inset-bottom));
+      bottom: calc(64px + var(--safe-bottom));
       left: 0;
       width: 100%;
       max-height: 68vh;
@@ -7588,7 +7870,7 @@
 
   .modal-foot {
     flex: 0 0 auto;
-    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 14px calc(10px + var(--safe-bottom));
     border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
     background: color-mix(in srgb, var(--surface-2) 70%, var(--surface));
   }
@@ -7677,7 +7959,7 @@
   @media (max-width: 900px) {
     .book-search {
       top: auto;
-      bottom: calc(64px + env(safe-area-inset-bottom));
+      bottom: calc(64px + var(--safe-bottom));
       left: 0;
       right: 0;
       width: 100%;
@@ -8172,7 +8454,7 @@
     display: flex;
     gap: 8px;
     margin: 0;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 16px calc(10px + var(--safe-bottom));
     border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
     background: color-mix(in srgb, var(--surface-2) 70%, var(--surface));
   }

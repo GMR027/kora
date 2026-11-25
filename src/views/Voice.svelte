@@ -71,10 +71,12 @@
   const FEATURED_PROFILE_KEY = "kora.voice.featuredProfile";
   const LATENCY_HISTORY_KEY = "kora.voice.latencyHistory";
   const INPUT_DEVICE_KEY = "kora.voice.inputDevice";
+  const SHOW_ALL_KEY = "kora.voice.showAllSystem";
   const LATENCY_HISTORY_LIMIT = 10;
   const previewRates = [1, 1.2, 1.5];
 
   let tab = $state<VoiceTab>("system");
+  let showAllSystem = $state(false);
   let voices = $state<VoiceDescriptor[]>([]);
   let models = $state<VoiceModelInfo[]>([]);
   let profiles = $state<VoiceProfile[]>([]);
@@ -181,6 +183,10 @@
   let voiceLanguages = $derived(
     [...new Set(systemVoices.map((voice) => voice.language))].sort(),
   );
+  let hasSystemVariants = $derived(
+    voices.some((voice) => voice.engine === "android"),
+  );
+  let hasEnhanced = $derived(voices.some((voice) => voice.enhanced));
   let installedModels = $derived(
     models.filter((model) => model.installed).length,
   );
@@ -319,6 +325,7 @@
     featuredVoiceId = localStorage.getItem(FEATURED_VOICE_KEY) ?? "";
     featuredProfileId = localStorage.getItem(FEATURED_PROFILE_KEY) ?? "";
     selectedDevice = localStorage.getItem(INPUT_DEVICE_KEY) ?? "";
+    showAllSystem = localStorage.getItem(SHOW_ALL_KEY) === "1";
     void loadInputDevices();
     try {
       const stored = JSON.parse(
@@ -728,7 +735,7 @@
         consentResult,
         capabilitiesResult,
       ] = await Promise.allSettled([
-        ttsVoices(),
+        ttsVoices(showAllSystem),
         voiceModels(),
         listVoiceProfiles(),
         voiceConsentText(),
@@ -771,10 +778,16 @@
 
   async function refreshVoices() {
     try {
-      voices = await ttsVoices();
+      voices = await ttsVoices(showAllSystem);
     } catch (cause) {
       notifyError(cause);
     }
+  }
+
+  async function toggleShowAll() {
+    showAllSystem = !showAllSystem;
+    localStorage.setItem(SHOW_ALL_KEY, showAllSystem ? "1" : "0");
+    await refreshVoices();
   }
 
   async function refreshModels() {
@@ -1554,6 +1567,12 @@
           {#if voice.gender}
             <span class="pill">{genderLabel(voice.gender)}</span>
           {/if}
+          {#if voice.enhanced}
+            <span class="pill enhanced-pill">{$t("voice.enhanced")}</span>
+          {/if}
+          {#if voice.requiresNetwork}
+            <span class="pill">{$t("voice.network")}</span>
+          {/if}
           {#if explicitFeatured}
             <span class="pill featured-pill">{$t("voice.featured")}</span>
           {/if}
@@ -1569,7 +1588,9 @@
             <Icon name="check" size={13} />
             {voice.installed ? $t("voice.installed") : $t("voice.notInstalled")}
           </span>
-          <span>{formatBytes(voice.sizeBytes)}</span>
+          {#if voice.sizeBytes > 0}
+            <span>{formatBytes(voice.sizeBytes)}</span>
+          {/if}
           <span>{voice.engine}</span>
         </div>
         {#if voiceProgress[voice.id] !== undefined}
@@ -1980,6 +2001,17 @@
             {$t("voice.installed")}
           </button>
         </div>
+        {#if hasSystemVariants}
+          <Button
+            variant="ghost"
+            size="small"
+            onclick={toggleShowAll}
+            title={$t("voice.showAllHint")}
+          >
+            <Icon name={showAllSystem ? "check" : "sliders"} size={15} />
+            {$t("voice.showAllVariants")}
+          </Button>
+        {/if}
         <div
           class="rate-group"
           role="group"
@@ -1999,6 +2031,16 @@
         </div>
       </div>
     </div>
+
+    {#if !hasEnhanced}
+      <div class="enhanced-banner">
+        <Icon name="sparkles" size={18} />
+        <div>
+          <strong>{$t("voice.enhancedTitle")}</strong>
+          <span>{$t("voice.enhancedHint")}</span>
+        </div>
+      </div>
+    {/if}
 
     <div class="section-head">
       <div class="section-title">
@@ -3684,6 +3726,38 @@
     border-color: transparent;
     background: var(--accent);
     color: var(--accent-contrast);
+  }
+
+  .pill.enhanced-pill {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+  }
+
+  .enhanced-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
+    color: var(--text);
+  }
+
+  .enhanced-banner div {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .enhanced-banner strong {
+    font-size: 0.82rem;
+  }
+
+  .enhanced-banner span {
+    color: var(--muted);
+    font-size: 0.74rem;
+    line-height: 1.45;
   }
 
   .voice-desc {

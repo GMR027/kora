@@ -17,6 +17,8 @@ data class TtsVoiceInfo(
     val displayCountry: String,
     val requiresNetwork: Boolean,
     val languageAvailable: Boolean,
+    val quality: Int = 0,
+    val latency: Int = 0,
     val features: Set<String> = emptySet(),
 ) {
     fun isUsable(): Boolean = when {
@@ -67,6 +69,8 @@ object TtsVoiceCatalog {
             .orEmpty(),
         requiresNetwork = voice.isNetworkConnectionRequired,
         languageAvailable = engine.isLanguageAvailable(voice.locale) >= TextToSpeech.LANG_AVAILABLE,
+        quality = voice.quality,
+        latency = voice.latency,
         features = voice.features.orEmpty(),
     )
 

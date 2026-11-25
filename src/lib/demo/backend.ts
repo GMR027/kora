@@ -17,6 +17,7 @@ import type {
   AppearanceState,
   AudioTreatment,
   AudioWaveform,
+  AudiobookAlbumInfo,
   AudiobookCapabilities,
   AudiobookChapterInfo,
   AudiobookGenerationView,
@@ -206,6 +207,11 @@ const demoVoices: VoiceDescriptor[] = [
     installed: true,
     sizeBytes: 63_200_000,
     cloned: false,
+    enhanced: false,
+    quality: null,
+    latency: null,
+    requiresNetwork: false,
+    locale: null,
   },
   {
     id: "es_ES-sharvard-medium",
@@ -216,6 +222,11 @@ const demoVoices: VoiceDescriptor[] = [
     installed: true,
     sizeBytes: 63_100_000,
     cloned: false,
+    enhanced: false,
+    quality: null,
+    latency: null,
+    requiresNetwork: false,
+    locale: null,
   },
   {
     id: "en_US-lessac-medium",
@@ -226,6 +237,11 @@ const demoVoices: VoiceDescriptor[] = [
     installed: false,
     sizeBytes: 63_000_000,
     cloned: false,
+    enhanced: false,
+    quality: null,
+    latency: null,
+    requiresNetwork: false,
+    locale: null,
   },
 ];
 
@@ -373,6 +389,11 @@ function voiceProfileDescriptor(profile: VoiceProfile): VoiceDescriptor {
     installed: true,
     sizeBytes: 0,
     cloned: true,
+    enhanced: false,
+    quality: null,
+    latency: null,
+    requiresNetwork: false,
+    locale: null,
   };
 }
 
@@ -612,6 +633,7 @@ let demoSessions = new Map<string, DemoSession>();
 let achievementProgressStore = new Map<string, number>();
 let achievementUnlockedStore = new Map<string, string>();
 let audiobooks: AudiobookInfo[] = [];
+let demoAlbums: AudiobookAlbumInfo[] = [];
 let generation: AudiobookGenerationView = { active: null, queue: [] };
 let generationPercent = 0;
 let generationTimer: ReturnType<typeof setTimeout> | undefined;
@@ -3549,6 +3571,84 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
         .filter((seed) => seed.audiobook)
         .map((seed) => seed.id);
 
+    case "export_book":
+      return String(args.destination ?? "/demo/export/libro.epub");
+
+    case "audiobook_album_list":
+      return demoAlbums.map(clone);
+
+    case "audiobook_album_create": {
+      const title = String(args.title ?? "").trim();
+      if (!title) throw { code: "invalid_input", message: "El álbum necesita un nombre" };
+      const album: AudiobookAlbumInfo = {
+        id: `album-${Date.now()}`,
+        title,
+        description: cleanOptional(args.description),
+        sortOrder: demoAlbums.length,
+        createdAt: isoNow(),
+        updatedAt: isoNow(),
+        audiobookIds: [],
+      };
+      demoAlbums.push(album);
+      return clone(album);
+    }
+
+    case "audiobook_album_update": {
+      const album = demoAlbums.find((item) => item.id === args.albumId);
+      if (!album) throw { code: "not_found", message: "Álbum no encontrado" };
+      const title = String(args.title ?? "").trim();
+      if (!title) throw { code: "invalid_input", message: "El álbum necesita un nombre" };
+      album.title = title;
+      album.description = cleanOptional(args.description);
+      album.updatedAt = isoNow();
+      return clone(album);
+    }
+
+    case "audiobook_album_delete":
+      demoAlbums = demoAlbums.filter((item) => item.id !== args.albumId);
+      return null;
+
+    case "audiobook_album_add": {
+      const album = demoAlbums.find((item) => item.id === args.albumId);
+      if (!album) throw { code: "not_found", message: "Álbum no encontrado" };
+      const ids = Array.isArray(args.audiobookIds)
+        ? (args.audiobookIds as string[])
+        : [];
+      for (const id of ids) {
+        if (
+          audiobooks.some((item) => item.id === id) &&
+          !album.audiobookIds.includes(id)
+        ) {
+          album.audiobookIds.push(id);
+        }
+      }
+      album.updatedAt = isoNow();
+      return clone(album);
+    }
+
+    case "audiobook_album_remove": {
+      const album = demoAlbums.find((item) => item.id === args.albumId);
+      if (!album) throw { code: "not_found", message: "Álbum no encontrado" };
+      album.audiobookIds = album.audiobookIds.filter(
+        (id) => id !== args.audiobookId,
+      );
+      album.updatedAt = isoNow();
+      return clone(album);
+    }
+
+    case "audiobook_album_reorder": {
+      const album = demoAlbums.find((item) => item.id === args.albumId);
+      if (!album) throw { code: "not_found", message: "Álbum no encontrado" };
+      const ids = Array.isArray(args.audiobookIds)
+        ? (args.audiobookIds as string[])
+        : [];
+      const valid = ids.filter((id) => album.audiobookIds.includes(id));
+      const rest = album.audiobookIds.filter((id) => !valid.includes(id));
+      album.audiobookIds = [...valid, ...rest];
+      album.updatedAt = isoNow();
+      return clone(album);
+    }
+
     case "category_list":
       return state.categories.map(clone);
 
@@ -3881,6 +3981,8 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
     case "audiobook_capabilities":
       return {
         platformSupported: true,
+        generationSupported: true,
+        nativeMux: false,
         audioImportSupported: true,
         nativeAudioImport: false,
         transcriptionSupported: true,
@@ -4033,6 +4135,10 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
     case "delete_audiobook": {
       const id = String(args.audiobookId ?? "");
       audiobooks = audiobooks.filter((item) => item.id !== id);
+      demoAlbums = demoAlbums.map((album) => ({
+        ...album,
+        audiobookIds: album.audiobookIds.filter((entry) => entry !== id),
+      }));
       if (audiobookPlayback?.audiobookId === id) audiobookPlayback = null;
       return null;
     }
@@ -5903,6 +6009,26 @@ function installDemoBackend() {
 
   buildInitialState();
   audiobooks = initialAudiobooks();
+  demoAlbums = [
+    {
+      id: "album-mar",
+      title: "Trilogía del mar",
+      description: "Las historias de la costa, en orden de escucha.",
+      sortOrder: 0,
+      createdAt: daysAgo(9),
+      updatedAt: daysAgo(2),
+      audiobookIds: ["audiobook-mareas", "audiobook-cartas"],
+    },
+    {
+      id: "album-taller",
+      title: "Taller de escritura",
+      description: "Lecturas breves para acompañar las sesiones de trabajo.",
+      sortOrder: 1,
+      createdAt: daysAgo(5),
+      updatedAt: daysAgo(1),
+      audiobookIds: ["audiobook-poemas", "audiobook-jardin"],
+    },
+  ];
   demoSessions = new Map();
   resetVoiceStudio();
   resetSyncAndSettingsDemo();

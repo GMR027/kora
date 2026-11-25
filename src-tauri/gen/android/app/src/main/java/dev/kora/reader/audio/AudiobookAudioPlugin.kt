@@ -75,6 +75,26 @@ class TranscriptionUpdateArgs {
     var message: String = ""
 }
 
+@InvokeArg
+class GenerationStartArgs {
+    var title: String = ""
+}
+
+@InvokeArg
+class GenerationUpdateArgs {
+    var percent: Float = 0f
+    var message: String = ""
+}
+
+@InvokeArg
+class MuxAudiobookArgs {
+    var chaptersJson: String = ""
+    var outputPath: String = ""
+    var title: String = ""
+    var artist: String = ""
+    var metadataJson: String? = null
+}
+
 @TauriPlugin
 class AudiobookAudioPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
@@ -150,6 +170,65 @@ class AudiobookAudioPlugin(private val activity: Activity) : Plugin(activity) {
         }.onFailure { error ->
             invoke.reject(error.message ?: "stopTranscription failed")
         }
+    }
+
+    @Command
+    fun startGeneration(invoke: Invoke) {
+        val args = invoke.parseArgs(GenerationStartArgs::class.java)
+        runCatching {
+            AudiobookGenerationService.start(activity.applicationContext, args.title)
+        }.onSuccess {
+            invoke.resolve(JSObject())
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "startGeneration failed")
+        }
+    }
+
+    @Command
+    fun updateGeneration(invoke: Invoke) {
+        val args = invoke.parseArgs(GenerationUpdateArgs::class.java)
+        runCatching {
+            AudiobookGenerationService.update(
+                activity.applicationContext,
+                args.percent,
+                args.message,
+            )
+        }.onSuccess {
+            invoke.resolve(JSObject())
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "updateGeneration failed")
+        }
+    }
+
+    @Command
+    fun stopGeneration(invoke: Invoke) {
+        runCatching {
+            AudiobookGenerationService.stop(activity.applicationContext)
+        }.onSuccess {
+            invoke.resolve(JSObject())
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "stopGeneration failed")
+        }
+    }
+
+    @Command
+    fun muxAudiobook(invoke: Invoke) {
+        val args = invoke.parseArgs(MuxAudiobookArgs::class.java)
+        Thread {
+            runCatching {
+                AudiobookMuxer.mux(
+                    chaptersJson = args.chaptersJson,
+                    outputPath = args.outputPath,
+                    title = args.title,
+                    artist = args.artist,
+                    metadataJson = args.metadataJson,
+                )
+            }.onSuccess {
+                invoke.resolve(JSObject())
+            }.onFailure { error ->
+                invoke.reject(error.message ?: "muxAudiobook failed")
+            }
+        }.start()
     }
 
     @Command

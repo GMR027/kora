@@ -16,13 +16,13 @@ pub use classification::{
     SuggestionStatus,
 };
 pub use content::{
-    Achievement, Annotation, AnnotationKind, Audiobook, AudiobookOrigin, AudiobookProgress,
-    AudiobookQueueItem, AudiobookQueueStatus, AudiobookStatus, Book, BookFormat, BookListRow,
-    BookOrigin, BookSummary, Category, DiaryEntry, DiaryKind, Extract, NewAchievement,
-    NewAnnotation, NewAudiobook, NewAudiobookQueueItem, NewBook, NewCategory, NewDiaryEntry,
-    NewDiarySession, NewExtract, NewNote, NewReaction, NewReaderSettings, NewReadingProgress,
-    NewVoice, NewVoiceNote, Note, Reaction, ReactionKind, ReaderSettings, ReadingProgress, Voice,
-    VoiceKind, VoiceNote,
+    Achievement, Annotation, AnnotationKind, Audiobook, AudiobookAlbum, AudiobookOrigin,
+    AudiobookProgress, AudiobookQueueItem, AudiobookQueueStatus, AudiobookStatus, Book, BookFormat,
+    BookListRow, BookOrigin, BookSummary, Category, DiaryEntry, DiaryKind, Extract, NewAchievement,
+    NewAnnotation, NewAudiobook, NewAudiobookAlbum, NewAudiobookQueueItem, NewBook, NewCategory,
+    NewDiaryEntry, NewDiarySession, NewExtract, NewNote, NewReaction, NewReaderSettings,
+    NewReadingProgress, NewVoice, NewVoiceNote, Note, Reaction, ReactionKind, ReaderSettings,
+    ReadingProgress, Voice, VoiceKind, VoiceNote,
 };
 pub use features::{NewSemanticChunk, SemanticBookIndex, SemanticChunk, SemanticIndexStatus};
 pub use identity::{

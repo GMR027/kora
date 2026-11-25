@@ -86,6 +86,7 @@ import type {
   LibraryAnnotationEntry,
   AudioTreatment,
   AudioWaveform,
+  AudiobookAlbumInfo,
   AudiobookCapabilities,
   AudiobookCastInput,
   AudiobookGenerationView,
@@ -102,6 +103,7 @@ import type {
   ReactionBucket,
   ReactionKind,
   VoiceNote,
+  SupertonicStatus,
   VoiceDescriptor,
   VoiceMarkerStatus,
   VoiceCapabilities,
@@ -231,6 +233,9 @@ export const convertPdfToEpub = (
 
 export const pdfConversionStatus = (bookId: string) =>
   invoke<PdfConversionState | null>("pdf_conversion_status", { bookId });
+
+export const exportBook = (bookId: string, destination: string) =>
+  invoke<string>("export_book", { bookId, destination });
 
 export const libraryImport = (source: string) =>
   invoke<BookSummary>("library_import", { source });
@@ -395,7 +400,23 @@ export const getAutoIndex = (bookId: string) =>
 
 export const ttsEngines = () => invoke<EngineInfo[]>("tts_engines");
 
-export const ttsVoices = () => invoke<VoiceDescriptor[]>("tts_voices");
+export const ttsVoices = (showAll = false) =>
+  invoke<VoiceDescriptor[]>("tts_voices", { showAll });
+
+export const supertonicStatus = () =>
+  invoke<SupertonicStatus>("supertonic_status");
+
+export const supertonicAcceptLicense = () =>
+  invoke<void>("supertonic_accept_license");
+
+export const supertonicSetEnabled = (enabled: boolean) =>
+  invoke<void>("supertonic_set_enabled", { enabled });
+
+export const supertonicDownload = () => invoke<void>("supertonic_download");
+
+export const supertonicDelete = () => invoke<void>("supertonic_delete");
+
+export const supertonicUnload = () => invoke<void>("supertonic_unload");
 
 export const ttsSynthesize = (request: SynthesisRequest) =>
   invoke<SynthesisOutput>("tts_synthesize", { request });
@@ -794,6 +815,59 @@ export const voiceClonePreview = (voiceId: string, text: string) =>
 
 export const listAudiobooks = () =>
   invoke<AudiobookInfo[]>("list_audiobooks");
+
+export const listAudiobookAlbums = () =>
+  invoke<AudiobookAlbumInfo[]>("audiobook_album_list");
+
+export const createAudiobookAlbum = (
+  title: string,
+  description: string | null = null,
+) =>
+  invoke<AudiobookAlbumInfo>("audiobook_album_create", {
+    title,
+    description,
+  });
+
+export const updateAudiobookAlbum = (
+  albumId: string,
+  title: string,
+  description: string | null = null,
+) =>
+  invoke<AudiobookAlbumInfo>("audiobook_album_update", {
+    albumId,
+    title,
+    description,
+  });
+
+export const deleteAudiobookAlbum = (albumId: string) =>
+  invoke<void>("audiobook_album_delete", { albumId });
+
+export const addAudiobooksToAlbum = (
+  albumId: string,
+  audiobookIds: string[],
+) =>
+  invoke<AudiobookAlbumInfo>("audiobook_album_add", {
+    albumId,
+    audiobookIds,
+  });
+
+export const removeAudiobookFromAlbum = (
+  albumId: string,
+  audiobookId: string,
+) =>
+  invoke<AudiobookAlbumInfo>("audiobook_album_remove", {
+    albumId,
+    audiobookId,
+  });
+
+export const reorderAudiobookAlbum = (
+  albumId: string,
+  audiobookIds: string[],
+) =>
+  invoke<AudiobookAlbumInfo>("audiobook_album_reorder", {
+    albumId,
+    audiobookIds,
+  });
 
 export const audiobookCapabilities = () =>
   invoke<AudiobookCapabilities>("audiobook_capabilities");

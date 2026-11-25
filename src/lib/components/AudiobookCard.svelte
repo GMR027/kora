@@ -18,6 +18,8 @@
     onShare,
     onClassify,
     onRetry,
+    onAlbum,
+    onConvert,
     categoriesLabel = null,
   }: {
     item: AudiobookInfo;
@@ -33,6 +35,8 @@
     onShare: () => void;
     onClassify: () => void;
     onRetry?: () => void;
+    onAlbum?: () => void;
+    onConvert?: () => void;
     categoriesLabel?: string | null;
   } = $props();
 
@@ -260,15 +264,29 @@
           <button
             class="icon-action"
             type="button"
-            onclick={onRead}
-            disabled={item.audioOnly}
+            onclick={item.audioOnly ? onConvert : onRead}
+            disabled={busy || (item.audioOnly && !onConvert)}
             title={item.audioOnly
-              ? $t("audiobooks.audioOnlyNoText")
+              ? $t("audiobooks.convertToEpub")
               : $t("audiobooks.openText")}
-            aria-label={$t("audiobooks.openText")}
+            aria-label={item.audioOnly
+              ? $t("audiobooks.convertToEpub")
+              : $t("audiobooks.openText")}
           >
             <Icon name="book" size={16} />
           </button>
+          {#if onAlbum}
+            <button
+              class="icon-action"
+              type="button"
+              onclick={onAlbum}
+              disabled={item.status !== "done" || busy}
+              title={$t("audiobooks.addToAlbum")}
+              aria-label={$t("audiobooks.addToAlbum")}
+            >
+              <Icon name="grid" size={16} />
+            </button>
+          {/if}
           <button
             class="icon-action"
             type="button"

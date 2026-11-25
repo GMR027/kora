@@ -127,6 +127,11 @@ impl TtsEngine for PiperEngine {
                 installed: installed(&self.root, voice.id),
                 size_bytes: voice.size_bytes,
                 cloned: false,
+                enhanced: false,
+                quality: None,
+                latency: None,
+                requires_network: false,
+                locale: None,
             })
             .collect())
     }

@@ -70,6 +70,13 @@
             android:stopWithTask="false" />
 
         <service
+            android:name=".audio.AudiobookGenerationService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|mediaProcessing"
+            android:stopWithTask="false" />
+
+        <service
             android:name=".tts.TtsPlaybackService"
             android:enabled="true"
             android:exported="false"

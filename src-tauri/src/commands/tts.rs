@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_os = "android"))]
 use tauri::Emitter;
 use tauri::{AppHandle, State};
 
@@ -19,8 +18,8 @@ use crate::storage::{
 };
 use crate::tts::{
     CharacterInfo, EngineInfo, ExpressiveSettings, NARRATOR, SessionPlan, SpeechSequence,
-    SynthesisRequest, TtsMediaMetadata, TtsStatus, VoiceDescriptor, build_from_text,
-    build_from_words, content_hash,
+    SupertonicStatus, SynthesisRequest, TtsMediaMetadata, TtsStatus, VoiceDescriptor,
+    build_from_text, build_from_words, content_hash,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,8 +76,228 @@ pub fn tts_engines(state: State<'_, AppState>) -> Result<Vec<EngineInfo>> {
 }
 
 #[tauri::command]
-pub async fn tts_voices(state: State<'_, AppState>) -> Result<Vec<VoiceDescriptor>> {
-    state.tts.voices().await
+pub async fn tts_voices(
+    state: State<'_, AppState>,
+    show_all: Option<bool>,
+) -> Result<Vec<VoiceDescriptor>> {
+    let voices = state.tts.voices().await?;
+    if show_all.unwrap_or(false) {
+        Ok(sort_voices(voices))
+    } else {
+        Ok(curate_voices(voices))
+    }
+}
+
+/// Ordena las voces mejoradas primero y deja el resto agrupado por motor.
+fn sort_voices(mut voices: Vec<VoiceDescriptor>) -> Vec<VoiceDescriptor> {
+    // `sort_by_key` es estable: conserva el orden del catálogo (español antes
+    // que inglés en Supertonic) y solo agrupa mejoradas, otros motores y nativas.
+    voices.sort_by_key(|voice| (!voice.enhanced, voice.engine == "android"));
+    voices
+}
+
+/// Deja tres voces nativas por idioma (una por acento) y descarta variantes
+/// técnicas, de red y de baja calidad. Piper, Supertonic y los perfiles
+/// clonados se conservan intactos.
+fn curate_voices(voices: Vec<VoiceDescriptor>) -> Vec<VoiceDescriptor> {
+    let mut curated: Vec<VoiceDescriptor> = voices
+        .iter()
+        .filter(|voice| voice.enhanced || voice.engine != "android")
+        .cloned()
+        .collect();
+
+    for language in ["es", "en"] {
+        let all: Vec<&VoiceDescriptor> = voices
+            .iter()
+            .filter(|voice| voice.engine == "android" && voice.language == language)
+            .collect();
+        if all.is_empty() {
+            continue;
+        }
+
+        let best_quality = all
+            .iter()
+            .filter_map(|voice| voice.quality)
+            .max()
+            .unwrap_or(0);
+        let has_local = all.iter().any(|voice| !voice.requires_network);
+        let mut candidates: Vec<&VoiceDescriptor> = all
+            .iter()
+            .copied()
+            .filter(|voice| !voice.requires_network || !has_local)
+            .filter(|voice| best_quality < 300 || voice.quality.unwrap_or(best_quality) >= 300)
+            .collect();
+        if candidates.is_empty() {
+            candidates = all;
+        }
+
+        candidates.sort_by_key(|voice| {
+            (
+                voice.requires_network,
+                std::cmp::Reverse(voice.quality.unwrap_or(300)),
+                voice.latency.unwrap_or(300),
+            )
+        });
+
+        let mut chosen: Vec<VoiceDescriptor> = Vec::new();
+        for preferred in locale_preferences(language) {
+            if chosen.len() >= 3 {
+                break;
+            }
+            let Some(voice) = candidates.iter().find(|voice| {
+                voice
+                    .locale
+                    .as_deref()
+                    .map(|locale| locale.to_lowercase().starts_with(preferred))
+                    .unwrap_or(false)
+            }) else {
+                continue;
+            };
+            if !chosen.iter().any(|item| item.id == voice.id) {
+                chosen.push((*voice).clone());
+            }
+        }
+
+        for voice in candidates {
+            if chosen.len() >= 3 {
+                break;
+            }
+            if chosen.iter().any(|item| item.id == voice.id) {
+                continue;
+            }
+            let Some(locale) = voice.locale.as_deref() else {
+                chosen.push(voice.clone());
+                continue;
+            };
+            let duplicated = chosen.iter().any(|item| {
+                item.locale
+                    .as_deref()
+                    .map(|current| current.eq_ignore_ascii_case(locale))
+                    .unwrap_or(false)
+            });
+            if !duplicated {
+                chosen.push(voice.clone());
+            }
+        }
+
+        for mut voice in chosen {
+            voice.name = friendly_voice_name(&voice.name, voice.requires_network);
+            curated.push(voice);
+        }
+    }
+
+    sort_voices(curated)
+}
+
+fn locale_preferences(language: &str) -> &'static [&'static str] {
+    match language {
+        "es" => &["es-es", "es-us", "es-mx", "es-419", "es-ar", "es-co"],
+        "en" => &["en-us", "en-gb", "en-au", "en-in", "en-ca", "en-ie"],
+        _ => &[],
+    }
+}
+
+fn friendly_voice_name(name: &str, requires_network: bool) -> String {
+    let base = name.split(" · ").next().unwrap_or(name).trim();
+    let mut characters = base.chars();
+    let base = match characters.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
+        None => String::new(),
+    };
+    if requires_network {
+        format!("{base} · Red")
+    } else {
+        base
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SupertonicDownloadProgress {
+    pub downloaded: u64,
+    pub total: u64,
+    pub done: bool,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn supertonic_status(state: State<'_, AppState>) -> SupertonicStatus {
+    state.supertonic.status()
+}
+
+#[tauri::command]
+pub fn supertonic_accept_license(state: State<'_, AppState>) -> Result<()> {
+    state.supertonic.accept_license()
+}
+
+#[tauri::command]
+pub fn supertonic_set_enabled(state: State<'_, AppState>, enabled: bool) -> Result<()> {
+    state.supertonic.set_enabled(enabled)
+}
+
+#[tauri::command]
+pub fn supertonic_delete(state: State<'_, AppState>) -> Result<()> {
+    state.supertonic.delete_pack()
+}
+
+#[tauri::command]
+pub fn supertonic_unload(state: State<'_, AppState>) {
+    state.supertonic.unload();
+}
+
+#[tauri::command]
+pub async fn supertonic_download(state: State<'_, AppState>, app: AppHandle) -> Result<()> {
+    let service = state.supertonic.clone();
+    let app_clone = app.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let result = service.download(&mut |downloaded, total| {
+            if last_emit.elapsed() >= std::time::Duration::from_millis(150) || downloaded >= total {
+                last_emit = std::time::Instant::now();
+                let _ = app_clone.emit(
+                    "supertonic-download-progress",
+                    SupertonicDownloadProgress {
+                        downloaded,
+                        total,
+                        done: false,
+                        error: None,
+                    },
+                );
+            }
+        });
+        (result, service.status())
+    })
+    .await
+    .map_err(|error| KoraError::Internal(format!("tarea de descarga Supertonic: {error}")))?;
+
+    let (result, status) = result;
+    match &result {
+        Ok(()) => {
+            let _ = state.supertonic.set_enabled(true);
+            let _ = app.emit(
+                "supertonic-download-progress",
+                SupertonicDownloadProgress {
+                    downloaded: status.total_bytes,
+                    total: status.total_bytes,
+                    done: true,
+                    error: None,
+                },
+            );
+        }
+        Err(error) => {
+            let _ = app.emit(
+                "supertonic-download-progress",
+                SupertonicDownloadProgress {
+                    downloaded: status.downloaded_bytes,
+                    total: status.total_bytes,
+                    done: true,
+                    error: Some(error.to_string()),
+                },
+            );
+        }
+    }
+    result
 }
 
 #[tauri::command]

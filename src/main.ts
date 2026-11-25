@@ -26,6 +26,16 @@ if (!target) {
   throw new Error("No se encontró el contenedor #app");
 }
 
+// En Android nativo MainActivity aplica los insets del sistema como padding
+// sobre la vista. Marcamos el documento para que el CSS no vuelva a reservar
+// las mismas zonas con env(safe-area-inset-*).
+if (
+  "__TAURI_INTERNALS__" in window &&
+  /Android/i.test(navigator.userAgent)
+) {
+  document.documentElement.dataset.platform = "android";
+}
+
 async function boot() {
   // `pnpm dev` en un navegador normal no tiene el IPC de Tauri. En ese caso
   // se instala un backend de demostración con datos realistas para poder

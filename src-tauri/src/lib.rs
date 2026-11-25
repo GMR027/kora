@@ -97,7 +97,6 @@ pub fn run() {
                 }
             });
 
-            #[cfg(not(target_os = "android"))]
             audiobooks::queue::start_worker(app.handle().clone());
 
             Ok(())
@@ -125,6 +124,14 @@ pub fn run() {
             commands::library::library_list,
             commands::library::library_overview,
             commands::library::library_audiobook_book_ids,
+            commands::library::export_book,
+            commands::albums::audiobook_album_list,
+            commands::albums::audiobook_album_create,
+            commands::albums::audiobook_album_update,
+            commands::albums::audiobook_album_delete,
+            commands::albums::audiobook_album_add,
+            commands::albums::audiobook_album_remove,
+            commands::albums::audiobook_album_reorder,
             commands::library::library_import,
             commands::convert::pdf_conversion_preview,
             commands::convert::convert_pdf_to_epub,
@@ -197,6 +204,12 @@ pub fn run() {
             commands::tts::tts_voices,
             commands::tts::tts_synthesize,
             commands::tts::tts_download_voice,
+            commands::tts::supertonic_status,
+            commands::tts::supertonic_accept_license,
+            commands::tts::supertonic_set_enabled,
+            commands::tts::supertonic_download,
+            commands::tts::supertonic_delete,
+            commands::tts::supertonic_unload,
             commands::tts::start_tts,
             commands::tts::pause_tts,
             commands::tts::resume_tts,

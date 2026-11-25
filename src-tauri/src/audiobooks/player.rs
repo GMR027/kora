@@ -463,6 +463,74 @@ mod android {
         Ok(())
     }
 
+    pub fn start_generation_service(title: &str) -> Result<()> {
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let _: serde_json::Value = handle
+            .run_mobile_plugin("startGeneration", serde_json::json!({ "title": title }))
+            .map_err(|error| anyhow!("servicio de generación: {error}"))?;
+        Ok(())
+    }
+
+    pub fn update_generation_service(percent: f64, message: &str) -> Result<()> {
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let _: serde_json::Value = handle
+            .run_mobile_plugin(
+                "updateGeneration",
+                serde_json::json!({ "percent": percent, "message": message }),
+            )
+            .map_err(|error| anyhow!("servicio de generación: {error}"))?;
+        Ok(())
+    }
+
+    pub fn stop_generation_service() -> Result<()> {
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        let _: serde_json::Value = handle
+            .run_mobile_plugin("stopGeneration", serde_json::json!({}))
+            .map_err(|error| anyhow!("servicio de generación: {error}"))?;
+        Ok(())
+    }
+
+    /// Empaqueta capítulos WAV en un MP4/AAC con MediaCodec y MediaMuxer.
+    pub fn mux_audiobook(
+        chapters_json: &str,
+        output_path: &str,
+        title: &str,
+        artist: &str,
+        metadata_json: &str,
+    ) -> Result<()> {
+        let handle = HANDLE
+            .get()
+            .ok_or_else(|| anyhow!("el plugin de audio de Android no está inicializado"))?;
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct MuxArgs<'a> {
+            chapters_json: &'a str,
+            output_path: &'a str,
+            title: &'a str,
+            artist: &'a str,
+            metadata_json: &'a str,
+        }
+        let _: serde_json::Value = handle
+            .run_mobile_plugin(
+                "muxAudiobook",
+                MuxArgs {
+                    chapters_json,
+                    output_path,
+                    title,
+                    artist,
+                    metadata_json,
+                },
+            )
+            .map_err(|error| anyhow!("muxer AAC de Android: {error}"))?;
+        Ok(())
+    }
+
     fn chapters_json(manifest: &AudiobookManifest) -> Result<String> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
@@ -778,8 +846,9 @@ mod android {
 
 #[cfg(target_os = "android")]
 pub use android::{
-    AudiobookPlayback, decode_audio_range, init_plugin as init_mobile_plugin, set_keep_screen_on,
-    set_sleep_timer, start_transcription_service, stop_transcription_service,
+    AudiobookPlayback, decode_audio_range, init_plugin as init_mobile_plugin, mux_audiobook,
+    set_keep_screen_on, set_sleep_timer, start_generation_service, start_transcription_service,
+    stop_generation_service, stop_transcription_service, update_generation_service,
     update_transcription_service,
 };
 #[cfg(not(target_os = "android"))]

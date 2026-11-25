@@ -1,5 +1,6 @@
 pub mod accounts;
 pub mod ai;
+pub mod albums;
 pub mod annotations;
 pub mod app;
 pub mod appearance;

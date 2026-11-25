@@ -39,6 +39,12 @@
     setSyncCategories,
     storageLayout,
     storageUsage,
+    supertonicAcceptLicense,
+    supertonicDelete,
+    supertonicDownload,
+    supertonicSetEnabled,
+    supertonicStatus,
+    supertonicUnload,
     syncStatus,
   } from "../lib/api";
   import {
@@ -87,6 +93,8 @@
     StorageLayout,
     StorageUsage,
     SyncCollections,
+    SupertonicDownloadProgress,
+    SupertonicStatus,
     SyncDeviceInfo,
     SyncStatus,
     UpdateCheck,
@@ -95,6 +103,7 @@
   type SettingsTab =
   | "appearance"
   | "reading"
+  | "voice"
   | "wellbeing"
   | "ai"
   | "sync"
@@ -120,6 +129,12 @@
   let aiPromise: Promise<void> | null = null;
   let classificationPromise: Promise<void> | null = null;
   let syncPromise: Promise<void> | null = null;
+  let supertonicPromise: Promise<void> | null = null;
+  let supertonic = $state<SupertonicStatus | null>(null);
+  let supertonicProgress = $state<SupertonicDownloadProgress | null>(null);
+  let supertonicBusy = $state(false);
+  let supertonicError = $state("");
+  let supertonicLicense = $state(false);
   let layout = $state<StorageLayout | null>(null);
   let usage = $state<StorageUsage | null>(null);
   let readerDefaults = $state<ReaderSettings | null>(null);
@@ -230,6 +245,30 @@
       })
       .catch(() => undefined);
 
+    let unlistenSupertonic: (() => void) | undefined;
+    listen<SupertonicDownloadProgress>(
+      "supertonic-download-progress",
+      (event) => {
+        supertonicProgress = event.payload;
+        if (event.payload.done) {
+          void supertonicStatus()
+            .then((status) => {
+              supertonic = status;
+            })
+            .catch(() => undefined)
+            .finally(() => {
+              setTimeout(() => {
+                supertonicProgress = null;
+              }, 1500);
+            });
+        }
+      },
+    )
+      .then((stop) => {
+        unlistenSupertonic = stop;
+      })
+      .catch(() => undefined);
+
     let unlistenAi: (() => void) | undefined;
     listen<AiLocalProgress>("ai::model_progress", (event) => {
       aiProgress = event.payload;
@@ -257,6 +296,7 @@
       unlistenClassification?.();
       unlistenSemantic?.();
       unlistenSemanticModel?.();
+      unlistenSupertonic?.();
       unlistenAi?.();
       if (classificationRefresh) clearTimeout(classificationRefresh);
     };
@@ -288,9 +328,14 @@
     return (syncPromise ??= loadSync());
   }
 
+  function ensureSupertonic() {
+    return (supertonicPromise ??= loadSupertonic());
+  }
+
   function selectTab(next: SettingsTab) {
     tab = next;
     if (next === "reading") void ensureReader();
+    if (next === "voice") void ensureSupertonic();
     if (next === "ai") {
       void ensureBase();
       void ensureAi();
@@ -316,6 +361,88 @@
     } catch (cause) {
       notifyError(cause);
     }
+  }
+
+  async function loadSupertonic() {
+    try {
+      supertonic = await supertonicStatus();
+      supertonicLicense =
+        supertonic.licenseAccepted || supertonic.installed;
+    } catch (cause) {
+      notifyError(cause);
+    }
+  }
+
+  async function downloadSupertonic() {
+    if (!supertonic) return;
+    supertonicBusy = true;
+    supertonicError = "";
+    try {
+      if (!supertonic.licenseAccepted) {
+        await supertonicAcceptLicense();
+        supertonic = await supertonicStatus();
+      }
+      await supertonicDownload();
+      supertonic = await supertonicStatus();
+      supertonicLicense = true;
+      notifySuccess($t("settings.supertonicReady"));
+    } catch (cause) {
+      supertonicError = errorMessage(cause);
+      notifyError(cause);
+    } finally {
+      supertonicBusy = false;
+    }
+  }
+
+  async function toggleSupertonic() {
+    if (!supertonic || supertonicBusy) return;
+    supertonicBusy = true;
+    try {
+      await supertonicSetEnabled(!supertonic.enabled);
+      supertonic = await supertonicStatus();
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      supertonicBusy = false;
+    }
+  }
+
+  async function removeSupertonic() {
+    if (!window.confirm($t("settings.supertonicDeleteConfirm"))) return;
+    supertonicBusy = true;
+    try {
+      await supertonicDelete();
+      supertonic = await supertonicStatus();
+      supertonicLicense = false;
+      notifySuccess($t("settings.supertonicDeleted"));
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      supertonicBusy = false;
+    }
+  }
+
+  async function releaseSupertonic() {
+    try {
+      await supertonicUnload();
+      notifySuccess($t("settings.supertonicReleased"));
+    } catch (cause) {
+      notifyError(cause);
+    }
+  }
+
+  function supertonicPercent(): number {
+    if (supertonicProgress && supertonicProgress.total > 0) {
+      return Math.round(
+        (supertonicProgress.downloaded / supertonicProgress.total) * 100,
+      );
+    }
+    if (supertonic && supertonic.totalBytes > 0) {
+      return Math.round(
+        (supertonic.downloadedBytes / supertonic.totalBytes) * 100,
+      );
+    }
+    return 0;
   }
 
   async function loadAi() {
@@ -1023,6 +1150,7 @@
     {#each [
       ["appearance", "settings.appearance"],
       ["reading", "settings.reading"],
+      ["voice", "voice.title"],
       ["wellbeing", "settings.wellbeing"],
       ["ai", "settings.ai"],
       ["sync", "settings.sync"],
@@ -1997,6 +2125,114 @@
         OCR: {features?.ocr ? $t("common.enabled") : $t("common.disabled")} · Embeddings:
         {features?.embeddings ? $t("common.enabled") : $t("common.disabled")}
       </p>
+    </section>
+  {:else if tab === "voice"}
+    <section class="panel supertonic-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">{$t("settings.supertonicEyebrow")}</p>
+          <h2>{$t("settings.supertonicTitle")}</h2>
+        </div>
+        <span class="badge">
+          {supertonic?.installed
+            ? supertonic.enabled
+              ? $t("settings.supertonicActive")
+              : $t("settings.supertonicPaused")
+            : $t("settings.supertonicNotInstalled")}
+        </span>
+      </div>
+      <p class="hint">{$t("settings.supertonicBody")}</p>
+
+      <ul class="supertonic-facts">
+        <li>
+          <strong>6</strong>
+          {$t("settings.supertonicVoices")}
+        </li>
+        <li>
+          <strong>{formatBytes(supertonic?.totalBytes ?? 0)}</strong>
+          {$t("settings.supertonicSize")}
+        </li>
+        <li>
+          <strong>{supertonic?.license ?? "OpenRAIL-M"}</strong>
+          {$t("settings.supertonicLicenseName")}
+        </li>
+      </ul>
+
+      {#if supertonic?.installed}
+        <label class="supertonic-toggle">
+          <input
+            type="checkbox"
+            checked={supertonic.enabled}
+            disabled={supertonicBusy}
+            onchange={toggleSupertonic}
+          />
+          <span>
+            <strong>{$t("settings.supertonicEnable")}</strong>
+            <small>{$t("settings.supertonicEnableHint")}</small>
+          </span>
+        </label>
+        <div class="actions">
+          <Button variant="ghost" onclick={releaseSupertonic}>
+            <Icon name="sync" size={16} />
+            {$t("settings.supertonicUnload")}
+          </Button>
+          <Button
+            variant="ghost"
+            loading={supertonicBusy}
+            onclick={removeSupertonic}
+          >
+            <Icon name="trash" size={16} />
+            {$t("settings.supertonicDelete")}
+          </Button>
+        </div>
+      {:else}
+        <label class="supertonic-toggle">
+          <input type="checkbox" bind:checked={supertonicLicense} />
+          <span>
+            <strong>{$t("settings.supertonicLicenseAccept")}</strong>
+            <small>{$t("settings.supertonicLicenseBody")}</small>
+          </span>
+        </label>
+        <p class="hint">
+          <button
+            class="link-button"
+            type="button"
+            onclick={() =>
+              openExternalUrl(
+                "https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE",
+              )}
+          >
+            {$t("settings.supertonicLicenseLink")}
+          </button>
+        </p>
+        <div class="actions">
+          <Button
+            variant="primary"
+            loading={supertonicBusy}
+            disabled={!supertonicLicense}
+            onclick={downloadSupertonic}
+          >
+            <Icon name="download" size={16} />
+            {$t("settings.supertonicDownload")}
+          </Button>
+        </div>
+      {/if}
+
+      {#if supertonicProgress && !supertonicProgress.done}
+        <div class="progress-row">
+          <span class="progress-track">
+            <span style:width={`${supertonicPercent()}%`}></span>
+          </span>
+          <span class="hint">
+            {formatBytes(supertonicProgress.downloaded)} /
+            {formatBytes(supertonicProgress.total)} · {supertonicPercent()}%
+          </span>
+        </div>
+      {/if}
+      {#if supertonicError}
+        <p class="error" role="alert">{supertonicError}</p>
+      {/if}
+      <p class="hint">{$t("settings.supertonicMemory")}</p>
     </section>
   {:else}
     <section class="panel update-panel">
@@ -3394,5 +3630,67 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+  }
+
+  .supertonic-panel {
+    display: grid;
+    gap: 0.9rem;
+  }
+
+  .supertonic-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.6rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .supertonic-facts li {
+    display: grid;
+    gap: 0.15rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.7rem;
+  }
+
+  .supertonic-facts strong {
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 650;
+  }
+
+  .supertonic-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-2);
+    cursor: pointer;
+  }
+
+  .supertonic-toggle input {
+    margin-top: 0.15rem;
+    accent-color: var(--accent);
+  }
+
+  .supertonic-toggle span {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .supertonic-toggle strong {
+    font-size: 0.8rem;
+  }
+
+  .supertonic-toggle small {
+    color: var(--muted);
+    font-size: 0.7rem;
+    line-height: 1.45;
   }
 </style>

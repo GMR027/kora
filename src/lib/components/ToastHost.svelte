@@ -31,8 +31,8 @@
 <style>
   .toasts {
     position: fixed;
-    right: max(1rem, env(safe-area-inset-right));
-    bottom: calc(5.5rem + env(safe-area-inset-bottom));
+    right: max(1rem, var(--safe-right));
+    bottom: calc(5.5rem + var(--safe-bottom));
     z-index: 80;
     display: flex;
     flex-direction: column;

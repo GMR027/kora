@@ -40,11 +40,12 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
-    // Android 15+ dibuja la app de borde a borde. El WebView no recibe los
-    // insets del sistema en env(safe-area-inset-*), así que reservamos aquí
-    // el espacio de la barra de estado, la barra de navegación y los recortes
-    // de pantalla. Sin esto, el encabezado queda debajo del reloj y los
-    // botones de la parte superior e inferior reciben toques del sistema.
+    // Android 15+ dibuja la app de borde a borde. Reservamos aquí el espacio
+    // de la barra de estado, la barra de navegación y los recortes de pantalla.
+    // El frontend anula --safe-* en Android para que el WebView no vuelva a
+    // sumar env(safe-area-inset-*) y deje una banda vacía bajo la barra de
+    // estado. Sin este padding, el encabezado quedaría debajo del reloj y los
+    // botones de la parte superior e inferior recibirían toques del sistema.
     val content = findViewById<ViewGroup>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val bars = insets.getInsets(

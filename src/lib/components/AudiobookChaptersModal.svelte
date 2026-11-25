@@ -181,7 +181,7 @@
                   disabled={busy}
                 >
                   <Icon name="book" size={14} />
-                  {$t("audiobooks.transcribeLater")}
+                  {$t("audiobooks.convertToEpub")}
                 </Button>
               </div>
               <small>{$t("audiobooks.transcribeLaterHelp")}</small>
@@ -649,7 +649,7 @@
     }
 
     .modal-foot {
-      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      padding: 12px 16px calc(12px + var(--safe-bottom));
     }
   }
 

@@ -48,6 +48,12 @@ class TtsSetupControlRelayArgs {
     lateinit var channel: Channel
 }
 
+@InvokeArg
+class TtsPlaySpeechFileArgs {
+    var path: String = ""
+    var volume: Float = 1f
+}
+
 @TauriPlugin
 class KoraTtsPlugin(private val activity: Activity) : Plugin(activity) {
     private val runtime: TtsPlaybackRuntime
@@ -68,6 +74,10 @@ class KoraTtsPlugin(private val activity: Activity) : Plugin(activity) {
                         .put("id", voice.id)
                         .put("name", voice.displayName())
                         .put("language", voice.languageTag)
+                        .put("locale", voice.languageTag)
+                        .put("quality", voice.quality)
+                        .put("latency", voice.latency)
+                        .put("requiresNetwork", voice.requiresNetwork)
                 )
             }
             invoke.resolve(JSObject().put("voices", array))
@@ -195,6 +205,42 @@ class KoraTtsPlugin(private val activity: Activity) : Plugin(activity) {
         // No pasar por `runtime` aquí: eso inicializaría TextToSpeech y el
         // MediaSession al arrancar la app, antes de que el usuario pida leer.
         TtsPlaybackRuntime.setControlChannel(args.channel)
+        invoke.resolve()
+    }
+
+    @Command
+    fun playSpeechFile(invoke: Invoke) {
+        val args = invoke.parseArgs(TtsPlaySpeechFileArgs::class.java)
+        runCatching {
+            SpeechFilePlayer.play(activity.applicationContext, args.path, args.volume)
+        }.onSuccess {
+            invoke.resolve()
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo reproducir el audio")
+        }
+    }
+
+    @Command
+    fun speechFileStatus(invoke: Invoke) {
+        val (state, error) = SpeechFilePlayer.status()
+        invoke.resolve(JSObject().put("state", state).put("error", error))
+    }
+
+    @Command
+    fun pauseSpeechFile(invoke: Invoke) {
+        SpeechFilePlayer.pause()
+        invoke.resolve()
+    }
+
+    @Command
+    fun resumeSpeechFile(invoke: Invoke) {
+        SpeechFilePlayer.resume()
+        invoke.resolve()
+    }
+
+    @Command
+    fun stopSpeechFile(invoke: Invoke) {
+        SpeechFilePlayer.stop()
         invoke.resolve()
     }
 }

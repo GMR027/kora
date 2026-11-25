@@ -408,7 +408,7 @@
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 7px;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 16px calc(10px + var(--safe-bottom));
     border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
     background: color-mix(in srgb, var(--surface-2) 70%, var(--surface));
   }
@@ -472,7 +472,7 @@
 
     .selection-foot {
       justify-content: stretch;
-      padding: 9px 14px calc(9px + env(safe-area-inset-bottom));
+      padding: 9px 14px calc(9px + var(--safe-bottom));
     }
 
     .selection-foot button {

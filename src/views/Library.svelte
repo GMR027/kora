@@ -20,6 +20,7 @@
     categorySuggestionDismiss,
     categorySuggestionListPending,
     categoryUpdate,
+    exportBook,
     exportNotes,
     libraryAssignCategory,
     libraryAudiobookBookIds,
@@ -69,10 +70,12 @@
     onRead,
     onListen,
     onNavigate,
+    onCreateAudiobook,
   }: {
     onRead?: (bookId: string, locator?: Locator) => void;
     onListen?: (bookId: string, section?: number) => void;
     onNavigate?: (tab: AppTab) => void;
+    onCreateAudiobook?: (bookId: string) => void;
   } = $props();
 
   let books = $state<BookSummary[]>([]);
@@ -545,6 +548,21 @@
           path: result.path,
         }),
       );
+    } catch (cause) {
+      notifyError(cause);
+    }
+  }
+
+  async function exportEpub(book: BookSummary) {
+    if (book.format !== "epub") return;
+    try {
+      const destination = await save({
+        defaultPath: `${book.title.replace(/[^\p{L}\p{N}]+/gu, "-").slice(0, 60) || "libro"}.epub`,
+        filters: [{ name: "EPUB", extensions: ["epub"] }],
+      });
+      if (typeof destination !== "string") return;
+      const path = await exportBook(book.id, destination);
+      notifySuccess(translate("library.exportEpubDone", { path }));
     } catch (cause) {
       notifyError(cause);
     }
@@ -1275,7 +1293,12 @@
             <Icon name="book" size={17} />
             {$t("library.continueAction")}
           </Button>
-          <Button variant="ghost" onclick={() => (selectedBookId = continueBook.id)}>
+          <Button
+            variant="ghost"
+            ariaLabel={$t("library.details")}
+            title={$t("library.details")}
+            onclick={() => (selectedBookId = continueBook.id)}
+          >
             <Icon name="clock" size={17} />
             {$t("library.details")}
           </Button>
@@ -1587,6 +1610,18 @@
               {$t("library.listen")}
             </Button>
           {/if}
+          {#if onCreateAudiobook && !detailsBook.readOnly}
+            <Button variant="ghost" onclick={() => onCreateAudiobook(detailsBook.id)}>
+              <Icon name="sparkles" size={17} />
+              {$t("library.createAudiobook")}
+            </Button>
+          {/if}
+          {#if detailsBook.format === "epub"}
+            <Button variant="ghost" onclick={() => void exportEpub(detailsBook)}>
+              <Icon name="download" size={17} />
+              {$t("library.exportEpub")}
+            </Button>
+          {/if}
           <Button variant="ghost" onclick={() => exportBookNotes(detailsBook)}>
             <Icon name="download" size={17} />
             {$t("library.exportNotes")}
@@ -1723,6 +1758,28 @@
             }}
           >
             <Icon name="headphones" size={17} /> {$t("library.listen")}
+          </button>
+        {/if}
+        {#if onCreateAudiobook && !menuBook.readOnly}
+          <button
+            onclick={() => {
+              const target = menuBook;
+              closeMenu();
+              onCreateAudiobook?.(target.id);
+            }}
+          >
+            <Icon name="sparkles" size={17} /> {$t("library.createAudiobook")}
+          </button>
+        {/if}
+        {#if menuBook.format === "epub"}
+          <button
+            onclick={() => {
+              const target = menuBook;
+              closeMenu();
+              void exportEpub(target);
+            }}
+          >
+            <Icon name="download" size={17} /> {$t("library.exportEpub")}
           </button>
         {/if}
         {#if menuBook.format === "pdf" && !menuBook.readOnly && !menuBook.receivedShareId}
@@ -3733,26 +3790,37 @@
     }
 
     .continue {
-      grid-template-columns: 88px minmax(0, 1fr);
-      gap: 14px;
-      align-items: start;
-      padding: 14px;
-      border-radius: 18px;
+      grid-template-columns: 72px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 10px;
+      border-radius: 16px;
     }
 
     .continue-cover {
-      width: 88px;
-      height: 132px;
+      width: 72px;
+      height: 108px;
+    }
+
+    .continue-tag {
+      gap: 4px;
+      padding: 0.16rem 0.45rem;
+      font-size: 0.56rem;
+    }
+
+    .continue-format {
+      padding-left: 5px;
+      font-size: 0.52rem;
     }
 
     .continue-body h2 {
-      margin-top: 6px;
-      font-size: 1.22rem;
+      margin-top: 4px;
+      font-size: 1.05rem;
       line-height: 1.12;
     }
 
     .continue-author {
-      font-size: 0.7rem;
+      display: none;
     }
 
     .continue-quote {
@@ -3760,20 +3828,54 @@
     }
 
     .continue-progress-row {
-      flex-direction: column;
-      gap: 2px;
-      margin-top: 6px;
+      flex-direction: row;
+      align-items: baseline;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .progress-date {
+      display: none;
+    }
+
+    .progress-label {
+      font-size: 0.72rem;
+    }
+
+    .progress-label span {
+      font-size: 0.62rem;
+    }
+
+    .continue .progress-track {
+      height: 4px;
     }
 
     .continue-actions {
       width: 100%;
-      margin-top: 10px;
+      margin-top: 6px;
+      gap: 6px;
     }
 
     .continue-actions :global(.ui-button) {
-      flex: 1;
-      padding: 0.45rem 0.55rem;
-      font-size: 0.72rem;
+      flex: 0 1 auto;
+      min-height: 34px;
+      padding: 0.3rem 0.5rem;
+      font-size: 0.68rem;
+    }
+
+    .continue-actions :global(.ui-button:nth-child(2)) {
+      flex: 0 0 34px;
+      width: 34px;
+      min-width: 34px;
+      padding: 0;
+      overflow: hidden;
+      gap: 0;
+      font-size: 0;
+    }
+
+    .continue-actions :global(.ui-button svg) {
+      width: 15px;
+      height: 15px;
     }
 
     .shelf-head h2 {
