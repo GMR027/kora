@@ -221,9 +221,28 @@ class KoraTtsPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     @Command
+    fun enqueueSpeechFile(invoke: Invoke) {
+        val args = invoke.parseArgs(TtsPlaySpeechFileArgs::class.java)
+        runCatching {
+            SpeechFilePlayer.enqueue(activity.applicationContext, args.path, args.volume)
+        }.onSuccess {
+            invoke.resolve()
+        }.onFailure { error ->
+            invoke.reject(error.message ?: "no se pudo encolar el audio")
+        }
+    }
+
+    @Command
     fun speechFileStatus(invoke: Invoke) {
         val (state, error) = SpeechFilePlayer.status()
-        invoke.resolve(JSObject().put("state", state).put("error", error))
+        invoke.resolve(
+            JSObject()
+                .put("state", state)
+                .put("error", error)
+                .put("currentIndex", SpeechFilePlayer.currentIndex())
+                .put("positionMs", SpeechFilePlayer.positionMs())
+                .put("queueSize", SpeechFilePlayer.queueSize())
+        )
     }
 
     @Command

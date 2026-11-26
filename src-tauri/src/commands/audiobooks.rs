@@ -876,6 +876,7 @@ fn emit_task_error(
 #[tauri::command]
 pub async fn play_audiobook(
     state: State<'_, AppState>,
+    app: AppHandle,
     audiobook_id: String,
 ) -> Result<PlaybackSnapshot> {
     let audiobook = owned_audiobook(&state, &audiobook_id).await?;
@@ -907,6 +908,12 @@ pub async fn play_audiobook(
         } else {
             start_ms
         };
+
+    // Una sola fuente de audio: el audiolibro toma el relevo de la lectura en
+    // voz alta si había una sesión TTS activa.
+    if let Err(error) = state.tts_session.stop(&app).await {
+        tracing::warn!(%error, "no se pudo detener el TTS antes del audiolibro");
+    }
 
     state
         .audiobook_player

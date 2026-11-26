@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 
-use crate::error::Result;
+use crate::error::{KoraError, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +16,11 @@ pub struct EngineInfo {
     /// `true` si el motor puede pausar y continuar la frase actual sin
     /// reiniciarla (Piper). Android TTS no lo permite.
     pub supports_pause: bool,
+    /// `true` si el motor permite sintetizar una frase por delante y
+    /// reproducir después el PCM ya preparado. Lo usa Supertonic para evitar
+    /// silencios entre frases.
+    #[serde(default)]
+    pub prefetch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,14 +86,61 @@ pub struct AudioChunk {
     pub channels: u16,
 }
 
+/// Audio preparado que viaja por la cola de reproducción continua.
+#[derive(Debug, Clone)]
+pub struct QueuedAudio {
+    pub index: usize,
+    pub voice_id: String,
+    pub audio: AudioChunk,
+}
+
+/// Eventos que publica el reproductor al encadenar audios preparados.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioPlaybackEvent {
+    Started(usize),
+    Finished(usize),
+}
+
 /// Motor de síntesis y reproducción.
 #[async_trait]
 pub trait TtsEngine: Send + Sync {
     fn info(&self) -> EngineInfo;
+
+    /// Consulta barata para el pipeline de prefetch. No debe recorrer el
+    /// catálogo ni comprobar archivos en disco.
+    fn supports_prefetch(&self) -> bool {
+        false
+    }
+
     async fn voices(&self) -> Result<Vec<VoiceDescriptor>>;
 
     /// Síntesis sin reproducir, para previsualizaciones y tests.
     async fn synthesize(&self, request: &SynthesisRequest) -> Result<AudioChunk>;
+
+    /// Reproduce un bloque que ya se sintetizó con [`Self::synthesize`]. Los
+    /// motores con `prefetch` lo usan para encadenar frases sin volver a
+    /// sintetizar entre una y otra.
+    async fn play_audio(&self, _audio: AudioChunk) -> Result<()> {
+        Err(KoraError::Unsupported(
+            "este motor no permite reproducir audio preparado".into(),
+        ))
+    }
+
+    /// Reproduce una cola de audios sin recrear el reproductor entre frases.
+    /// Lo usa Android para eliminar los huecos entre frases.
+    fn supports_stream(&self) -> bool {
+        false
+    }
+
+    async fn stream_audio(
+        &self,
+        _items: mpsc::Receiver<QueuedAudio>,
+        _events: mpsc::Sender<AudioPlaybackEvent>,
+    ) -> Result<()> {
+        Err(KoraError::Unsupported(
+            "este motor no permite reproducir una cola continua".into(),
+        ))
+    }
 
     /// Sintetiza y reproduce; vuelve cuando termina, se pausa o se detiene.
     async fn speak(&self, request: &SpeakRequest) -> Result<()>;

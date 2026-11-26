@@ -246,6 +246,15 @@ pub fn supertonic_unload(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+pub async fn supertonic_preload(state: State<'_, AppState>) -> Result<()> {
+    let service = state.supertonic.clone();
+    tokio::task::spawn_blocking(move || service.preload())
+        .await
+        .map_err(|error| KoraError::Internal(format!("tarea Supertonic: {error}")))??;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn supertonic_download(state: State<'_, AppState>, app: AppHandle) -> Result<()> {
     let service = state.supertonic.clone();
     let app_clone = app.clone();
@@ -398,6 +407,24 @@ pub async fn start_tts(
         return Err(KoraError::InvalidInput(
             "no hay texto desde esa posición".into(),
         ));
+    }
+
+    // Una sola fuente de audio: si había un audiolibro sonando, se guarda su
+    // posición y se detiene al empezar a narrar el texto en vivo.
+    if let Ok(Some(snapshot)) = state.audiobook_player.snapshot() {
+        let _ = state
+            .storage
+            .audiobooks
+            .save_progress(
+                &snapshot.audiobook_id,
+                &state.identity.account.id,
+                snapshot.position_ms,
+                snapshot.chapter_index as i64,
+            )
+            .await;
+    }
+    if let Err(error) = state.audiobook_player.stop() {
+        tracing::warn!(%error, "no se pudo detener el audiolibro antes del TTS");
     }
 
     let plan = SessionPlan {
@@ -905,12 +932,22 @@ fn resolve_default_voice(
             .unwrap_or(value)
             .to_lowercase()
     });
-    if let Some(language) = language
-        && let Some(voice) = installed
+    if let Some(language) = language {
+        // Si el usuario no eligió voz, las voces mejoradas del pack opcional
+        // tienen prioridad: evitan que «Escuchar» acabe usando Piper por orden
+        // de registro del motor.
+        if let Some(voice) = installed
+            .iter()
+            .find(|voice| voice.enhanced && voice.language.eq_ignore_ascii_case(&language))
+        {
+            return Ok(voice.id.clone());
+        }
+        if let Some(voice) = installed
             .iter()
             .find(|voice| voice.language.eq_ignore_ascii_case(&language))
-    {
-        return Ok(voice.id.clone());
+        {
+            return Ok(voice.id.clone());
+        }
     }
 
     Ok(installed[0].id.clone())
@@ -1084,6 +1121,51 @@ mod tests {
         assert!(source_excerpt(&source, 2, 2).is_none());
         assert!(source_excerpt(&source, 1, 4).is_none());
         assert!(source_excerpt(&source, 0, 4).is_none());
+    }
+
+    fn voice(id: &str, language: &str, enhanced: bool) -> VoiceDescriptor {
+        VoiceDescriptor {
+            id: id.to_string(),
+            name: id.to_string(),
+            language: language.to_string(),
+            gender: None,
+            engine: if enhanced { "supertonic" } else { "piper" }.to_string(),
+            installed: true,
+            size_bytes: 0,
+            cloned: false,
+            enhanced,
+            quality: None,
+            latency: None,
+            requires_network: false,
+            locale: Some(language.to_string()),
+        }
+    }
+
+    #[test]
+    fn default_voice_prefers_enhanced_pack() {
+        let preferences = TtsPreferences::defaults("libro".into(), "cuenta".into());
+        let installed = vec![
+            voice("es_ES-davefx-medium", "es", false),
+            voice("supertonic:es:F1", "es", true),
+        ];
+        assert_eq!(
+            resolve_default_voice(&preferences, &installed, Some("es")).unwrap(),
+            "supertonic:es:F1"
+        );
+    }
+
+    #[test]
+    fn explicit_voice_wins_over_enhanced_default() {
+        let mut preferences = TtsPreferences::defaults("libro".into(), "cuenta".into());
+        preferences.voice_id = Some("es_ES-davefx-medium".into());
+        let installed = vec![
+            voice("es_ES-davefx-medium", "es", false),
+            voice("supertonic:es:F1", "es", true),
+        ];
+        assert_eq!(
+            resolve_default_voice(&preferences, &installed, Some("es")).unwrap(),
+            "es_ES-davefx-medium"
+        );
     }
 
     #[test]

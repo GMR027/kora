@@ -407,6 +407,7 @@ impl TtsEngine for NeuTtsEngine {
             streaming: false,
             available,
             supports_pause: true,
+            prefetch: false,
         }
     }
 

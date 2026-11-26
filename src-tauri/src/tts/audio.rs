@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use super::engine::AudioChunk;
-use crate::error::Result;
+use super::engine::{AudioChunk, AudioPlaybackEvent, QueuedAudio};
+use crate::error::{KoraError, Result};
 
 /// Salida de audio del motor TTS. En escritorio la implementa `RodioPlayer`;
 /// en Android el propio motor nativo reproduce y no usa este trait.
@@ -16,6 +16,17 @@ pub trait AudioPlayer: Send + Sync {
     async fn pause(&self) -> Result<()>;
     async fn resume(&self) -> Result<()>;
     async fn stop(&self) -> Result<()>;
+
+    /// Reproduce una cola sin cerrar el reproductor entre elementos.
+    async fn stream_audio(
+        &self,
+        _items: tokio::sync::mpsc::Receiver<QueuedAudio>,
+        _events: tokio::sync::mpsc::Sender<AudioPlaybackEvent>,
+    ) -> Result<()> {
+        Err(KoraError::Unsupported(
+            "este reproductor no admite cola continua".into(),
+        ))
+    }
 }
 
 /// Reproductor nulo para tests y para plataformas sin salida de audio.
@@ -165,14 +176,17 @@ pub use desktop::RodioPlayer;
 
 #[cfg(target_os = "android")]
 mod android {
-    use std::path::PathBuf;
+    use std::collections::VecDeque;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Duration;
 
     use async_trait::async_trait;
+    use tokio::sync::mpsc;
+    use tokio::sync::mpsc::error::TryRecvError;
 
-    use super::super::engine::AudioChunk;
+    use super::super::engine::{AudioChunk, AudioPlaybackEvent, QueuedAudio};
     use super::AudioPlayer;
     use crate::error::{KoraError, Result};
 
@@ -184,6 +198,7 @@ mod android {
         directory: PathBuf,
         generation: Arc<AtomicU64>,
         stopped: Arc<AtomicBool>,
+        sequence: Arc<AtomicU64>,
     }
 
     impl AndroidAudioPlayer {
@@ -192,8 +207,22 @@ mod android {
                 directory,
                 generation: Arc::new(AtomicU64::new(0)),
                 stopped: Arc::new(AtomicBool::new(false)),
+                sequence: Arc::new(AtomicU64::new(0)),
             }
         }
+    }
+
+    fn write_wav(directory: &Path, sequence: &AtomicU64, chunk: &AudioChunk) -> Result<PathBuf> {
+        std::fs::create_dir_all(directory)?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_millis())
+            .unwrap_or(0);
+        let order = sequence.fetch_add(1, Ordering::Relaxed);
+        let path = directory.join(format!("speech-{stamp}-{order}.wav"));
+        let wav = super::super::wav::encode_wav(chunk)?;
+        std::fs::write(&path, wav)?;
+        Ok(path)
     }
 
     #[async_trait]
@@ -257,6 +286,117 @@ mod android {
 
                 let _ = std::fs::remove_file(&path);
                 result
+            })
+            .await
+            .map_err(|error| KoraError::Internal(format!("tarea de audio Android: {error}")))?
+        }
+
+        async fn stream_audio(
+            &self,
+            mut items: mpsc::Receiver<QueuedAudio>,
+            events: mpsc::Sender<AudioPlaybackEvent>,
+        ) -> Result<()> {
+            let directory = self.directory.clone();
+            let generation = self.generation.load(Ordering::SeqCst);
+            let stopped = self.stopped.clone();
+            let generation_slot = self.generation.clone();
+            let sequence = self.sequence.clone();
+
+            tokio::task::spawn_blocking(move || -> Result<()> {
+                let mut enqueued: VecDeque<(usize, PathBuf)> = VecDeque::new();
+                let mut current: Option<usize> = None;
+                let mut producer_done = false;
+
+                loop {
+                    if stopped.load(Ordering::SeqCst)
+                        || generation_slot.load(Ordering::SeqCst) != generation
+                    {
+                        break;
+                    }
+
+                    loop {
+                        match items.try_recv() {
+                            Ok(item) => {
+                                let path = write_wav(&directory, &sequence, &item.audio)?;
+                                let path_text = path
+                                    .to_str()
+                                    .ok_or_else(|| {
+                                        KoraError::Internal(
+                                            "ruta de audio Android no válida".into(),
+                                        )
+                                    })?
+                                    .to_string();
+                                if let Err(error) =
+                                    super::super::android::enqueue_speech_file(&path_text, 1.0)
+                                {
+                                    let _ = std::fs::remove_file(&path);
+                                    return Err(error);
+                                }
+                                enqueued.push_back((item.index, path));
+                            }
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => {
+                                producer_done = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    let status = super::super::android::speech_file_status()?;
+                    if status.state == "error" {
+                        return Err(KoraError::Internal(
+                            status
+                                .error
+                                .unwrap_or_else(|| "error de reproducción Android".into()),
+                        ));
+                    }
+
+                    if !enqueued.is_empty()
+                        && matches!(
+                            status.state.as_str(),
+                            "starting" | "buffering" | "playing" | "paused"
+                        )
+                    {
+                        let index = status.current_index.min(enqueued.len() - 1);
+                        if current != Some(index) {
+                            if let Some(previous) = current
+                                && let Some((item_index, _)) = enqueued.get(previous)
+                                && events
+                                    .blocking_send(AudioPlaybackEvent::Finished(*item_index))
+                                    .is_err()
+                            {
+                                break;
+                            }
+                            current = Some(index);
+                            if let Some((item_index, _)) = enqueued.get(index)
+                                && events
+                                    .blocking_send(AudioPlaybackEvent::Started(*item_index))
+                                    .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+
+                    if status.state == "finished" && producer_done {
+                        if let Some(previous) = current
+                            && let Some((item_index, _)) = enqueued.get(previous)
+                        {
+                            let _ = events.blocking_send(AudioPlaybackEvent::Finished(*item_index));
+                        }
+                        break;
+                    }
+                    if status.state == "idle" && producer_done && enqueued.is_empty() {
+                        break;
+                    }
+
+                    std::thread::sleep(Duration::from_millis(40));
+                }
+
+                for (_, path) in enqueued {
+                    let _ = std::fs::remove_file(path);
+                }
+                Ok(())
             })
             .await
             .map_err(|error| KoraError::Internal(format!("tarea de audio Android: {error}")))?

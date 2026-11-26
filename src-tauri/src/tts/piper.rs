@@ -112,6 +112,7 @@ impl TtsEngine for PiperEngine {
             streaming: false,
             available: true,
             supports_pause: true,
+            prefetch: false,
         }
     }
 

@@ -21,11 +21,12 @@ pub use audio::AndroidAudioPlayer;
 pub use audio::RodioPlayer;
 pub use audio::{AudioPlayer, NullAudioPlayer};
 pub use engine::{
-    AudioChunk, EngineInfo, SpeakRequest, SynthesisRequest, TtsEngine, VoiceDescriptor,
+    AudioChunk, AudioPlaybackEvent, EngineInfo, QueuedAudio, SpeakRequest, SynthesisRequest,
+    TtsEngine, VoiceDescriptor,
 };
 pub use expressive::{
     CharacterInfo, DIALOGUE, ExpressiveSettings, NARRATOR, SpeechChunk, SpeechSequence,
-    build_from_text, build_from_words, content_hash,
+    build_from_text, build_from_words, content_hash, sanitize_speech,
 };
 pub use media::{TtsMediaMetadata, TtsMediaSession, TtsMediaState};
 pub use neutts::{EncodeResult, NeuTtsEngine, phonemize};
@@ -150,13 +151,57 @@ impl TtsService {
     }
 
     pub async fn synthesize(&self, request: &SynthesisRequest) -> Result<AudioChunk> {
+        let text = sanitize_speech(&request.text);
+        if text.is_empty() {
+            return Err(KoraError::InvalidInput(
+                "el texto no contiene nada pronunciable".into(),
+            ));
+        }
+        let mut request = request.clone();
+        request.text = text;
         self.engine_for(&request.voice_id)?
-            .synthesize(request)
+            .synthesize(&request)
             .await
     }
 
+    /// Reproduce un bloque ya sintetizado. Solo lo implementan los motores
+    /// con `prefetch`; el resto devuelve `Unsupported`.
+    pub async fn play_audio(&self, voice_id: &str, audio: AudioChunk) -> Result<()> {
+        self.engine_for(voice_id)?.play_audio(audio).await
+    }
+
+    /// Indica si la voz puede usar el pipeline de síntesis por delante.
+    pub fn supports_prefetch(&self, voice_id: &str) -> bool {
+        self.engine_for(voice_id)
+            .map(|engine| engine.supports_prefetch())
+            .unwrap_or(false)
+    }
+
+    /// Indica si la voz puede reproducir una cola continua sin recrear el
+    /// reproductor entre frases.
+    pub fn supports_stream(&self, voice_id: &str) -> bool {
+        self.engine_for(voice_id)
+            .map(|engine| engine.supports_stream())
+            .unwrap_or(false)
+    }
+
+    pub async fn stream_audio(
+        &self,
+        voice_id: &str,
+        items: tokio::sync::mpsc::Receiver<QueuedAudio>,
+        events: tokio::sync::mpsc::Sender<AudioPlaybackEvent>,
+    ) -> Result<()> {
+        self.engine_for(voice_id)?.stream_audio(items, events).await
+    }
+
     pub async fn speak(&self, request: &SpeakRequest) -> Result<()> {
-        self.engine_for(&request.voice_id)?.speak(request).await
+        let text = sanitize_speech(&request.text);
+        if text.is_empty() {
+            return Ok(());
+        }
+        let mut request = request.clone();
+        request.text = text;
+        self.engine_for(&request.voice_id)?.speak(&request).await
     }
 
     pub async fn pause(&self) -> Result<()> {

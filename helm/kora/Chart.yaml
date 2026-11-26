@@ -3,4 +3,4 @@ name: kora
 description: Kora · landing y descargas (nginx estático)
 type: application
 version: 1.0.0
-appVersion: "0.1.9"
+appVersion: "0.2.0"

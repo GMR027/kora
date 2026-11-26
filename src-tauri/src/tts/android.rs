@@ -145,16 +145,27 @@ struct PlaySpeechArgs<'a> {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SpeechFileStatus {
     pub state: String,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub current_index: usize,
 }
 
 pub(crate) fn play_speech_file(path: &str, volume: f32) -> Result<()> {
     let handle = plugin_handle()?;
     let _: serde_json::Value = handle
         .run_mobile_plugin("playSpeechFile", PlaySpeechArgs { path, volume })
+        .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))?;
+    Ok(())
+}
+
+pub(crate) fn enqueue_speech_file(path: &str, volume: f32) -> Result<()> {
+    let handle = plugin_handle()?;
+    let _: serde_json::Value = handle
+        .run_mobile_plugin("enqueueSpeechFile", PlaySpeechArgs { path, volume })
         .map_err(|error| KoraError::Internal(format!("TTS Android: {error}")))?;
     Ok(())
 }
@@ -303,6 +314,7 @@ impl TtsEngine for AndroidTtsEngine {
             streaming: false,
             available: plugin_handle().is_ok(),
             supports_pause: false,
+            prefetch: false,
         }
     }
 

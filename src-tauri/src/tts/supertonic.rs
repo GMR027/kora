@@ -24,7 +24,8 @@ use sha2::{Digest, Sha256};
 
 use super::audio::AudioPlayer;
 use super::engine::{
-    AudioChunk, EngineInfo, SpeakRequest, SynthesisRequest, TtsEngine, VoiceDescriptor,
+    AudioChunk, AudioPlaybackEvent, EngineInfo, QueuedAudio, SpeakRequest, SynthesisRequest,
+    TtsEngine, VoiceDescriptor,
 };
 use crate::error::{KoraError, Result};
 
@@ -351,6 +352,12 @@ impl SupertonicService {
             engine.styles.clear();
             engine.last_used = None;
         }
+    }
+
+    /// Carga el modelo sin sintetizar. El lector lo llama al abrir el panel de
+    /// voz para que la primera frase no espere a los ONNX.
+    pub fn preload(&self) -> Result<()> {
+        self.load()
     }
 
     /// Descarga los archivos que falten. Los ya verificados se conservan, por
@@ -1145,6 +1152,14 @@ impl SupertonicEngine {
 
 #[async_trait]
 impl TtsEngine for SupertonicEngine {
+    fn supports_prefetch(&self) -> bool {
+        true
+    }
+
+    fn supports_stream(&self) -> bool {
+        cfg!(target_os = "android")
+    }
+
     fn info(&self) -> EngineInfo {
         let status = self.service.status();
         EngineInfo {
@@ -1155,6 +1170,7 @@ impl TtsEngine for SupertonicEngine {
             streaming: false,
             available: status.active(),
             supports_pause: true,
+            prefetch: true,
         }
     }
 
@@ -1179,6 +1195,18 @@ impl TtsEngine for SupertonicEngine {
         .await
         .map_err(|error| KoraError::Internal(format!("tarea Supertonic: {error}")))??;
         Ok(resample_pitch(chunk, pitch))
+    }
+
+    async fn play_audio(&self, audio: AudioChunk) -> Result<()> {
+        self.service.player.play(audio).await
+    }
+
+    async fn stream_audio(
+        &self,
+        items: tokio::sync::mpsc::Receiver<QueuedAudio>,
+        events: tokio::sync::mpsc::Sender<AudioPlaybackEvent>,
+    ) -> Result<()> {
+        self.service.player.stream_audio(items, events).await
     }
 
     async fn speak(&self, request: &SpeakRequest) -> Result<()> {
@@ -1222,7 +1250,56 @@ impl TtsEngine for SupertonicEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingPlayer {
+        played: AtomicUsize,
+        stopped: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl AudioPlayer for RecordingPlayer {
+        async fn play(&self, _chunk: AudioChunk) -> Result<()> {
+            self.played.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn pause(&self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn resume(&self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn stop(&self) -> Result<()> {
+            self.stopped.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn play_audio_uses_the_engine_player() {
+        let directory = tempfile::tempdir().expect("directorio temporal");
+        let player = Arc::new(RecordingPlayer::default());
+        let service = Arc::new(SupertonicService::new(
+            directory.path().to_path_buf(),
+            player.clone(),
+        ));
+        let engine = SupertonicEngine::new(service);
+        engine
+            .play_audio(AudioChunk {
+                pcm: vec![1, 2, 3],
+                sample_rate: 24_000,
+                channels: 1,
+            })
+            .await
+            .expect("reproducir PCM");
+        assert_eq!(player.played.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn voice_ids_encode_language_and_style() {

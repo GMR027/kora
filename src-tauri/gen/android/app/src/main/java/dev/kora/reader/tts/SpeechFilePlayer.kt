@@ -15,83 +15,53 @@ import java.io.File
 /**
  * Reproductor de archivos WAV para el motor Supertonic.
  *
- * Android `TextToSpeech` no acepta PCM en memoria, así que Rust sintetiza,
- * escribe un WAV temporal y este reproductor lo reproduce con Media3. El
- * estado se publica con volatilidad para que el hilo de Rust pueda consultarlo
- * sin bloquear el hilo principal.
+ * Mantiene una playlist persistente de Media3. La primera frase crea el
+ * `ExoPlayer`; las siguientes se añaden a la cola mientras suena la actual,
+ * de modo que no se recrea el reproductor entre frases.
  */
 object SpeechFilePlayer {
     private val handler = Handler(Looper.getMainLooper())
+    private val queue = mutableListOf<String>()
 
     @Volatile private var state = "idle"
     @Volatile private var error: String? = null
+    @Volatile private var currentIndex = 0
+    @Volatile private var positionMs = 0L
     private var player: ExoPlayer? = null
 
     fun status(): Pair<String, String?> = state to error
+    fun currentIndex(): Int = currentIndex
+    fun positionMs(): Long = positionMs
+    fun queueSize(): Int = queue.size
 
+    /** Reproduce un único archivo, reiniciando cualquier cola anterior. */
     fun play(context: Context, path: String, volume: Float) {
-        // Se marca antes de saltar al hilo principal para que el sondeo de
-        // Rust no confunda "idle" con una reproducción terminada.
         state = "starting"
         error = null
         handler.post {
             release()
-
-            val file = File(path)
-            if (!file.isFile) {
-                state = "error"
-                error = "el archivo de audio no existe"
-                return@post
-            }
-
-            runCatching {
-                val exo = ExoPlayer.Builder(context.applicationContext).build()
-                exo.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
-                        .build(),
-                    true
-                )
-                exo.setWakeMode(C.WAKE_MODE_LOCAL)
-                exo.volume = volume.coerceIn(0f, 1f)
-                exo.addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        when (playbackState) {
-                            Player.STATE_ENDED -> {
-                                state = "finished"
-                                release()
-                            }
-                            Player.STATE_READY -> {
-                                if (state != "paused") state = "playing"
-                            }
-                            Player.STATE_BUFFERING -> state = "buffering"
-                            else -> Unit
-                        }
-                    }
-
-                    override fun onPlayerError(playbackError: PlaybackException) {
-                        state = "error"
-                        error = playbackError.message ?: "error de reproducción"
-                        release()
-                    }
-                })
-                exo.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
-                exo.prepare()
-                exo.playWhenReady = true
-                player = exo
-            }.onFailure { throwable ->
-                state = "error"
-                error = throwable.message ?: "no se pudo abrir el audio"
-                release()
-            }
+            queue.clear()
+            currentIndex = 0
+            positionMs = 0
+            enqueueOnMain(context, path, volume)
         }
+    }
+
+    /** Añade un WAV al final de la cola sin cortar el audio actual. */
+    fun enqueue(context: Context, path: String, volume: Float) {
+        if (state == "idle" || state == "finished" || state == "error") {
+            state = "starting"
+            error = null
+        }
+        handler.post { enqueueOnMain(context, path, volume) }
     }
 
     fun pause() {
         handler.post {
             player?.pause()
-            if (state == "playing" || state == "buffering") state = "paused"
+            if (state == "playing" || state == "buffering" || state == "starting") {
+                state = "paused"
+            }
         }
     }
 
@@ -105,9 +75,78 @@ object SpeechFilePlayer {
     fun stop() {
         handler.post {
             release()
+            queue.clear()
+            currentIndex = 0
+            positionMs = 0
             state = "idle"
             error = null
         }
+    }
+
+    private fun enqueueOnMain(context: Context, path: String, volume: Float) {
+        val file = File(path)
+        if (!file.isFile) {
+            state = "error"
+            error = "el archivo de audio no existe"
+            return
+        }
+
+        runCatching {
+            val exo = player ?: createPlayer(context)
+            exo.volume = volume.coerceIn(0f, 1f)
+            exo.addMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+            queue.add(path)
+            // Si la cola ya había terminado, hay que volver a prepararla para
+            // que el nuevo elemento empiece a sonar.
+            if (exo.playbackState == Player.STATE_IDLE || exo.playbackState == Player.STATE_ENDED) {
+                exo.prepare()
+                exo.playWhenReady = true
+            }
+        }.onFailure { throwable ->
+            state = "error"
+            error = throwable.message ?: "no se pudo abrir el audio"
+            release()
+        }
+    }
+
+    private fun createPlayer(context: Context): ExoPlayer {
+        val exo = ExoPlayer.Builder(context.applicationContext).build()
+        exo.setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_SPEECH)
+                .build(),
+            true
+        )
+        exo.setWakeMode(C.WAKE_MODE_LOCAL)
+        exo.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                currentIndex = exo.currentMediaItemIndex.coerceAtLeast(0)
+                if (exo.isPlaying) state = "playing"
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                when (playbackState) {
+                    Player.STATE_ENDED -> {
+                        state = "finished"
+                        positionMs = exo.duration.coerceAtLeast(0)
+                    }
+                    Player.STATE_READY -> {
+                        if (state != "paused") state = "playing"
+                    }
+                    Player.STATE_BUFFERING -> state = "buffering"
+                    else -> Unit
+                }
+            }
+
+            override fun onPlayerError(playbackError: PlaybackException) {
+                state = "error"
+                error = playbackError.message ?: "error de reproducción"
+                release()
+            }
+        })
+        player = exo
+        return exo
     }
 
     private fun release() {
@@ -118,4 +157,5 @@ object SpeechFilePlayer {
             runCatching { current.release() }
         }
     }
+
 }

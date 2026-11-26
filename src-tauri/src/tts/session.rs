@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, mpsc};
 
 use super::TtsService;
-use super::engine::SpeakRequest;
+use super::engine::{AudioChunk, AudioPlaybackEvent, QueuedAudio, SpeakRequest, SynthesisRequest};
 use super::expressive::{NARRATOR, SpeechChunk, SpeechSequence};
 use super::media::{TtsMediaMetadata, TtsMediaState};
 use crate::error::{KoraError, Result};
@@ -18,6 +18,7 @@ use crate::sync::MirrorHub;
 #[serde(rename_all = "snake_case")]
 pub enum TtsState {
     Idle,
+    Preparing,
     Playing,
     Paused,
     Finished,
@@ -34,9 +35,13 @@ pub struct TtsStatus {
     pub rate: f32,
     pub pitch: f32,
     pub chunk_index: Option<usize>,
+    pub phrase_start: Option<usize>,
+    pub phrase_end: Option<usize>,
     pub error: Option<String>,
     /// La sesión reproduce solo un extracto seleccionado.
     pub excerpt: bool,
+    /// Metadatos para el mini-reproductor global y la tarjeta del sistema.
+    pub media: Option<TtsMediaMetadata>,
 }
 
 impl TtsStatus {
@@ -48,8 +53,11 @@ impl TtsStatus {
             rate: 1.0,
             pitch: 1.0,
             chunk_index: None,
+            phrase_start: None,
+            phrase_end: None,
             error: None,
             excerpt: false,
+            media: None,
         }
     }
 }
@@ -98,6 +106,8 @@ pub struct SessionPlan {
 struct RuntimeState {
     state: TtsState,
     chunk_index: Option<usize>,
+    phrase_start: Option<usize>,
+    phrase_end: Option<usize>,
     error: Option<String>,
 }
 
@@ -115,8 +125,10 @@ impl Control {
     fn new(rate: f32, pitch: f32, voices: HashMap<String, String>) -> Self {
         Self {
             runtime: Mutex::new(RuntimeState {
-                state: TtsState::Playing,
+                state: TtsState::Preparing,
                 chunk_index: None,
+                phrase_start: None,
+                phrase_end: None,
                 error: None,
             }),
             cancelled: AtomicBool::new(false),
@@ -161,8 +173,18 @@ impl Control {
         runtime.error = Some(error);
     }
 
-    async fn set_chunk(&self, index: usize) {
-        self.runtime.lock().await.chunk_index = Some(index);
+    async fn set_chunk(&self, index: usize, start: usize, end: usize) {
+        let mut runtime = self.runtime.lock().await;
+        runtime.chunk_index = Some(index);
+        runtime.phrase_start = Some(start);
+        runtime.phrase_end = Some(end);
+    }
+
+    async fn clear_phrase(&self) {
+        let mut runtime = self.runtime.lock().await;
+        runtime.chunk_index = None;
+        runtime.phrase_start = None;
+        runtime.phrase_end = None;
     }
 
     async fn wait_while_paused(&self) {
@@ -212,7 +234,13 @@ impl Control {
         }
     }
 
-    async fn status(&self, book_id: &str, section: usize, excerpt: bool) -> TtsStatus {
+    async fn status(
+        &self,
+        book_id: &str,
+        section: usize,
+        excerpt: bool,
+        media: &TtsMediaMetadata,
+    ) -> TtsStatus {
         let runtime = self.runtime.lock().await;
         TtsStatus {
             book_id: Some(book_id.to_string()),
@@ -221,8 +249,11 @@ impl Control {
             rate: self.rate(),
             pitch: self.pitch(),
             chunk_index: runtime.chunk_index,
+            phrase_start: runtime.phrase_start,
+            phrase_end: runtime.phrase_end,
             error: runtime.error.clone(),
             excerpt,
+            media: Some(media.clone()),
         }
     }
 }
@@ -231,6 +262,7 @@ struct ActiveSession {
     book_id: String,
     section: usize,
     excerpt_end: Option<usize>,
+    media: TtsMediaMetadata,
     control: Arc<Control>,
     handle: tauri::async_runtime::JoinHandle<()>,
 }
@@ -283,6 +315,7 @@ impl TtsSessionManager {
         let book_id = plan.book_id.clone();
         let section = plan.section;
         let excerpt_end = plan.excerpt_end;
+        let media = plan.media.clone();
         let start_offset = plan
             .sequence
             .chunks
@@ -290,30 +323,26 @@ impl TtsSessionManager {
             .map(|chunk| chunk.offset_start)
             .unwrap_or(0);
         let status = control
-            .status(&book_id, section, excerpt_end.is_some())
+            .status(&book_id, section, excerpt_end.is_some(), &media)
             .await;
 
-        if let Err(error) = self.service.media_start(&plan.media).await {
+        if let Err(error) = self.service.media_start(&media).await {
             tracing::warn!(%error, "no se pudo publicar la sesión multimedia del TTS");
         }
-
-        emit_session(
-            &app,
-            &book_id,
-            section,
-            TtsState::Playing,
-            None,
-            start_offset,
-            excerpt_end,
-            self.mirror.as_ref(),
-        );
 
         let service = self.service.clone();
         let mirror = self.mirror.clone();
         let control_for_task = control.clone();
         let plan_for_task = plan;
         let app_for_task = app.clone();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
         let handle = tauri::async_runtime::spawn(async move {
+            // La sesión se registra y publica «Preparing» antes de que el
+            // productor empiece; así el mini-reproductor puede consultar los
+            // metadatos desde el primer evento.
+            if start_rx.await.is_err() {
+                return;
+            }
             run_session(
                 app_for_task,
                 service,
@@ -325,12 +354,25 @@ impl TtsSessionManager {
         });
 
         *self.active.lock().await = Some(ActiveSession {
-            book_id,
+            book_id: book_id.clone(),
             section,
             excerpt_end,
+            media,
             control,
             handle,
         });
+
+        emit_session(
+            &app,
+            &book_id,
+            section,
+            TtsState::Preparing,
+            None,
+            start_offset,
+            excerpt_end,
+            self.mirror.as_ref(),
+        );
+        let _ = start_tx.send(());
 
         Ok(status)
     }
@@ -363,6 +405,7 @@ impl TtsSessionManager {
                 &active.book_id,
                 active.section,
                 active.excerpt_end.is_some(),
+                &active.media,
             )
             .await)
     }
@@ -395,6 +438,7 @@ impl TtsSessionManager {
                 &active.book_id,
                 active.section,
                 active.excerpt_end.is_some(),
+                &active.media,
             )
             .await)
     }
@@ -437,6 +481,7 @@ impl TtsSessionManager {
                 &active.book_id,
                 active.section,
                 active.excerpt_end.is_some(),
+                &active.media,
             )
             .await)
     }
@@ -462,6 +507,7 @@ impl TtsSessionManager {
                 &active.book_id,
                 active.section,
                 active.excerpt_end.is_some(),
+                &active.media,
             )
             .await)
     }
@@ -483,6 +529,7 @@ impl TtsSessionManager {
                         &active.book_id,
                         active.section,
                         active.excerpt_end.is_some(),
+                        &active.media,
                     )
                     .await
             }
@@ -503,6 +550,30 @@ impl TtsSessionManager {
     }
 }
 
+/// Error de una frase concreta. El índice permite publicar el offset correcto
+/// en el evento de error.
+struct SessionFailure {
+    index: usize,
+    error: KoraError,
+}
+
+struct PreparedChunk {
+    index: usize,
+    chunk: SpeechChunk,
+    voice_id: String,
+    audio: AudioChunk,
+}
+
+/// Aborta el productor si la tarea de la sesión se cancela o termina de forma
+/// inesperada. Sin esto, un `run_session` abortado dejaría el productor vivo.
+struct AbortGuard(tauri::async_runtime::JoinHandle<()>);
+
+impl Drop for AbortGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn run_session<R: Runtime>(
     app: AppHandle<R>,
     service: Arc<TtsService>,
@@ -511,80 +582,50 @@ async fn run_session<R: Runtime>(
     mirror: Option<MirrorHub>,
 ) {
     let chunks = &plan.sequence.chunks;
-    let mut index = plan.start_index.min(chunks.len());
-
-    while index < chunks.len() {
-        if control.is_cancelled() {
-            break;
-        }
-        control.wait_while_paused().await;
-        if control.is_cancelled() {
-            break;
-        }
-
-        let chunk = &chunks[index];
-        control.set_chunk(index).await;
+    let start_index = plan.start_index.min(chunks.len());
+    // El pipeline solo se activa si todas las voces de esta sección pueden
+    // reproducir PCM preparado. Un reparto mixto con Piper/NeuTTS usa el
+    // camino secuencial de siempre.
+    let prefetch = chunks[start_index..].iter().all(|chunk| {
         let voice_id = control.voice_for(chunk.character.as_deref(), &plan.default_voice);
-        let request = SpeakRequest {
-            text: chunk.speech.clone(),
-            voice_id: voice_id.clone(),
-            language: plan.language.clone(),
-            rate: (control.rate() * chunk.rate).clamp(0.5, 3.0),
-            pitch: (control.pitch() * chunk.pitch).clamp(0.5, 1.5),
-            volume: 1.0,
-            emphasis: chunk.emphasis,
-        };
+        service.supports_prefetch(&voice_id)
+    });
+    // Basta con que la voz principal use un reproductor con cola continua.
+    // Las voces de personaje se sintetizan con su propio motor y su PCM se
+    // encola en el mismo reproductor.
+    let stream = service.supports_stream(&plan.default_voice);
 
-        emit_phrase_start(&app, &plan, chunk, index, &voice_id, mirror.as_ref());
-
-        match service.speak(&request).await {
-            Ok(()) => {
-                if control.is_cancelled() {
-                    break;
-                }
-                // En Android la locución puede terminar justo cuando llega una
-                // pausa. Si ya está pausado, no se avanza: al reanudar se repite
-                // la frase actual en lugar de saltarla.
-                if control.is_paused() {
-                    continue;
-                }
-                emit_phrase_end(&app, &plan, chunk, index);
-                index += 1;
-                if !control.sleep_pausable(chunk.pause_after_ms).await {
-                    break;
-                }
-            }
-            Err(error) => {
-                if control.is_cancelled() {
-                    break;
-                }
-                if matches!(error, KoraError::Conflict(_)) {
-                    // Motor sin pausa nativa (Android): repetir la frase al
-                    // reanudar. `wait_while_paused` evita el bucle ocupado.
-                    continue;
-                }
-                let message = error.to_string();
-                if let Err(error) = service
-                    .media_state(TtsMediaState::Error(message.clone()))
-                    .await
-                {
-                    tracing::warn!(%error, "no se pudo publicar el error del TTS");
-                }
-                control.set_error(message.clone()).await;
-                emit_session(
-                    &app,
-                    &plan.book_id,
-                    plan.section,
-                    TtsState::Error,
-                    Some(message),
-                    chunk.offset_start,
-                    plan.excerpt_end,
-                    mirror.as_ref(),
-                );
-                return;
-            }
-        }
-    }
+    let result = if stream {
+        run_streaming_session(
+            &app,
+            service.clone(),
+            &plan,
+            control.clone(),
+            start_index,
+            mirror.as_ref(),
+        )
+        .await
+    } else if prefetch {
+        run_prefetched_session(
+            &app,
+            service.clone(),
+            &plan,
+            control.clone(),
+            start_index,
+            mirror.as_ref(),
+        )
+        .await
+    } else {
+        run_sequential_session(
+            &app,
+            &service,
+            &plan,
+            &control,
+            start_index,
+            mirror.as_ref(),
+        )
+        .await
+    };
 
     if control.is_cancelled() {
         control.set_state(TtsState::Stopped).await;
@@ -596,6 +637,28 @@ async fn run_session<R: Runtime>(
             TtsState::Stopped,
             None,
             0,
+            plan.excerpt_end,
+            mirror.as_ref(),
+        );
+    } else if let Err(failure) = result {
+        let message = failure.error.to_string();
+        if let Err(error) = service
+            .media_state(TtsMediaState::Error(message.clone()))
+            .await
+        {
+            tracing::warn!(%error, "no se pudo publicar el error del TTS");
+        }
+        control.set_error(message.clone()).await;
+        emit_session(
+            &app,
+            &plan.book_id,
+            plan.section,
+            TtsState::Error,
+            Some(message),
+            chunks
+                .get(failure.index)
+                .map(|chunk| chunk.offset_start)
+                .unwrap_or(0),
             plan.excerpt_end,
             mirror.as_ref(),
         );
@@ -613,6 +676,394 @@ async fn run_session<R: Runtime>(
             mirror.as_ref(),
         );
     }
+}
+
+async fn run_streaming_session<R: Runtime>(
+    app: &AppHandle<R>,
+    service: Arc<TtsService>,
+    plan: &SessionPlan,
+    control: Arc<Control>,
+    start_index: usize,
+    mirror: Option<&MirrorHub>,
+) -> std::result::Result<(), SessionFailure> {
+    let sequence = plan.sequence.clone();
+    let total = sequence.chunks.len();
+    let default_voice = plan.default_voice.clone();
+    let (audio_tx, audio_rx) = mpsc::channel::<QueuedAudio>(2);
+    let (event_tx, mut event_rx) = mpsc::channel::<AudioPlaybackEvent>(32);
+    let (error_tx, mut error_rx) = mpsc::channel::<SessionFailure>(1);
+
+    let stream_service = service.clone();
+    let stream_voice = default_voice.clone();
+    let stream_handle = tauri::async_runtime::spawn(async move {
+        stream_service
+            .stream_audio(&stream_voice, audio_rx, event_tx)
+            .await
+    });
+
+    let producer_control = control.clone();
+    let producer_service = service.clone();
+    let producer_sequence = sequence.clone();
+    let producer = tauri::async_runtime::spawn(async move {
+        for index in start_index..total {
+            if producer_control.is_cancelled() {
+                break;
+            }
+            producer_control.wait_while_paused().await;
+            if producer_control.is_cancelled() {
+                break;
+            }
+
+            let chunk = &producer_sequence.chunks[index];
+            if chunk.speech.trim().is_empty() {
+                continue;
+            }
+            let voice_id = producer_control.voice_for(chunk.character.as_deref(), &default_voice);
+            let request = SynthesisRequest {
+                text: chunk.speech.clone(),
+                voice_id: voice_id.clone(),
+                rate: (producer_control.rate() * chunk.rate).clamp(0.5, 3.0),
+                pitch: (producer_control.pitch() * chunk.pitch).clamp(0.5, 1.5),
+            };
+            match producer_service.synthesize(&request).await {
+                Ok(mut audio) => {
+                    append_silence(&mut audio, chunk.pause_after_ms);
+                    let item = QueuedAudio {
+                        index,
+                        voice_id,
+                        audio,
+                    };
+                    if audio_tx.send(item).await.is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = error_tx.send(SessionFailure { index, error }).await;
+                    break;
+                }
+            }
+        }
+    });
+    let _guard = AbortGuard(producer);
+
+    let mut announced = false;
+    let mut started: Option<usize> = None;
+    let mut error_open = true;
+    loop {
+        tokio::select! {
+            event = event_rx.recv() => {
+                match event {
+                    Some(AudioPlaybackEvent::Started(index)) => {
+                        if control.is_cancelled() {
+                            break;
+                        }
+                        let Some(chunk) = sequence.chunks.get(index) else {
+                            continue;
+                        };
+                        if !announced {
+                            announce_playing(app, plan, &service, &control, mirror).await;
+                            announced = true;
+                        }
+                        control
+                            .set_chunk(index, chunk.offset_start, chunk.offset_end)
+                            .await;
+                        let voice_id = control
+                            .voice_for(chunk.character.as_deref(), &plan.default_voice);
+                        emit_phrase_start(app, plan, chunk, index, &voice_id, mirror);
+                        started = Some(index);
+                    }
+                    Some(AudioPlaybackEvent::Finished(index)) => {
+                        if started == Some(index)
+                            && let Some(chunk) = sequence.chunks.get(index)
+                        {
+                            emit_phrase_end(app, plan, chunk, index);
+                            control.clear_phrase().await;
+                        }
+                        started = None;
+                    }
+                    None => break,
+                }
+            }
+            failure = error_rx.recv(), if error_open => {
+                match failure {
+                    Some(failure) => {
+                        if control.is_cancelled() {
+                            break;
+                        }
+                        let _ = service.stop().await;
+                        return Err(failure);
+                    }
+                    None => error_open = false,
+                }
+            }
+        }
+    }
+
+    match stream_handle.await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(SessionFailure {
+            index: started.unwrap_or(start_index),
+            error,
+        }),
+        Err(error) => Err(SessionFailure {
+            index: started.unwrap_or(start_index),
+            error: KoraError::Internal(format!("tarea de reproducción continua: {error}")),
+        }),
+    }
+}
+
+fn append_silence(audio: &mut AudioChunk, milliseconds: u32) {
+    if milliseconds == 0 {
+        return;
+    }
+    let samples =
+        (audio.sample_rate as u64 * milliseconds as u64 / 1000) as usize * audio.channels as usize;
+    audio.pcm.extend(std::iter::repeat_n(0i16, samples));
+}
+
+async fn run_prefetched_session<R: Runtime>(
+    app: &AppHandle<R>,
+    service: Arc<TtsService>,
+    plan: &SessionPlan,
+    control: Arc<Control>,
+    start_index: usize,
+    mirror: Option<&MirrorHub>,
+) -> std::result::Result<(), SessionFailure> {
+    let sequence = plan.sequence.clone();
+    let total = sequence.chunks.len();
+    let default_voice = plan.default_voice.clone();
+    let (tx, mut rx) = mpsc::channel::<std::result::Result<PreparedChunk, SessionFailure>>(2);
+
+    let producer_control = control.clone();
+    let producer_service = service.clone();
+    let producer = tauri::async_runtime::spawn(async move {
+        for index in start_index..total {
+            if producer_control.is_cancelled() {
+                break;
+            }
+            producer_control.wait_while_paused().await;
+            if producer_control.is_cancelled() {
+                break;
+            }
+
+            let chunk = &sequence.chunks[index];
+            if chunk.speech.trim().is_empty() {
+                continue;
+            }
+            let voice_id = producer_control.voice_for(chunk.character.as_deref(), &default_voice);
+            let request = SynthesisRequest {
+                text: chunk.speech.clone(),
+                voice_id: voice_id.clone(),
+                rate: (producer_control.rate() * chunk.rate).clamp(0.5, 3.0),
+                pitch: (producer_control.pitch() * chunk.pitch).clamp(0.5, 1.5),
+            };
+            match producer_service.synthesize(&request).await {
+                Ok(audio) => {
+                    let prepared = PreparedChunk {
+                        index,
+                        chunk: chunk.clone(),
+                        voice_id,
+                        audio,
+                    };
+                    if tx.send(Ok(prepared)).await.is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = tx.send(Err(SessionFailure { index, error })).await;
+                    break;
+                }
+            }
+        }
+    });
+    let _guard = AbortGuard(producer);
+
+    let mut announced = false;
+    while let Some(item) = rx.recv().await {
+        let prepared = match item {
+            Ok(prepared) => prepared,
+            Err(failure) => {
+                if control.is_cancelled() {
+                    break;
+                }
+                return Err(failure);
+            }
+        };
+        if control.is_cancelled() {
+            break;
+        }
+        control.wait_while_paused().await;
+        if control.is_cancelled() {
+            break;
+        }
+
+        if !announced {
+            announce_playing(app, plan, &service, &control, mirror).await;
+            announced = true;
+        }
+        control
+            .set_chunk(
+                prepared.index,
+                prepared.chunk.offset_start,
+                prepared.chunk.offset_end,
+            )
+            .await;
+        emit_phrase_start(
+            app,
+            plan,
+            &prepared.chunk,
+            prepared.index,
+            &prepared.voice_id,
+            mirror,
+        );
+
+        // El usuario puede cambiar la voz de un personaje mientras suena la
+        // sesión. Si la nueva voz no admite PCM preparado (Piper, NeuTTS o
+        // TTS nativo), se sintetiza y reproduce por el camino normal.
+        let playback = if service.supports_prefetch(&prepared.voice_id) {
+            service.play_audio(&prepared.voice_id, prepared.audio).await
+        } else {
+            service
+                .speak(&SpeakRequest {
+                    text: prepared.chunk.speech.clone(),
+                    voice_id: prepared.voice_id.clone(),
+                    language: plan.language.clone(),
+                    rate: (control.rate() * prepared.chunk.rate).clamp(0.5, 3.0),
+                    pitch: (control.pitch() * prepared.chunk.pitch).clamp(0.5, 1.5),
+                    volume: 1.0,
+                    emphasis: prepared.chunk.emphasis,
+                })
+                .await
+        };
+        if let Err(error) = playback {
+            if control.is_cancelled() {
+                break;
+            }
+            return Err(SessionFailure {
+                index: prepared.index,
+                error,
+            });
+        }
+        if control.is_cancelled() {
+            break;
+        }
+        if control.is_paused() {
+            // La frase terminó justo al pausar. Al reanudar se continúa con la
+            // siguiente, que ya está lista en la cola.
+            continue;
+        }
+        emit_phrase_end(app, plan, &prepared.chunk, prepared.index);
+        control.clear_phrase().await;
+        if !control.sleep_pausable(prepared.chunk.pause_after_ms).await {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_sequential_session<R: Runtime>(
+    app: &AppHandle<R>,
+    service: &Arc<TtsService>,
+    plan: &SessionPlan,
+    control: &Arc<Control>,
+    start_index: usize,
+    mirror: Option<&MirrorHub>,
+) -> std::result::Result<(), SessionFailure> {
+    let chunks = &plan.sequence.chunks;
+    let mut index = start_index;
+    let mut announced = false;
+
+    while index < chunks.len() {
+        if control.is_cancelled() {
+            break;
+        }
+        control.wait_while_paused().await;
+        if control.is_cancelled() {
+            break;
+        }
+
+        let chunk = &chunks[index];
+        control
+            .set_chunk(index, chunk.offset_start, chunk.offset_end)
+            .await;
+        let voice_id = control.voice_for(chunk.character.as_deref(), &plan.default_voice);
+        let request = SpeakRequest {
+            text: chunk.speech.clone(),
+            voice_id: voice_id.clone(),
+            language: plan.language.clone(),
+            rate: (control.rate() * chunk.rate).clamp(0.5, 3.0),
+            pitch: (control.pitch() * chunk.pitch).clamp(0.5, 1.5),
+            volume: 1.0,
+            emphasis: chunk.emphasis,
+        };
+
+        if !announced {
+            announce_playing(app, plan, service, control, mirror).await;
+            announced = true;
+        }
+        emit_phrase_start(app, plan, chunk, index, &voice_id, mirror);
+
+        match service.speak(&request).await {
+            Ok(()) => {
+                if control.is_cancelled() {
+                    break;
+                }
+                // En Android la locución puede terminar justo cuando llega una
+                // pausa. Si ya está pausado, no se avanza: al reanudar se repite
+                // la frase actual en lugar de saltarla.
+                if control.is_paused() {
+                    continue;
+                }
+                emit_phrase_end(app, plan, chunk, index);
+                control.clear_phrase().await;
+                index += 1;
+                if !control.sleep_pausable(chunk.pause_after_ms).await {
+                    break;
+                }
+            }
+            Err(error) => {
+                if control.is_cancelled() {
+                    break;
+                }
+                if matches!(error, KoraError::Conflict(_)) {
+                    // Motor sin pausa nativa (Android): repetir la frase al
+                    // reanudar. `wait_while_paused` evita el bucle ocupado.
+                    continue;
+                }
+                return Err(SessionFailure { index, error });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn announce_playing<R: Runtime>(
+    app: &AppHandle<R>,
+    plan: &SessionPlan,
+    service: &TtsService,
+    control: &Control,
+    mirror: Option<&MirrorHub>,
+) {
+    control.set_state(TtsState::Playing).await;
+    let _ = service.media_state(TtsMediaState::Playing).await;
+    let offset = plan
+        .sequence
+        .chunks
+        .get(plan.start_index)
+        .map(|chunk| chunk.offset_start)
+        .unwrap_or(0);
+    emit_session(
+        app,
+        &plan.book_id,
+        plan.section,
+        TtsState::Playing,
+        None,
+        offset,
+        plan.excerpt_end,
+        mirror,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -644,6 +1095,7 @@ fn emit_session<R: Runtime>(
 fn tts_state_str(state: TtsState) -> &'static str {
     match state {
         TtsState::Idle => "idle",
+        TtsState::Preparing => "preparing",
         TtsState::Playing => "playing",
         TtsState::Paused => "paused",
         TtsState::Finished => "finished",
@@ -733,11 +1185,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn new_sessions_start_in_preparing_state() {
+        let control = Control::new(1.0, 1.0, HashMap::new());
+        let media = TtsMediaMetadata {
+            title: "Libro".into(),
+            artist: "Capítulo".into(),
+            album: None,
+            cover_path: None,
+        };
+        let status = control.status("libro", 0, false, &media).await;
+        assert!(matches!(status.state, TtsState::Preparing));
+        assert!(status.media.is_some());
+    }
+
+    #[tokio::test]
     async fn status_marks_excerpt_sessions() {
         let control = Control::new(1.0, 1.0, HashMap::new());
-        let status = control.status("libro", 3, true).await;
+        let media = TtsMediaMetadata {
+            title: "Libro".into(),
+            artist: "Capítulo".into(),
+            album: None,
+            cover_path: None,
+        };
+        let status = control.status("libro", 3, true, &media).await;
         assert!(status.excerpt);
         assert_eq!(status.section, Some(3));
+        assert_eq!(status.media.map(|media| media.title), Some("Libro".into()));
     }
 
     #[test]

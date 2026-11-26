@@ -10,6 +10,7 @@
   import { appearance } from "../lib/appearance";
   import { t, translate } from "../lib/i18n";
   import { readerOverlayOpen } from "../lib/readerOverlay";
+  import { ttsAutoAdvance } from "../lib/ttsPlayer";
   import {
     addMarker,
     addNote,
@@ -39,6 +40,7 @@
     sessionStart,
     startMirror,
     stopMirror,
+    supertonicPreload,
     ttsAssignCharacterVoice,
     ttsCharacterVoices,
     ttsCharacters,
@@ -283,7 +285,6 @@
   let practiceModelId = $state("tiny");
   let practiceDownload = $state<number | null>(null);
   let practiceSeconds = $state(0);
-  let autoAdvance = $state(true);
   let downloadingVoiceId = $state<string | null>(null);
 
   let ttsSettingsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -314,7 +315,11 @@
   let scrollFrame = 0;
 
   let ttsState = $derived(ttsStatus?.state ?? "idle");
-  let ttsActive = $derived(ttsState === "playing" || ttsState === "paused");
+  let ttsActive = $derived(
+    ttsState === "preparing" ||
+      ttsState === "playing" ||
+      ttsState === "paused",
+  );
 
   $effect(() => {
     // El motor TTS es global: si reproduce otro libro u otro audiolibro, el
@@ -496,7 +501,8 @@
       void persistProgress();
       void saveSettings();
       void endReadingSession();
-      void ttsStop().catch(() => {});
+      // La sesión TTS es global: sigue sonando si el usuario cambia de
+      // pantalla. Se detiene desde el mini-reproductor o al cerrar la app.
       if (isFullscreen) void getCurrentWindow().setFullscreen(false);
     };
   });
@@ -543,8 +549,11 @@
         rate: ttsRate,
         pitch: ttsPitch,
         chunkIndex: null,
+        phraseStart: null,
+        phraseEnd: null,
         error: event.payload.error,
         excerpt: Boolean(event.payload.excerpt),
+        media: ttsStatus?.media ?? null,
       };
       if (event.payload.error) ttsError = event.payload.error;
       if (
@@ -567,7 +576,9 @@
         ttsPhrase = null;
         ttsRects = [];
         if (session) void startReadingSession("reading");
-        if (autoAdvance && !wasExcerpt) void advanceTts(event.payload.section);
+        if ($ttsAutoAdvance && !wasExcerpt) {
+          void advanceTts(event.payload.section);
+        }
       }
     });
     if (disposed) {
@@ -600,6 +611,20 @@
         ttsStatus?.excerpt &&
           (ttsStatus.state === "playing" || ttsStatus.state === "paused"),
       );
+      if (
+        session &&
+        ttsStatus.bookId === session.bookId &&
+        ttsStatus.section === chapterIndex &&
+        ttsStatus.phraseStart != null &&
+        ttsStatus.phraseEnd != null
+      ) {
+        ttsPhrase = {
+          section: chapterIndex,
+          start: ttsStatus.phraseStart,
+          end: ttsStatus.phraseEnd,
+        };
+        scheduleTtsRects(true);
+      }
     } catch {
       ttsStatus = null;
       excerptTts = false;
@@ -797,6 +822,7 @@
       }
       if (disposed || request !== openRequest) return;
       void startReadingSession("reading");
+      void refreshTtsStatus();
     } catch (cause) {
       if (disposed || request !== openRequest) return;
       error = errorMessage(cause);
@@ -2292,12 +2318,29 @@
         preferences.voiceId &&
         installed.some((voice) => voice.id === preferences.voiceId)
           ? preferences.voiceId
-          : installed.find((voice) => voice.language === ttsLanguage)?.id ??
+          : installed.find(
+                (voice) =>
+                  voice.enhanced && voice.language === ttsLanguage,
+              )?.id ??
+            installed.find((voice) => voice.language === ttsLanguage)?.id ??
             installed[0]?.id ??
             "";
+      // Si la voz guardada ya no está en el catálogo (o Android aún no había
+      // publicado sus voces al abrir), persistimos la voz resuelta para que
+      // backend y lector no elijan motores distintos.
+      if (ttsVoiceId && preferences.voiceId !== ttsVoiceId) {
+        void saveTtsPreferences();
+      }
     } catch (cause) {
       ttsError = errorMessage(cause);
     }
+  }
+
+  function prewarmTtsVoice(voiceId: string) {
+    if (!voiceId.startsWith("supertonic:")) return;
+    void supertonicPreload().catch(() => {
+      // La precarga es best-effort; el primer play cargará el modelo.
+    });
   }
 
   async function initSyncEvents() {
@@ -2428,6 +2471,7 @@
   async function startTts() {
     if (!session || isPdf) return;
     if (!ensureTtsVoice()) return;
+    prewarmTtsVoice(ttsVoiceId);
 
     ttsError = null;
     excerptTts = false;
@@ -2485,7 +2529,9 @@
 
   async function toggleTts() {
     try {
-      if (ttsState === "playing") {
+      if (ttsState === "preparing") {
+        await stopTts();
+      } else if (ttsState === "playing") {
         ttsStatus = await ttsPause();
       } else if (ttsState === "paused") {
         ttsStatus = await ttsResume();
@@ -2517,6 +2563,7 @@
     ttsPanelOpen = true;
     ttsPlayerHidden = false;
     ttsDragY = 0;
+    prewarmTtsVoice(ttsVoiceId);
   }
 
   function minimizeTtsPanel() {
@@ -2575,6 +2622,7 @@
 
   function setTtsVoice(voiceId: string) {
     ttsVoiceId = voiceId;
+    prewarmTtsVoice(voiceId);
     void saveTtsPreferences();
   }
 
@@ -3206,11 +3254,13 @@
             name={ttsState === "playing" ? "pause" : "play"}
             size={16}
           />
-          {ttsState === "playing"
-            ? $t("reader.pause")
-            : ttsState === "paused"
-              ? $t("reader.resume")
-              : $t("reader.listen")}
+          {ttsState === "preparing"
+            ? $t("reader.preparingVoice")
+            : ttsState === "playing"
+              ? $t("reader.pause")
+              : ttsState === "paused"
+                ? $t("reader.resume")
+                : $t("reader.listen")}
         </button>
         {#if ttsActive}
           <button class="ghost tts-stop" onclick={stopTts}>
@@ -3300,7 +3350,12 @@
 
       <div class="tts-footer">
         <label class="tts-auto">
-          <input type="checkbox" bind:checked={autoAdvance} />
+          <input
+            type="checkbox"
+            checked={$ttsAutoAdvance}
+            onchange={(event) =>
+              ttsAutoAdvance.set(event.currentTarget.checked)}
+          />
           {$t("reader.autoAdvance")}
         </label>
         <label class="tts-sleep" title={$t("reader.sleepTimer")}>

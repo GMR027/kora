@@ -8,6 +8,7 @@
   import AnnotationPanel from "../lib/components/AnnotationPanel.svelte";
   import Icon from "../lib/components/Icon.svelte";
   import { t, translate } from "../lib/i18n";
+  import { ttsAutoAdvance } from "../lib/ttsPlayer";
   import {
     addMarker,
     buildAutoIndex,
@@ -237,7 +238,7 @@
   let practiceModelId = $state("tiny");
   let practiceDownload = $state<number | null>(null);
   let practiceSeconds = $state(0);
-  let autoAdvance = $state(true);
+
   let downloadingVoiceId = $state<string | null>(null);
   let practiceTimer: ReturnType<typeof setInterval> | undefined;
   let ttsSettingsTimer: ReturnType<typeof setTimeout> | undefined;
@@ -248,7 +249,11 @@
   let disposed = false;
 
   let ttsState = $derived(ttsStatus?.state ?? "idle");
-  let ttsActive = $derived(ttsState === "playing" || ttsState === "paused");
+  let ttsActive = $derived(
+    ttsState === "preparing" ||
+      ttsState === "playing" ||
+      ttsState === "paused",
+  );
   let installedVoices = $derived(voices.filter((voice) => voice.installed));
 
   let progressTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1455,8 +1460,11 @@
         rate: ttsRate,
         pitch: ttsPitch,
         chunkIndex: null,
+        phraseStart: null,
+        phraseEnd: null,
         error: event.payload.error,
         excerpt: Boolean(event.payload.excerpt),
+        media: ttsStatus?.media ?? null,
       };
       if (event.payload.error) voiceError = event.payload.error;
       if (
@@ -1477,7 +1485,9 @@
         excerptTts = false;
         ttsRange = null;
         refreshMarks();
-        if (autoAdvance && !wasExcerpt) void advanceTts(event.payload.section);
+        if ($ttsAutoAdvance && !wasExcerpt) {
+          void advanceTts(event.payload.section);
+        }
       }
     });
     if (disposed) {
@@ -1661,7 +1671,9 @@
 
   async function toggleTts() {
     try {
-      if (ttsState === "playing") {
+      if (ttsState === "preparing") {
+        await stopTts();
+      } else if (ttsState === "playing") {
         ttsStatus = await ttsPause();
       } else if (ttsState === "paused") {
         ttsStatus = await ttsResume();
@@ -1956,11 +1968,13 @@
       </button>
       <button class="ghost small" onclick={openMirrorPanel}>{$t("reader.mirror")}</button>
       <button class="ghost small" onclick={toggleTts} disabled={!installedVoice}>
-        {ttsState === "playing"
-          ? $t("reader.pause")
-          : ttsState === "paused"
-            ? $t("reader.resume")
-            : $t("reader.listen")}
+        {ttsState === "preparing"
+          ? $t("reader.preparingVoice")
+          : ttsState === "playing"
+            ? $t("reader.pause")
+            : ttsState === "paused"
+              ? $t("reader.resume")
+              : $t("reader.listen")}
       </button>
       {#if ttsActive}
         <button class="ghost small" onclick={stopTts}>{$t("reader.stop")}</button>
@@ -2009,7 +2023,12 @@
       <button class="ghost small" onclick={openCharacterPanel}>{$t("reader.voices")}</button>
       <button class="ghost small" onclick={openPracticePanel}>{$t("reader.practice")}</button>
       <label class="tts-auto">
-        <input type="checkbox" bind:checked={autoAdvance} />
+        <input
+          type="checkbox"
+          checked={$ttsAutoAdvance}
+          onchange={(event) =>
+            ttsAutoAdvance.set(event.currentTarget.checked)}
+        />
         {$t("reader.autoAdvance")}
       </label>
       <button

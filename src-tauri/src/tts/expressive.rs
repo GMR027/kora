@@ -14,7 +14,9 @@ pub const NARRATOR: &str = "Narrador";
 pub const DIALOGUE: &str = "Diálogo";
 
 const MAX_CHUNK_CHARS: usize = 240;
-const SEQUENCE_VERSION: u32 = 1;
+// v2: el texto hablado pasa por `sanitize_speech` (símbolos y puntuación
+// repetida ya no se verbalizan). Las secuencias v1 cacheadas se regeneran.
+const SEQUENCE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -636,7 +638,89 @@ fn scaled(value: u32, settings: &ExpressiveSettings) -> u32 {
 }
 
 fn normalize_speech(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    sanitize_speech(text)
+}
+
+/// Limpia el texto que se envía al motor de voz sin tocar el texto visible.
+///
+/// Los motores TTS tienden a verbalizar símbolos como `??`, `____`, `$`, `%`
+/// o `^`. Aquí se conservan letras, números, acentos y la puntuación que aporta
+/// prosodia; el resto se convierte en separación y las repeticiones de
+/// puntuación se reducen a una sola.
+pub fn sanitize_speech(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+
+    let chars: Vec<char> = text.nfc().collect();
+    let mut output = String::with_capacity(text.len());
+    let mut last_was_space = true;
+
+    for (index, ch) in chars.iter().copied().enumerate() {
+        let previous = index
+            .checked_sub(1)
+            .and_then(|value| chars.get(value))
+            .copied();
+        let next = chars.get(index + 1).copied();
+
+        let mapped = match ch {
+            '\u{00A0}' | '\u{2007}' | '\u{202F}' => Some(' '),
+            '\n' | '\r' | '\t' => Some(' '),
+            '…' => Some('.'),
+            '.' | ',' | ';' | ':' | '!' | '?' => Some(ch),
+            '¿' | '¡' => None,
+            '\'' | '’' => {
+                if previous.is_some_and(|value| value.is_alphanumeric())
+                    && next.is_some_and(|value| value.is_alphanumeric())
+                {
+                    Some('\'')
+                } else {
+                    None
+                }
+            }
+            value if value.is_alphanumeric() => Some(value),
+            value if value.is_whitespace() => Some(' '),
+            _ => Some(' '),
+        };
+
+        let Some(mapped) = mapped else {
+            continue;
+        };
+
+        if mapped == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+            output.push(' ');
+            continue;
+        }
+
+        if is_speech_punctuation(mapped) {
+            while output.ends_with(' ') {
+                output.pop();
+            }
+            if output.is_empty() {
+                continue;
+            }
+            match output.chars().next_back() {
+                Some(previous) if is_speech_punctuation(previous) => {
+                    if matches!(mapped, '?' | '!') && !matches!(previous, '?' | '!') {
+                        output.pop();
+                        output.push(mapped);
+                    }
+                }
+                _ => output.push(mapped),
+            }
+        } else {
+            output.push(mapped);
+        }
+        last_was_space = false;
+    }
+
+    output.trim().to_string()
+}
+
+fn is_speech_punctuation(ch: char) -> bool {
+    matches!(ch, '.' | ',' | ';' | ':' | '!' | '?')
 }
 
 fn ends_sentence(word: &str) -> bool {
@@ -730,6 +814,32 @@ mod tests {
     fn build(html: &str) -> SpeechSequence {
         let source = extract_text(html);
         build_from_text(0, &source, &ExpressiveSettings::default())
+    }
+
+    #[test]
+    fn sanitize_removes_symbol_noise() {
+        assert_eq!(sanitize_speech("Hola?? ____ $%^ mundo"), "Hola? mundo");
+        assert_eq!(sanitize_speech("?? ____ $%^"), "");
+    }
+
+    #[test]
+    fn sanitize_keeps_accents_and_prosody() {
+        assert_eq!(sanitize_speech("¿Qué tal? ¡Bien!"), "Qué tal? Bien!");
+        assert_eq!(sanitize_speech("—Hola —dijo."), "Hola dijo.");
+    }
+
+    #[test]
+    fn sanitize_splits_words_joined_by_symbols() {
+        assert_eq!(sanitize_speech("foo_bar/baz"), "foo bar baz");
+        assert_eq!(sanitize_speech("COVID-19 y 50%"), "COVID 19 y 50");
+    }
+
+    #[test]
+    fn chunks_use_sanitized_speech_but_visible_text() {
+        let sequence = build("<p>Hola ____ $%^ mundo.</p>");
+        assert_eq!(sequence.chunks.len(), 1);
+        assert!(sequence.chunks[0].text.contains("____"));
+        assert_eq!(sequence.chunks[0].speech, "Hola mundo.");
     }
 
     #[test]

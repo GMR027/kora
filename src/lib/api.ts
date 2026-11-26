@@ -417,6 +417,7 @@ export const supertonicDownload = () => invoke<void>("supertonic_download");
 export const supertonicDelete = () => invoke<void>("supertonic_delete");
 
 export const supertonicUnload = () => invoke<void>("supertonic_unload");
+export const supertonicPreload = () => invoke<void>("supertonic_preload");
 
 export const ttsSynthesize = (request: SynthesisRequest) =>
   invoke<SynthesisOutput>("tts_synthesize", { request });

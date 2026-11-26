@@ -1487,8 +1487,11 @@ function startTts(bookId: string, fromOffset: { section: number; offset: number;
     rate: tts.status.rate,
     pitch: tts.status.pitch,
     chunkIndex: 0,
+    phraseStart: null,
+    phraseEnd: null,
     error: null,
     excerpt: tts.end != null,
+    media: null,
   };
   emit("tts::state", {
     bookId,
@@ -1529,8 +1532,11 @@ function stopTts() {
     rate: tts.status.rate,
     pitch: tts.status.pitch,
     chunkIndex: null,
+    phraseStart: null,
+    phraseEnd: null,
     error: null,
     excerpt: false,
+    media: null,
   };
   if (previousBook) {
     emit("tts::state", {
@@ -5002,6 +5008,7 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
           streaming: true,
           available: true,
           supportsPause: true,
+          prefetch: false,
         },
         {
           id: "neutts",
@@ -5011,6 +5018,7 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
           streaming: false,
           available: true,
           supportsPause: true,
+          prefetch: false,
         },
       ];
 
@@ -6065,8 +6073,11 @@ function installDemoBackend() {
       rate: 1,
       pitch: 1,
       chunkIndex: null,
+      phraseStart: null,
+      phraseEnd: null,
       error: null,
       excerpt: false,
+      media: null,
     },
     text: "",
     words: [],

@@ -9,9 +9,9 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 Kora se descarga únicamente desde el clúster oficial:
 
 - Landing y descargas: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.1.9-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.1.9_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.1.9-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.2.0-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.2.0_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.2.0-1.x86_64.rpm>
 
 La app consulta `https://kora.iguzman.com.mx/downloads/latest.json` y descarga
 la actualización desde ese mismo host. GitHub se usa solo para el código

@@ -210,6 +210,7 @@ pub fn run() {
             commands::tts::supertonic_download,
             commands::tts::supertonic_delete,
             commands::tts::supertonic_unload,
+            commands::tts::supertonic_preload,
             commands::tts::start_tts,
             commands::tts::pause_tts,
             commands::tts::resume_tts,

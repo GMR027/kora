@@ -407,6 +407,7 @@ export interface EngineInfo {
   streaming: boolean;
   available: boolean;
   supportsPause: boolean;
+  prefetch: boolean;
 }
 
 export interface VoiceProfile {
@@ -513,6 +514,7 @@ export interface VoiceDownloadProgress {
 
 export type TtsState =
   | "idle"
+  | "preparing"
   | "playing"
   | "paused"
   | "finished"
@@ -526,6 +528,14 @@ export interface TtsOffset {
   end?: number;
 }
 
+export interface TtsMediaMetadata {
+  title: string;
+  /** Capítulo o página actual. */
+  artist: string;
+  album: string | null;
+  coverPath: string | null;
+}
+
 export interface TtsStatus {
   bookId: string | null;
   section: number | null;
@@ -533,9 +543,12 @@ export interface TtsStatus {
   rate: number;
   pitch: number;
   chunkIndex: number | null;
+  phraseStart: number | null;
+  phraseEnd: number | null;
   error: string | null;
   /** La sesión reproduce solo un extracto seleccionado. */
   excerpt: boolean;
+  media: TtsMediaMetadata | null;
 }
 
 export interface TtsPhraseEvent {

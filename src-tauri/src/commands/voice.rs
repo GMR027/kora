@@ -689,7 +689,7 @@ pub async fn voice_clone_preview(
         .await?
         .ok_or_else(|| KoraError::NotFound(format!("el perfil {id} no existe")))?;
 
-    let text = text.trim();
+    let text = crate::tts::sanitize_speech(&text);
     if text.is_empty() || text.chars().count() > 400 {
         return Err(KoraError::InvalidInput(
             "la vista previa debe tener entre 1 y 400 caracteres".into(),
@@ -702,7 +702,7 @@ pub async fn voice_clone_preview(
 
     let chunk = engine
         .synthesize(&SynthesisRequest {
-            text: text.to_string(),
+            text,
             voice_id: format!("clone:{id}"),
             rate: 1.0,
             pitch: 1.0,

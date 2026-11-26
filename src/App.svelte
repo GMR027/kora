@@ -1,10 +1,19 @@
 <script lang="ts">
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { fade, fly } from "svelte/transition";
   import AppShell from "./lib/components/AppShell.svelte";
+  import Icon from "./lib/components/Icon.svelte";
   import Spinner from "./lib/components/Spinner.svelte";
   import ToastHost from "./lib/components/ToastHost.svelte";
+  import {
+    initTtsPlayer,
+    stopTtsPlayback,
+    toggleTtsPlayback,
+    ttsPlayback,
+    ttsReaderVisible,
+  } from "./lib/ttsPlayer";
   import Onboarding from "./views/Onboarding.svelte";
   import { appInfo, getAccount, errorMessage } from "./lib/api";
   import { loadView } from "./lib/views";
@@ -37,6 +46,10 @@
   let readerLocator = $state<Locator | null>(null);
   let readerAutoListen = $state(false);
   let audiobookIntent = $state<{ bookId: string } | null>(null);
+
+  $effect(() => {
+    ttsReaderVisible.set(tab === "reader");
+  });
 
   function openReader(id: string, locator: Locator | null = null) {
     readerAutoListen = false;
@@ -97,6 +110,7 @@
   onMount(() => {
     void boot();
     void checkUpdatesInBackground();
+    void initTtsPlayer();
     let unlisten: UnlistenFn | undefined;
     let unlistenConversion: UnlistenFn | undefined;
     let unlistenConversionError: UnlistenFn | undefined;
@@ -303,6 +317,67 @@
   </AppShell>
 {/if}
 
+{#if $ttsPlayback && tab !== "reader" && ($ttsPlayback.state === "preparing" || $ttsPlayback.state === "playing" || $ttsPlayback.state === "paused")}
+  <div class="tts-global" role="region" aria-label={$t("reader.listen")}>
+    <button
+      class="tts-global-copy"
+      onclick={() => {
+        if (!$ttsPlayback?.bookId) return;
+        openReader($ttsPlayback.bookId, {
+          section: $ttsPlayback.section ?? 0,
+          offset: $ttsPlayback.phraseStart ?? 0,
+        });
+      }}
+      title={$t("reader.showPlayer")}
+    >
+      <span class="tts-global-cover">
+        {#if $ttsPlayback.media?.coverPath}
+          <img
+            src={convertFileSrc($ttsPlayback.media.coverPath)}
+            alt=""
+            loading="lazy"
+          />
+        {:else}
+          <Icon name="headphones" size={16} />
+        {/if}
+      </span>
+      <span class="tts-global-text">
+        <strong>{$ttsPlayback.media?.title ?? $t("reader.listen")}</strong>
+        <small>
+          {$ttsPlayback.state === "preparing"
+            ? $t("reader.preparingVoice")
+            : $ttsPlayback.media?.artist ?? $t("reader.listen")}
+        </small>
+      </span>
+    </button>
+    {#if $ttsPlayback.state !== "preparing"}
+      <button
+        class="tts-global-control"
+        onclick={() => void toggleTtsPlayback()}
+        aria-label={$ttsPlayback.state === "playing"
+          ? $t("reader.pause")
+          : $t("reader.resume")}
+        title={$ttsPlayback.state === "playing"
+          ? $t("reader.pause")
+          : $t("reader.resume")}
+      >
+        <Icon
+          name={$ttsPlayback.state === "playing" ? "pause" : "play"}
+          size={16}
+        />
+      </button>
+    {/if}
+    <button
+      class="tts-global-control stop"
+      onclick={() => void stopTtsPlayback()}
+      aria-label={$t("reader.stop")}
+      title={$t("reader.stop")}
+    >
+      <Icon name="stop" size={14} />
+    </button>
+  </div>
+{/if}
+
 <ToastHost />
 
 <style>
@@ -351,6 +426,112 @@
 
   .screen {
     min-height: calc(100vh - 8rem);
+  }
+
+  .tts-global {
+    position: fixed;
+    right: 1.25rem;
+    bottom: 1.25rem;
+    z-index: 70;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    max-width: min(26rem, calc(100vw - 2rem));
+    padding: 0.4rem;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: 0 18px 44px -22px color-mix(in srgb, #000 55%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .tts-global-copy {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+    padding: 0.2rem 0.35rem;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .tts-global-copy:hover {
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+  }
+
+  .tts-global-cover {
+    display: grid;
+    place-items: center;
+    width: 2.35rem;
+    height: 2.35rem;
+    flex: none;
+    overflow: hidden;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+    color: var(--accent);
+  }
+
+  .tts-global-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .tts-global-text {
+    display: grid;
+    min-width: 0;
+  }
+
+  .tts-global-text strong,
+  .tts-global-text small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tts-global-text strong {
+    font-size: 0.82rem;
+  }
+
+  .tts-global-text small {
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  .tts-global-control {
+    display: grid;
+    place-items: center;
+    width: 2.15rem;
+    height: 2.15rem;
+    flex: none;
+    border: 0;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+    cursor: pointer;
+  }
+
+  .tts-global-control:hover {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+  }
+
+  .tts-global-control.stop {
+    background: transparent;
+    color: var(--muted);
+  }
+
+  @media (max-width: 700px) {
+    .tts-global {
+      left: 0.75rem;
+      right: 0.75rem;
+      bottom: calc(5.2rem + env(safe-area-inset-bottom));
+      max-width: none;
+    }
   }
 
   .primary {
