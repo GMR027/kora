@@ -427,6 +427,8 @@ pub async fn start_tts(
         tracing::warn!(%error, "no se pudo detener el audiolibro antes del TTS");
     }
 
+    let progress_book_id = book_id.clone();
+    let progress_section = from_offset.section;
     let plan = SessionPlan {
         book_id,
         section: from_offset.section,
@@ -441,7 +443,27 @@ pub async fn start_tts(
         media: prepared.media,
     };
 
-    state.tts_session.start(app, plan).await
+    let status = state.tts_session.start(app, plan).await?;
+
+    // Si el libro tiene una ficha de audiolibro bajo demanda, recordamos el
+    // capítulo que se empieza a narrar aunque el TTS se haya iniciado fuera de
+    // Audiolibros (lector, mini-reproductor o avance automático).
+    let owner = state.identity.account.id.clone();
+    if let Ok(Some(audiobook)) = state
+        .storage
+        .audiobooks
+        .get_on_demand_by_book(&progress_book_id, &owner)
+        .await
+        && let Err(error) = state
+            .storage
+            .audiobooks
+            .save_progress(&audiobook.id, &owner, 0, progress_section as i64)
+            .await
+    {
+        tracing::warn!(%error, "no se pudo guardar el capítulo bajo demanda");
+    }
+
+    Ok(status)
 }
 
 #[tauri::command]

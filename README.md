@@ -9,9 +9,9 @@ sincronización peer-to-peer en red local. Construido con **Rust + Tauri 2** y
 Kora se descarga únicamente desde el clúster oficial:
 
 - Landing y descargas: <https://kora.iguzman.com.mx/#descargas>
-- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.2.0-android.apk>
-- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.2.0_amd64.deb>
-- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.2.0-1.x86_64.rpm>
+- Android: <https://kora.iguzman.com.mx/downloads/Kora-0.2.1-android.apk>
+- Linux Debian/Ubuntu: <https://kora.iguzman.com.mx/downloads/Kora_0.2.1_amd64.deb>
+- Linux Fedora/RPM: <https://kora.iguzman.com.mx/downloads/Kora-0.2.1-1.x86_64.rpm>
 
 La app consulta `https://kora.iguzman.com.mx/downloads/latest.json` y descarga
 la actualización desde ese mismo host. GitHub se usa solo para el código
@@ -79,6 +79,7 @@ fuente: no se publican binarios, releases ni GitHub Pages.
 | Conversión PDF→EPUB | ✅ capítulos, OCR, reubicación de anotaciones y portada |
 | Conversión texto↔audio | ✅ EPUB/PDF→M4B desde la biblioteca y audiolibro sin texto→EPUB con Whisper |
 | Álbumes de audiolibros | ✅ colecciones ordenadas, mosaico de portadas y reproducción en cola |
+| Audiolibros bajo demanda | ✅ vínculo libro→audiolibro sin M4B; narración TTS en streaming por capítulo |
 | Generación M4B en Android | ✅ MediaCodec/MediaMuxer, servicio en primer plano y capítulos en el manifiesto |
 | Papelera y copias | ✅ restauración, ZIP verificado y purga |
 | CI de escritorio | ✅ workflow Linux añadido; mismas comprobaciones ejecutadas localmente |
@@ -249,6 +250,8 @@ migraciones corren dentro de una transacción por versión.
 | `0023_classification.sql` | Origen/confianza de categorías, alias, sugerencias y estado de clasificación |
 | `0024_trash_retry.sql` | Papelera lógica (`books.deleted_at`) y ajustes de narración para reintentos |
 | `0025_account_avatar.sql` | `avatar_hash`/`avatar_ext` de la foto de perfil local |
+| `0026_audiobook_albums.sql` | Álbumes locales y pertenencia ordenada de audiolibros |
+| `0027_audiobook_on_demand.sql` | Audiolibros bajo demanda (`audiobooks.delivery`) sin audio generado |
 
 Todas las tablas de contenido llevan `owner_account_id` (FK a `accounts`) y
 `origin_share_id` (FK opcional a `shares`). `foreign_keys=ON` se activa en cada
@@ -344,6 +347,7 @@ conexión del pool y `audit_log` es append-only.
 | `audiobook_voice_markers` / `voice_marker_status` | Marcadores de voz y estado de la escucha |
 | `start_voice_marker_listening` / `stop_voice_marker_listening` / `save_voice_marker_phrase` | Escucha del comando «Kora, marca esto» durante la reproducción |
 | `list_audiobooks` / `delete_audiobook` | Biblioteca de audiolibros |
+| `send_book_to_audiobooks` | Añade un libro a Audiolibros sin generar audio (narración bajo demanda) |
 | `play_audiobook` / `pause_audiobook` / `seek_audiobook` | Reproducción con búsqueda |
 | `set_audiobook_speed` / `audiobook_chapters` | Velocidad y capítulos con anclas al texto |
 | `set_audiobook_sleep_timer` / `set_audiobook_keep_screen_on` | Temporizador de sueño y pantalla encendida en el servicio Android |

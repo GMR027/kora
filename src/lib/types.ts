@@ -1039,6 +1039,9 @@ export type AudiobookStatus =
 
 export type AudiobookOrigin = "generated" | "external" | "tejido";
 
+/** `on_demand` se narra con TTS al elegir capítulo y no guarda audio. */
+export type AudiobookDelivery = "file" | "on_demand";
+
 export type NarrationStyle = "neutral" | "calm" | "dramatic" | "lively";
 
 export type ChapterSource =
@@ -1139,6 +1142,7 @@ export interface AudiobookInfo {
   voiceId: string | null;
   voiceName: string | null;
   status: AudiobookStatus;
+  delivery: AudiobookDelivery;
   origin: AudiobookOrigin;
   durationMs: number;
   audioHash: string | null;

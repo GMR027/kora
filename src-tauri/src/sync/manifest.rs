@@ -334,6 +334,7 @@ mod tests {
             book_id: "book-1".into(),
             voice_id: Some("voice-1".into()),
             status: AudiobookStatus::Done,
+            delivery: crate::storage::AudiobookDelivery::File,
             manifest_hash: Some("manifest".into()),
             manifest_ext: Some("json".into()),
             audio_hash: Some("audio".into()),

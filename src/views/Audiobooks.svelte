@@ -23,6 +23,7 @@
   import Icon from "../lib/components/Icon.svelte";
   import Spinner from "../lib/components/Spinner.svelte";
   import { audiobookPlayerHidden } from "../lib/playerUi";
+  import { stopTtsPlayback, ttsPlayback } from "../lib/ttsPlayer";
   import {
     addAudiobooksToAlbum,
     applyAudiobookTreatment,
@@ -82,6 +83,9 @@
     stopVoiceMarkerListening,
     transcribeAudiobookLater,
     ttsEngines,
+    ttsPause,
+    ttsResume,
+    ttsStart,
     ttsVoices,
     updateAudiobookAlbum,
     updateAudiobookChapters,
@@ -143,6 +147,7 @@
     PlaybackSnapshot,
     SharePermission,
     ShareView,
+    TtsSessionEvent,
     VoiceDescriptor,
     VoiceMarkerStatus,
     VoiceNote,
@@ -166,6 +171,7 @@
   type FilterId =
     | "all"
     | "favorites"
+    | "onDemand"
     | "generated"
     | "external"
     | "tejido"
@@ -212,6 +218,8 @@
   let modalChaptersLoading = $state(false);
   let speed = $state(1);
   let chapterAudioId: string | null = null;
+  let streamBusyId = $state<string | null>(null);
+  let streamChapters = $state<Record<string, AudiobookChapterInfo[]>>({});
 
   let selectedBookId = $state("");
   let voiceId = $state("");
@@ -285,8 +293,10 @@
   let unlisten: UnlistenFn | undefined;
   let unlistenDownload: UnlistenFn | undefined;
   let unlistenQueue: UnlistenFn | undefined;
+  let unlistenTts: UnlistenFn | undefined;
   let unlistenVoice: UnlistenFn | undefined;
   let unlistenVoiceError: UnlistenFn | undefined;
+  let lastStreamProgressKey = "";
   let progressHideTimer: ReturnType<typeof setTimeout> | undefined;
   let listeningSessionId: string | null = null;
   let listeningBookId: string | null = null;
@@ -350,7 +360,26 @@
   }
 
   function playableAlbumItems(album: AudiobookAlbumInfo): AudiobookInfo[] {
-    return albumItems(album).filter((item) => item.status === "done");
+    return albumItems(album).filter(
+      (item) => item.status === "done" && item.delivery !== "on_demand",
+    );
+  }
+
+  function isStreamPlaying(item: AudiobookInfo): boolean {
+    const status = $ttsPlayback;
+    return (
+      item.delivery === "on_demand" &&
+      status?.bookId === item.bookId &&
+      (status.state === "playing" || status.state === "preparing")
+    );
+  }
+
+  function isStreamPaused(item: AudiobookInfo): boolean {
+    return (
+      item.delivery === "on_demand" &&
+      $ttsPlayback?.bookId === item.bookId &&
+      $ttsPlayback.state === "paused"
+    );
   }
 
   let availableEngines = $derived(engines.filter((engine) => engine.available));
@@ -407,9 +436,16 @@
       count: audiobooks.filter((item) => item.favorite).length,
     },
     {
+      id: "onDemand",
+      label: $t("audiobooks.filterOnDemand"),
+      count: audiobooks.filter((item) => item.delivery === "on_demand").length,
+    },
+    {
       id: "generated",
       label: $t("audiobooks.filterGenerated"),
-      count: audiobooks.filter((item) => item.origin === "generated").length,
+      count: audiobooks.filter(
+        (item) => item.origin === "generated" && item.delivery !== "on_demand",
+      ).length,
     },
     {
       id: "external",
@@ -437,6 +473,12 @@
     } else if (filter === "processing") {
       result = result.filter(
         (item) => item.status === "pending" || item.status === "running",
+      );
+    } else if (filter === "onDemand") {
+      result = result.filter((item) => item.delivery === "on_demand");
+    } else if (filter === "generated") {
+      result = result.filter(
+        (item) => item.origin === "generated" && item.delivery !== "on_demand",
       );
     } else if (filter !== "all") {
       result = result.filter((item) => item.origin === filter);
@@ -620,6 +662,7 @@
       unlisten?.();
       unlistenDownload?.();
       unlistenQueue?.();
+      unlistenTts?.();
       unlistenVoice?.();
       unlistenVoiceError?.();
       if (progressHideTimer) clearTimeout(progressHideTimer);
@@ -883,7 +926,9 @@
     treatmentInitialId =
       item?.id ??
       playback?.audiobookId ??
-      audiobooks.find((entry) => entry.status === "done")?.id ??
+      audiobooks.find(
+        (entry) => entry.status === "done" && entry.delivery !== "on_demand",
+      )?.id ??
       null;
     treatmentOpen = true;
   }
@@ -1036,6 +1081,48 @@
       void refreshQueue();
     });
 
+    unlistenTts = await listen<TtsSessionEvent>("tts::state", (event) => {
+      const payload = event.payload;
+      const item = audiobooks.find(
+        (entry) =>
+          entry.delivery === "on_demand" && entry.bookId === payload.bookId,
+      );
+      if (!item) return;
+
+      if (
+        payload.state === "preparing" ||
+        payload.state === "playing" ||
+        payload.state === "paused"
+      ) {
+        const key = `${item.id}:${payload.section}`;
+        if (key !== lastStreamProgressKey) {
+          lastStreamProgressKey = key;
+          const now = new Date().toISOString();
+          audiobooks = audiobooks.map((entry) =>
+            entry.id === item.id
+              ? {
+                  ...entry,
+                  progressChapterIndex: payload.section,
+                  progressSection: payload.section,
+                  progressOffset: 0,
+                  lastListenedAt: now,
+                }
+              : entry,
+          );
+        }
+        if (payload.state === "playing" && !listeningSessionId) {
+          void startListeningSession(item.bookId);
+        }
+      } else if (
+        payload.state === "finished" ||
+        payload.state === "stopped" ||
+        payload.state === "error"
+      ) {
+        lastStreamProgressKey = "";
+        void endListeningSession();
+      }
+    });
+
     unlistenDownload = await listen<ModelDownloadProgress>(
       "tts-practice-download-progress",
       (event) => {
@@ -1161,8 +1248,34 @@
   async function loadModalChapters(audiobookId: string) {
     modalChapterId = audiobookId;
     modalChaptersLoading = true;
+    const item = audiobooks.find((entry) => entry.id === audiobookId);
     try {
-      modalChapters = await audiobookChapters(audiobookId);
+      if (item?.delivery === "on_demand") {
+        const cached = streamChapters[item.bookId];
+        if (cached) {
+          modalChapters = cached;
+          return;
+        }
+        const session = await readerOpen(item.bookId);
+        const list: AudiobookChapterInfo[] = session.document.sections.map(
+          (section, index) => ({
+            index,
+            title:
+              section.title ??
+              `${translate("audiobooks.sectionPage")} ${index + 1}`,
+            startMs: 0,
+            endMs: 0,
+            section: index,
+            offsetStart: 0,
+            offsetEnd: 0,
+            karaoke: false,
+          }),
+        );
+        streamChapters = { ...streamChapters, [item.bookId]: list };
+        modalChapters = list;
+      } else {
+        modalChapters = await audiobookChapters(audiobookId);
+      }
     } catch (cause) {
       modalChapters = [];
       error = errorMessage(cause);
@@ -2033,8 +2146,73 @@
     }
   }
 
+  async function toggleStreamPlayback(item: AudiobookInfo) {
+    const status = $ttsPlayback;
+    if (
+      status?.bookId === item.bookId &&
+      (status.state === "preparing" ||
+        status.state === "playing" ||
+        status.state === "paused")
+    ) {
+      try {
+        if (status.state === "paused") {
+          ttsPlayback.set(await ttsResume());
+        } else {
+          ttsPlayback.set(await ttsPause());
+        }
+      } catch (cause) {
+        error = errorMessage(cause);
+      }
+      return;
+    }
+    openChapters(item);
+  }
+
+  async function playStreamChapter(
+    item: AudiobookInfo,
+    chapter: AudiobookChapterInfo,
+  ) {
+    if (streamBusyId) return;
+    streamBusyId = item.id;
+    error = null;
+    try {
+      if (playback) {
+        try {
+          await stopAudiobook();
+        } catch {
+          // El reproductor de archivo ya podía estar detenido.
+        }
+        playback = null;
+        playerExpanded = false;
+        waveform = null;
+        waveformKey = null;
+      }
+      await endListeningSession();
+      await stopVoiceIfListening();
+      lastStreamProgressKey = "";
+      notice = translate("audiobooks.preparingNarration");
+      const status = await ttsStart(item.bookId, {
+        section: chapter.section,
+        offset: 0,
+      });
+      ttsPlayback.set(status);
+      notice = translate("audiobooks.onDemandStarted", {
+        title: item.bookTitle,
+      });
+      chaptersOpen = false;
+    } catch (cause) {
+      error = errorMessage(cause);
+    } finally {
+      streamBusyId = null;
+    }
+  }
+
   async function togglePlayback(item: AudiobookInfo) {
     error = null;
+    if (item.delivery === "on_demand") {
+      await toggleStreamPlayback(item);
+      return;
+    }
     if ($albumPlayback && !$albumPlayback.audiobookIds.includes(item.id)) {
       clearAlbumQueue();
     }
@@ -2121,6 +2299,13 @@
         playback = null;
         audiobookPlayerHidden.set(false);
         playerExpanded = false;
+      }
+      if (
+        item.delivery === "on_demand" &&
+        $ttsPlayback?.bookId === item.bookId
+      ) {
+        await stopTtsPlayback().catch(() => undefined);
+        await endListeningSession();
       }
       clearAlbumQueue();
       await deleteAudiobook(item.id);
@@ -2323,6 +2508,11 @@
   async function playChapter(chapter: AudiobookChapterInfo) {
     const id = modalChapterId;
     if (!id) return;
+    const item = audiobooks.find((entry) => entry.id === id);
+    if (item?.delivery === "on_demand") {
+      await playStreamChapter(item, chapter);
+      return;
+    }
     try {
       if (playback?.audiobookId !== id || !playback.playing) {
         await stopVoiceIfListening();
@@ -2902,8 +3092,12 @@
       {#each filteredAudiobooks as item (item.id)}
         <AudiobookCard
           {item}
-          playing={playback?.audiobookId === item.id && playback.playing}
-          busy={downloadingId === item.id || busy === item.id}
+          playing={(playback?.audiobookId === item.id && playback.playing) ||
+            isStreamPlaying(item)}
+          paused={isStreamPaused(item)}
+          busy={downloadingId === item.id ||
+            busy === item.id ||
+            streamBusyId === item.id}
           favoriteBusy={favoriteBusy === item.id}
           categoriesLabel={categoryLabelFor(item)}
           onPlay={() => togglePlayback(item)}
@@ -3567,7 +3761,9 @@
 
 <AudiobookTreatmentModal
   open={treatmentOpen}
-  audiobooks={audiobooks.filter((item) => item.status === "done")}
+  audiobooks={audiobooks.filter(
+    (item) => item.status === "done" && item.delivery !== "on_demand",
+  )}
   initialId={treatmentInitialId}
   busy={treating}
   {error}
@@ -3683,7 +3879,7 @@
 <AudiobookAlbumAddModal
   open={albumAddOpen && albumDetail !== null}
   album={albumDetail}
-  audiobooks={audiobooks}
+  audiobooks={audiobooks.filter((item) => item.delivery !== "on_demand")}
   busy={albumDetail ? albumBusy === albumDetail.id : false}
   onClose={() => (albumAddOpen = false)}
   onAdd={(ids) => void addAlbumItems(ids)}

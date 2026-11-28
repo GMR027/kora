@@ -7,6 +7,7 @@
   let {
     item,
     playing = false,
+    paused = false,
     busy = false,
     favoriteBusy = false,
     onPlay,
@@ -24,6 +25,7 @@
   }: {
     item: AudiobookInfo;
     playing?: boolean;
+    paused?: boolean;
     busy?: boolean;
     favoriteBusy?: boolean;
     onPlay: () => void;
@@ -43,6 +45,7 @@
   let broken = $state(false);
   let failed = $derived(item.status === "failed");
   let cancelled = $derived(item.status === "cancelled");
+  let onDemand = $derived(item.delivery === "on_demand");
   let cover = $derived(
     item.coverPath && !broken ? convertFileSrc(item.coverPath) : null,
   );
@@ -53,6 +56,7 @@
     ),
   );
   let originLabel = $derived.by(() => {
+    if (onDemand) return $t("audiobooks.onDemandBadge");
     if (item.origin === "tejido") return $t("audiobooks.originTejido");
     if (item.origin === "external") {
       return item.audioExt
@@ -62,6 +66,11 @@
     return $t("audiobooks.originGeneratedShort");
   });
   let stateLabel = $derived.by(() => {
+    if (onDemand) {
+      if (playing) return $t("audiobooks.onDemandPlaying");
+      if (paused) return $t("audiobooks.onDemandPaused");
+      return $t("audiobooks.onDemandState");
+    }
     if (cancelled) return $t("audiobooks.statusCancelled");
     if (failed) return $t("audiobooks.statusFailed");
     if (item.status !== "done") return $t("audiobooks.statusGenerating");
@@ -71,6 +80,13 @@
     return $t("audiobooks.noStarted");
   });
   let chapterLabel = $derived.by(() => {
+    if (onDemand) {
+      return item.lastListenedAt
+        ? $t("audiobooks.onDemandLastChapter", {
+            number: item.progressChapterIndex + 1,
+          })
+        : $t("audiobooks.onDemandChapters");
+    }
     if (item.progressChapterTitle) {
       return $t("audiobooks.chapterNow", {
         chapter: item.progressChapterIndex + 1,
@@ -235,15 +251,19 @@
 
     <div class="voice-line">
       <Icon name="headphones" size={15} />
-      <span class="voice-name">{item.voiceName ?? $t("audiobooks.originImportedShort")}</span>
-      <span class="dot" aria-hidden="true">·</span>
-      <span class="duration">{formatDuration(item.durationMs)}</span>
+      {#if onDemand}
+        <span class="voice-name">{$t("audiobooks.onDemandVoice")}</span>
+      {:else}
+        <span class="voice-name">{item.voiceName ?? $t("audiobooks.originImportedShort")}</span>
+        <span class="dot" aria-hidden="true">·</span>
+        <span class="duration">{formatDuration(item.durationMs)}</span>
+      {/if}
     </div>
 
     <div class="progress-block">
       <div class="progress-head">
         <span class="chapter" title={chapterLabel}>{chapterLabel}</span>
-        <span class="percent">{percent}%</span>
+        <span class="percent">{onDemand ? "—" : `${percent}%`}</span>
       </div>
       <div class="progress-track" aria-hidden="true">
         <span style={`width:${percent}%`}></span>
@@ -275,38 +295,40 @@
           >
             <Icon name="book" size={16} />
           </button>
-          {#if onAlbum}
+          {#if !onDemand}
+            {#if onAlbum}
+              <button
+                class="icon-action"
+                type="button"
+                onclick={onAlbum}
+                disabled={item.status !== "done" || busy}
+                title={$t("audiobooks.addToAlbum")}
+                aria-label={$t("audiobooks.addToAlbum")}
+              >
+                <Icon name="grid" size={16} />
+              </button>
+            {/if}
             <button
               class="icon-action"
               type="button"
-              onclick={onAlbum}
+              onclick={onShare}
               disabled={item.status !== "done" || busy}
-              title={$t("audiobooks.addToAlbum")}
-              aria-label={$t("audiobooks.addToAlbum")}
+              title={$t("audiobooks.share")}
+              aria-label={$t("audiobooks.share")}
             >
-              <Icon name="grid" size={16} />
+              <Icon name="share" size={16} />
+            </button>
+            <button
+              class="icon-action"
+              type="button"
+              onclick={onDownload}
+              disabled={item.status !== "done" || busy}
+              title={$t("audiobooks.download")}
+              aria-label={$t("audiobooks.download")}
+            >
+              <Icon name="download" size={16} />
             </button>
           {/if}
-          <button
-            class="icon-action"
-            type="button"
-            onclick={onShare}
-            disabled={item.status !== "done" || busy}
-            title={$t("audiobooks.share")}
-            aria-label={$t("audiobooks.share")}
-          >
-            <Icon name="share" size={16} />
-          </button>
-          <button
-            class="icon-action"
-            type="button"
-            onclick={onDownload}
-            disabled={item.status !== "done" || busy}
-            title={$t("audiobooks.download")}
-            aria-label={$t("audiobooks.download")}
-          >
-            <Icon name="download" size={16} />
-          </button>
           <button
             class="icon-action"
             type="button"

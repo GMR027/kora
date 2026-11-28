@@ -538,6 +538,18 @@ pub enum AudiobookOrigin {
     Tejido,
 }
 
+/// Forma de entrega del audiolibro. `File` tiene audio empaquetado; `OnDemand`
+/// es una ficha vinculada al libro que se narra con el lector TTS al elegir un
+/// capítulo y no ocupa espacio en disco.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
+pub enum AudiobookDelivery {
+    #[default]
+    File,
+    OnDemand,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Audiobook {
@@ -545,6 +557,8 @@ pub struct Audiobook {
     pub book_id: String,
     pub voice_id: Option<String>,
     pub status: AudiobookStatus,
+    #[serde(default)]
+    pub delivery: AudiobookDelivery,
     pub manifest_hash: Option<String>,
     pub manifest_ext: Option<String>,
     pub audio_hash: Option<String>,

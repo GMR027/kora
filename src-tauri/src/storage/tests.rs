@@ -1,8 +1,8 @@
 use crate::storage::AssetKind;
 use crate::storage::model::{
-    AnnotationKind, AudiobookOrigin, AudiobookStatus, BookFormat, BookOrigin, CategoryAssignSource,
-    NewAchievement, NewAnnotation, NewAudiobook, NewAudiobookAlbum, NewBook, NewCategory,
-    NewCategorySuggestion, NewCharacterVoice, NewDiaryEntry, NewExtract, NewNote,
+    AnnotationKind, AudiobookDelivery, AudiobookOrigin, AudiobookStatus, BookFormat, BookOrigin,
+    CategoryAssignSource, NewAchievement, NewAnnotation, NewAudiobook, NewAudiobookAlbum, NewBook,
+    NewCategory, NewCategorySuggestion, NewCharacterVoice, NewDiaryEntry, NewExtract, NewNote,
     NewPracticeAttempt, NewReaction, NewReaderSettings, NewReadingProgress, NewShare,
     NewTtsPreferences, NewTtsSequence, NewVoice, NewVoiceNote, OffsetUnit, ReactionKind,
     ResourceType, SuggestionSource, SuggestionStatus, SyncState, VoiceKind,
@@ -1678,6 +1678,7 @@ async fn audiobook_origin_scope_and_progress_round_trip() {
         .expect("audiolibro");
 
     assert_eq!(audiobook.origin, AudiobookOrigin::Tejido);
+    assert_eq!(audiobook.delivery, AudiobookDelivery::File);
     assert_eq!(audiobook.scope.as_deref(), Some(r#"{"kind":"fullBook"}"#));
     assert!(
         test.storage
@@ -1710,6 +1711,84 @@ async fn audiobook_origin_scope_and_progress_round_trip() {
         .expect("último progreso")
         .expect("progreso");
     assert_eq!(latest.audiobook_id, audiobook.id);
+}
+
+#[tokio::test]
+async fn on_demand_audiobook_links_book_without_audio() {
+    let (test, identity) = TestStorage::with_identity().await;
+    let owner = identity.account.id.clone();
+    let book = test
+        .storage
+        .books
+        .create(new_book(&owner, &hash("on-demand"), "Bajo demanda"))
+        .await
+        .expect("libro");
+
+    let audiobook = test
+        .storage
+        .audiobooks
+        .create_on_demand(NewAudiobook {
+            book_id: book.id.clone(),
+            voice_id: None,
+            status: AudiobookStatus::Done,
+            manifest_hash: None,
+            manifest_ext: None,
+            audio_hash: None,
+            audio_ext: None,
+            scope: Some(r#"{"kind":"fullBook"}"#.to_string()),
+            origin: AudiobookOrigin::Generated,
+            duration_ms: None,
+            narration: None,
+            cast: None,
+            owner_account_id: owner.clone(),
+            origin_share_id: None,
+        })
+        .await
+        .expect("audiolibro bajo demanda");
+
+    assert_eq!(audiobook.delivery, AudiobookDelivery::OnDemand);
+    assert!(audiobook.audio_hash.is_none());
+    assert!(audiobook.manifest_hash.is_none());
+
+    let linked = test
+        .storage
+        .audiobooks
+        .get_on_demand_by_book(&book.id, &owner)
+        .await
+        .expect("buscar vínculo")
+        .expect("vínculo");
+    assert_eq!(linked.id, audiobook.id);
+
+    let ids = test
+        .storage
+        .audiobooks
+        .list_book_ids_by_owner(&owner)
+        .await
+        .expect("ids con audio");
+    assert!(ids.contains(&book.id));
+
+    test.storage
+        .audiobooks
+        .save_progress(&audiobook.id, &owner, 0, 3)
+        .await
+        .expect("guardar capítulo");
+    let progress = test
+        .storage
+        .audiobooks
+        .progress(&audiobook.id)
+        .await
+        .expect("leer progreso")
+        .expect("progreso");
+    assert_eq!(progress.chapter_index, 3);
+    assert!(
+        test.storage
+            .audiobooks
+            .latest_progress_by_owner(&owner)
+            .await
+            .expect("último progreso de archivo")
+            .is_none(),
+        "el progreso bajo demanda no debe alimentar al reproductor de archivos"
+    );
 }
 
 #[tokio::test]

@@ -26,10 +26,11 @@ use crate::commands::reader::owned_book;
 use crate::error::{KoraError, Result};
 use crate::reader::SourceText;
 use crate::state::AppState;
-use crate::storage::NewAudiobookQueueItem;
 use crate::storage::{
-    AssetKind, AssetRef, Audiobook, AudiobookOrigin, AudiobookProgress, AudiobookStatus, Book,
+    AssetKind, AssetRef, Audiobook, AudiobookDelivery, AudiobookOrigin, AudiobookProgress,
+    AudiobookStatus, Book,
 };
+use crate::storage::{NewAudiobook, NewAudiobookQueueItem};
 use crate::tts::practice;
 use crate::tts::{CharacterInfo, DIALOGUE, ExpressiveSettings, NARRATOR, build_from_text};
 
@@ -43,6 +44,7 @@ pub struct AudiobookInfo {
     pub voice_id: Option<String>,
     pub voice_name: Option<String>,
     pub status: AudiobookStatus,
+    pub delivery: AudiobookDelivery,
     pub origin: AudiobookOrigin,
     pub duration_ms: i64,
     pub audio_hash: Option<String>,
@@ -133,6 +135,57 @@ pub async fn list_audiobooks(state: State<'_, AppState>) -> Result<Vec<Audiobook
         infos.push(info_for(&state, &audiobook, progress_by_audiobook.get(&audiobook.id)).await?);
     }
     Ok(infos)
+}
+
+/// Añade el libro a Audiolibros sin sintetizar nada. La ficha bajo demanda
+/// reutiliza el texto y la voz TTS del libro; el audio se produce al elegir un
+/// capítulo. Es idempotente: si ya existe una ficha así, la devuelve.
+#[tauri::command]
+pub async fn send_book_to_audiobooks(
+    state: State<'_, AppState>,
+    book_id: String,
+) -> Result<AudiobookInfo> {
+    let book = owned_book(&state, &book_id).await?;
+    if book.audio_only {
+        return Err(KoraError::Unsupported(
+            "este libro solo existe como audio; no se puede enviar a audiolibros".into(),
+        ));
+    }
+
+    let owner = state.identity.account.id.clone();
+    if let Some(existing) = state
+        .storage
+        .audiobooks
+        .get_on_demand_by_book(&book.id, &owner)
+        .await?
+    {
+        let progress = state.storage.audiobooks.progress(&existing.id).await?;
+        return info_for(&state, &existing, progress.as_ref()).await;
+    }
+
+    let scope = serde_json::to_string(&AudiobookScope::FullBook).ok();
+    let audiobook = state
+        .storage
+        .audiobooks
+        .create_on_demand(NewAudiobook {
+            book_id: book.id,
+            voice_id: None,
+            status: AudiobookStatus::Done,
+            manifest_hash: None,
+            manifest_ext: None,
+            audio_hash: None,
+            audio_ext: None,
+            scope,
+            origin: AudiobookOrigin::Generated,
+            duration_ms: None,
+            narration: None,
+            cast: None,
+            owner_account_id: owner,
+            origin_share_id: None,
+        })
+        .await?;
+
+    info_for(&state, &audiobook, None).await
 }
 
 #[tauri::command]
@@ -880,6 +933,11 @@ pub async fn play_audiobook(
     audiobook_id: String,
 ) -> Result<PlaybackSnapshot> {
     let audiobook = owned_audiobook(&state, &audiobook_id).await?;
+    if audiobook.delivery == AudiobookDelivery::OnDemand {
+        return Err(KoraError::Unsupported(
+            "este audiolibro se narra bajo demanda: elige un capítulo para escucharlo".into(),
+        ));
+    }
     if audiobook.status != AudiobookStatus::Done {
         return Err(KoraError::Unsupported(
             "el audiolibro todavía no está listo".into(),
@@ -1706,7 +1764,12 @@ async fn info_for(
     progress: Option<&AudiobookProgress>,
 ) -> Result<AudiobookInfo> {
     let book = state.storage.books.get(&audiobook.book_id).await?;
-    let manifest = read_manifest(state, audiobook).ok();
+    let on_demand = audiobook.delivery == AudiobookDelivery::OnDemand;
+    let manifest = if on_demand {
+        None
+    } else {
+        read_manifest(state, audiobook).ok()
+    };
     let duration_ms = audiobook.duration_ms.unwrap_or(0);
     let position_ms = progress
         .map(|progress| progress.position_ms)
@@ -1755,11 +1818,20 @@ async fn info_for(
             .as_ref()
             .map(|manifest| manifest.voice.name.clone()),
         status: audiobook.status,
+        delivery: audiobook.delivery,
         origin: audiobook.origin,
         duration_ms,
         audio_hash: audiobook.audio_hash.clone(),
         audio_ext: audiobook.audio_ext.clone(),
-        scope: manifest.as_ref().map(|manifest| manifest.scope.clone()),
+        scope: manifest
+            .as_ref()
+            .map(|manifest| manifest.scope.clone())
+            .or_else(|| {
+                audiobook
+                    .scope
+                    .as_deref()
+                    .and_then(|scope| serde_json::from_str(scope).ok())
+            }),
         narration: manifest.as_ref().and_then(|manifest| manifest.narration),
         cast: manifest
             .as_ref()
@@ -1784,10 +1856,18 @@ async fn info_for(
         percent,
         progress_chapter_index,
         progress_chapter_title: progress_chapter.map(|chapter| chapter.title.clone()),
-        progress_section: progress_chapter.map(|chapter| chapter.section).unwrap_or(0),
-        progress_offset: progress_chapter
-            .map(|chapter| chapter.offset_start)
-            .unwrap_or(0),
+        progress_section: if on_demand {
+            progress_chapter_index.max(0) as usize
+        } else {
+            progress_chapter.map(|chapter| chapter.section).unwrap_or(0)
+        },
+        progress_offset: if on_demand {
+            0
+        } else {
+            progress_chapter
+                .map(|chapter| chapter.offset_start)
+                .unwrap_or(0)
+        },
         favorite: state.storage.audiobooks.is_favorite(&audiobook.id).await?,
         audio_only: book.as_ref().map(|book| book.audio_only).unwrap_or(false),
         category_ids,

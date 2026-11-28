@@ -44,8 +44,9 @@ Cada cambio de pantalla tiene una transición suave y respeta
   un EPUB nuevo. Si reemplazas, se conservan progreso, categorías, anotaciones
   y audiolibros.
 - En el menú de cualquier libro, **Crear audiolibro** abre el generador con el
-  libro ya seleccionado. En un EPUB, **Exportar EPUB** guarda una copia del
-  texto en disco.
+  libro ya seleccionado. **Enviar a audiolibro** crea una ficha en Audiolibros
+  sin sintetizar nada: el audio se narra en tiempo real cuando eliges un
+  capítulo. En un EPUB, **Exportar EPUB** guarda una copia del texto en disco.
 - **Editar metadatos** permite corregir título, autor, idioma, editorial y
   descripción. Los metadatos del EPUB/PDF se leen al importar y al abrir.
 - **Papelera** guarda los libros borrados con sus notas, marcadores, progreso y
@@ -137,11 +138,17 @@ Cada cambio de pantalla tiene una transición suave y respeta
   a la cola y se reintenta al volver a abrirla.
 - **Álbumes**: agrupa audiolibros por sagas, cursos o temas, ordénalos y
   reprodúcelos en cola continua. Borrar un álbum no borra sus audiolibros.
-- Filtra por **Todos**, **Generados**, **Importados**, **Tejido** o **En proceso**,
-  busca por título, autor o voz y ordena por fecha, título, duración o progreso.
+- Filtra por **Todos**, **Bajo demanda**, **Generados**, **Importados**,
+  **Tejido** o **En proceso**, busca por título, autor o voz y ordena por fecha,
+  título, duración o progreso.
 - Cada tarjeta muestra portada, origen, voz, duración, porcentaje completado y
   última escucha. Los iconos permiten abrir el texto, descargar el audio,
   revisar capítulos, añadir a un álbum o borrar el audiolibro.
+- Los audiolibros **Bajo demanda** no ocupan espacio ni tienen M4B. Al abrir sus
+  capítulos, cada sección se narra con la voz TTS configurada para el libro;
+  puedes pausar, reanudar y continuar desde el mini-reproductor global. Kora
+  recuerda el último capítulo escuchado, pero no guarda el audio. No se pueden
+  añadir a álbumes ni compartir, porque se generan al escucharlos.
 - Si un audiolibro está marcado como **Solo audio**, el icono del libro abre
   **Convertir a EPUB**: elige Whisper Tiny o Base, descarga el modelo si falta
   y espera la transcripción. El EPUB aparece en la biblioteca sin borrar el

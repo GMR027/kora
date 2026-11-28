@@ -3,8 +3,8 @@ use sqlx::SqlitePool;
 use super::{new_id, now, require_affected, track_owner, untrack_owner};
 use crate::error::{KoraError, Result};
 use crate::storage::model::{
-    Audiobook, AudiobookProgress, AudiobookQueueItem, NewAudiobook, NewAudiobookQueueItem,
-    NewVoice, ResourceType, Voice,
+    Audiobook, AudiobookDelivery, AudiobookProgress, AudiobookQueueItem, NewAudiobook,
+    NewAudiobookQueueItem, NewVoice, ResourceType, Voice,
 };
 
 #[derive(Clone)]
@@ -164,20 +164,31 @@ impl AudiobookRepo {
     }
 
     pub async fn create(&self, new: NewAudiobook) -> Result<Audiobook> {
+        self.insert(new, AudiobookDelivery::File).await
+    }
+
+    /// Crea una ficha vinculada al libro que se narra bajo demanda. No guarda
+    /// audio ni manifiesto: el reproductor usa el TTS al elegir un capítulo.
+    pub async fn create_on_demand(&self, new: NewAudiobook) -> Result<Audiobook> {
+        self.insert(new, AudiobookDelivery::OnDemand).await
+    }
+
+    async fn insert(&self, new: NewAudiobook, delivery: AudiobookDelivery) -> Result<Audiobook> {
         let id = new_id();
         let timestamp = now();
 
         sqlx::query(
             "INSERT INTO audiobooks
-                (id, book_id, voice_id, status, manifest_hash, manifest_ext,
+                (id, book_id, voice_id, status, delivery, manifest_hash, manifest_ext,
                  audio_hash, audio_ext, scope, origin, duration_ms, narration, \"cast\",
                  created_at, updated_at, owner_account_id, origin_share_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&new.book_id)
         .bind(&new.voice_id)
         .bind(new.status)
+        .bind(delivery)
         .bind(&new.manifest_hash)
         .bind(&new.manifest_ext)
         .bind(&new.audio_hash)
@@ -226,6 +237,22 @@ impl AudiobookRepo {
         .await?)
     }
 
+    pub async fn get_on_demand_by_book(
+        &self,
+        book_id: &str,
+        owner_account_id: &str,
+    ) -> Result<Option<Audiobook>> {
+        Ok(sqlx::query_as::<_, Audiobook>(
+            "SELECT * FROM audiobooks
+             WHERE book_id = ? AND owner_account_id = ? AND delivery = 'on_demand'
+             LIMIT 1",
+        )
+        .bind(book_id)
+        .bind(owner_account_id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     /// Ids de libros que ya tienen al menos un audiolibro. Evita leer todos
     /// los manifiestos para pintar el filtro de la biblioteca.
     pub async fn list_book_ids_by_owner(&self, owner_account_id: &str) -> Result<Vec<String>> {
@@ -254,13 +281,14 @@ impl AudiobookRepo {
     pub async fn update(&self, audiobook: &Audiobook) -> Result<()> {
         let result = sqlx::query(
             "UPDATE audiobooks SET
-                voice_id = ?, status = ?, manifest_hash = ?, manifest_ext = ?,
+                voice_id = ?, status = ?, delivery = ?, manifest_hash = ?, manifest_ext = ?,
                 audio_hash = ?, audio_ext = ?, scope = ?, origin = ?,
                 duration_ms = ?, narration = ?, \"cast\" = ?, updated_at = ?
              WHERE id = ?",
         )
         .bind(&audiobook.voice_id)
         .bind(audiobook.status)
+        .bind(audiobook.delivery)
         .bind(&audiobook.manifest_hash)
         .bind(&audiobook.manifest_ext)
         .bind(&audiobook.audio_hash)
@@ -349,14 +377,15 @@ impl AudiobookRepo {
     pub async fn upsert_from_sync(&self, audiobook: &Audiobook, owner: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO audiobooks
-                (id, book_id, voice_id, status, manifest_hash, manifest_ext,
+                (id, book_id, voice_id, status, delivery, manifest_hash, manifest_ext,
                  audio_hash, audio_ext, scope, origin, duration_ms, narration, \"cast\",
                  created_at, updated_at, owner_account_id, origin_share_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (id) DO UPDATE SET
                 book_id = excluded.book_id,
                 voice_id = excluded.voice_id,
                 status = excluded.status,
+                delivery = excluded.delivery,
                 manifest_hash = excluded.manifest_hash,
                 manifest_ext = excluded.manifest_ext,
                 audio_hash = excluded.audio_hash,
@@ -373,6 +402,7 @@ impl AudiobookRepo {
         .bind(&audiobook.book_id)
         .bind(&audiobook.voice_id)
         .bind(audiobook.status)
+        .bind(audiobook.delivery)
         .bind(&audiobook.manifest_hash)
         .bind(&audiobook.manifest_ext)
         .bind(&audiobook.audio_hash)
@@ -413,9 +443,10 @@ impl AudiobookRepo {
         owner_account_id: &str,
     ) -> Result<Option<AudiobookProgress>> {
         Ok(sqlx::query_as::<_, AudiobookProgress>(
-            "SELECT * FROM audiobook_progress
-             WHERE owner_account_id = ?
-             ORDER BY updated_at DESC
+            "SELECT p.* FROM audiobook_progress p
+             JOIN audiobooks a ON a.id = p.audiobook_id
+             WHERE p.owner_account_id = ? AND a.delivery = 'file'
+             ORDER BY p.updated_at DESC
              LIMIT 1",
         )
         .bind(owner_account_id)

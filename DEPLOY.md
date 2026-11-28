@@ -52,9 +52,9 @@ La landing espera estos nombres dentro de `landing/downloads/`:
 
 | Plataforma | Archivo |
 |---|---|
-| Android | `Kora-0.2.0-android.apk` |
-| Linux Debian/Ubuntu | `Kora_0.2.0_amd64.deb` |
-| Linux Fedora/RPM | `Kora-0.2.0-1.x86_64.rpm` |
+| Android | `Kora-0.2.1-android.apk` |
+| Linux Debian/Ubuntu | `Kora_0.2.1_amd64.deb` |
+| Linux Fedora/RPM | `Kora-0.2.1-1.x86_64.rpm` |
 
 `deploy.sh` sustituye el APK por `artifacts/kora-release.apk`. Para publicar los
 paquetes de escritorio, cópialos a `landing/downloads/` antes de desplegar:
@@ -63,8 +63,8 @@ paquetes de escritorio, cópialos a `landing/downloads/` antes de desplegar:
 pnpm build:linux
 pnpm build:helper:release && pnpm tauri build --bundles rpm
 
-cp target/release/bundle/deb/Kora_0.2.0_amd64.deb landing/downloads/
-cp target/release/bundle/rpm/Kora-0.2.0-1.x86_64.rpm landing/downloads/
+cp target/release/bundle/deb/Kora_0.2.1_amd64.deb landing/downloads/
+cp target/release/bundle/rpm/Kora-0.2.1-1.x86_64.rpm landing/downloads/
 ```
 
 > El `.rpm` debe compilarse en Fedora 42 (o un contenedor Fedora): Ubuntu enlaza
@@ -111,7 +111,7 @@ kubectl get pods,svc,ingress -n kora
 kubectl get certificate -n kora
 helm list -n kora
 curl -I https://kora.iguzman.com.mx
-curl -I https://kora.iguzman.com.mx/downloads/Kora-0.2.0-android.apk
+curl -I https://kora.iguzman.com.mx/downloads/Kora-0.2.1-android.apk
 curl -fsS https://kora.iguzman.com.mx/downloads/latest.json | jq
 curl -sS https://kora.iguzman.com.mx/healthz
 ```

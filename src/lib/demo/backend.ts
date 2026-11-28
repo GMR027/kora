@@ -1632,6 +1632,12 @@ function audiobookById(id: string): AudiobookInfo | undefined {
   return audiobooks.find((item) => item.id === id);
 }
 
+function onDemandAudiobookForBook(bookId: string): AudiobookInfo | undefined {
+  return audiobooks.find(
+    (item) => item.delivery === "on_demand" && item.bookId === bookId,
+  );
+}
+
 function chapterTitlesFor(item: AudiobookInfo): string[] {
   const seed = findBookSeed(item.bookId);
   if (!seed) {
@@ -1823,9 +1829,20 @@ function initialAudiobooks(): AudiobookInfo[] {
   const poemas = bookFor("book-poemas");
   const mecanica = bookFor("book-mecanica");
   const ciudad = bookFor("book-ciudad-pdf");
-  if (!mareas || !jardin || !cartas || !ultima || !poemas || !mecanica || !ciudad) {
+  const dias = bookFor("book-dias-de-sal");
+  if (
+    !mareas ||
+    !jardin ||
+    !cartas ||
+    !ultima ||
+    !poemas ||
+    !mecanica ||
+    !ciudad ||
+    !dias
+  ) {
     return [];
   }
+  const diasSeed = findBookSeed(dias.id);
 
   const items: AudiobookInfo[] = [
     {
@@ -1836,6 +1853,7 @@ function initialAudiobooks(): AudiobookInfo[] {
       voiceId: "es_ES-davefx-medium",
       voiceName: "DaveFX",
       status: "done",
+      delivery: "file",
       origin: "generated",
       durationMs: 7_500_000,
       audioHash: "demo-audio-mareas",
@@ -1868,6 +1886,7 @@ function initialAudiobooks(): AudiobookInfo[] {
       voiceId: "es_ES-sharvard-medium",
       voiceName: "Sharvard",
       status: "done",
+      delivery: "file",
       origin: "generated",
       durationMs: 6_720_000,
       audioHash: "demo-audio-jardin",
@@ -1900,6 +1919,7 @@ function initialAudiobooks(): AudiobookInfo[] {
       voiceId: null,
       voiceName: null,
       status: "done",
+      delivery: "file",
       origin: "external",
       durationMs: 4_500_000,
       audioHash: "demo-audio-cartas",
@@ -1932,6 +1952,7 @@ function initialAudiobooks(): AudiobookInfo[] {
       voiceId: "es_ES-davefx-medium",
       voiceName: "DaveFX",
       status: "done",
+      delivery: "file",
       origin: "generated",
       durationMs: 9_180_000,
       audioHash: "demo-audio-ultima",
@@ -1977,6 +1998,7 @@ function initialAudiobooks(): AudiobookInfo[] {
       voiceId: "es_ES-sharvard-medium",
       voiceName: "Sharvard",
       status: "done",
+      delivery: "file",
       origin: "tejido",
       durationMs: 1_680_000,
       audioHash: "demo-audio-poemas",
@@ -2009,6 +2031,7 @@ function initialAudiobooks(): AudiobookInfo[] {
       voiceId: "es_ES-davefx-medium",
       voiceName: "DaveFX",
       status: "failed",
+      delivery: "file",
       origin: "generated",
       durationMs: 0,
       audioHash: null,
@@ -2041,6 +2064,7 @@ function initialAudiobooks(): AudiobookInfo[] {
       voiceId: null,
       voiceName: null,
       status: "done",
+      delivery: "file",
       origin: "external",
       durationMs: 5_460_000,
       audioHash: "demo-audio-ciudad",
@@ -2064,6 +2088,39 @@ function initialAudiobooks(): AudiobookInfo[] {
       favorite: false,
       audioOnly: true,
       categoryIds: [...ciudad.categoryIds],
+    },
+    {
+      id: "audiobook-dias-sal",
+      bookId: dias.id,
+      bookTitle: dias.title,
+      author: dias.author,
+      voiceId: null,
+      voiceName: null,
+      status: "done",
+      delivery: "on_demand",
+      origin: "generated",
+      durationMs: 0,
+      audioHash: null,
+      audioExt: null,
+      scope: { kind: "fullBook" },
+      narration: null,
+      cast: [],
+      chapterSource: null,
+      treatment: null,
+      chapterCount: diasSeed ? chaptersFor(diasSeed).length : 0,
+      watermark: false,
+      coverPath: dias.coverPath,
+      createdAt: daysAgo(4),
+      positionMs: 0,
+      lastListenedAt: null,
+      percent: 0,
+      progressChapterIndex: 0,
+      progressChapterTitle: null,
+      progressSection: 0,
+      progressOffset: 0,
+      favorite: false,
+      audioOnly: false,
+      categoryIds: [...dias.categoryIds],
     },
   ];
   return items;
@@ -2143,6 +2200,7 @@ function generateAudiobookFromQueue(
     voiceId: item.voiceId,
     voiceName: item.voiceName,
     status: "done",
+    delivery: "file",
     origin: item.origin,
     durationMs: duration,
     audioHash: `demo-audio-${item.id}`,
@@ -2303,6 +2361,7 @@ function pendingAudiobookFromQueue(item: AudiobookQueueItem): AudiobookInfo {
     voiceId: item.voiceId,
     voiceName: item.voiceName,
     status: "pending",
+    delivery: "file",
     origin: item.origin,
     durationMs: 0,
     audioHash: null,
@@ -2570,6 +2629,7 @@ function importAudiobookFile(path: string, transcribe: boolean): AudiobookInfo {
     voiceId: null,
     voiceName: null,
     status: "done",
+    delivery: "file",
     origin: "external",
     durationMs: 4_860_000,
     audioHash: `demo-audio-${Date.now()}`,
@@ -3573,9 +3633,13 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
       return continueBook();
 
     case "library_audiobook_book_ids":
-      return demoBookSeeds
-        .filter((seed) => seed.audiobook)
-        .map((seed) => seed.id);
+      return [
+        ...new Set(
+          audiobooks
+            .filter((item) => bookFor(item.bookId))
+            .map((item) => item.bookId),
+        ),
+      ];
 
     case "export_book":
       return String(args.destination ?? "/demo/export/libro.epub");
@@ -3983,6 +4047,56 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
     // --- Audiolibros ------------------------------------------------------
     case "list_audiobooks":
       return audiobooks.map(clone);
+
+    case "send_book_to_audiobooks": {
+      const bookId = String(args.bookId ?? "");
+      const book = bookFor(bookId);
+      if (!book) throw { code: "not_found", message: "Libro no encontrado" };
+      const existing = onDemandAudiobookForBook(bookId);
+      if (existing) return clone(existing);
+      const seed = findBookSeed(bookId);
+      const chapterCount = seed
+        ? seed.format === "pdf"
+          ? (seed.pdfPages?.length ?? 1)
+          : chaptersFor(seed).length
+        : 0;
+      const item: AudiobookInfo = {
+        id: `audiobook-stream-${Date.now()}`,
+        bookId,
+        bookTitle: book.title,
+        author: book.author,
+        voiceId: null,
+        voiceName: null,
+        status: "done",
+        delivery: "on_demand",
+        origin: "generated",
+        durationMs: 0,
+        audioHash: null,
+        audioExt: null,
+        scope: { kind: "fullBook" },
+        narration: null,
+        cast: [],
+        chapterSource: null,
+        treatment: null,
+        chapterCount,
+        watermark: false,
+        coverPath: book.coverPath,
+        createdAt: isoNow(),
+        positionMs: 0,
+        lastListenedAt: null,
+        percent: 0,
+        progressChapterIndex: 0,
+        progressChapterTitle: null,
+        progressSection: 0,
+        progressOffset: 0,
+        favorite: false,
+        audioOnly: false,
+        categoryIds: [...book.categoryIds],
+      };
+      audiobooks = [item, ...audiobooks];
+      return clone(item);
+    }
+
 
     case "audiobook_capabilities":
       return {
@@ -4450,6 +4564,7 @@ async function invoke(command: string, args: Args = {}): Promise<unknown> {
         voiceName:
           demoVoices.find((voice) => voice.id === args.voiceId)?.name ?? "DaveFX",
         status: "done",
+        delivery: "file",
         origin: "tejido",
         durationMs: Math.max(60_000, selected.length * 55_000),
         audioHash: `demo-audio-weave-${Date.now()}`,

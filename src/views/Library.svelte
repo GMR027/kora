@@ -42,6 +42,7 @@
     saveAppearance,
     searchSemantic,
     semanticStatus,
+    sendBookToAudiobooks,
   } from "../lib/api";
   import { appearance, updateAppearance } from "../lib/appearance";
   import { formatBytes, t, translate } from "../lib/i18n";
@@ -109,6 +110,7 @@
   let brokenCovers = $state<Record<string, boolean>>({});
   let menuBookId = $state<string | null>(null);
   let selectedBookId = $state<string | null>(null);
+  let sendingToAudiobooks = $state<string | null>(null);
   let audiobookBookIds = $state<Set<string>>(new Set());
   let suggestions = $state<CategorySuggestion[]>([]);
   let suggestionBusyId = $state<string | null>(null);
@@ -916,6 +918,24 @@
 
   function closeMenu() {
     menuBookId = null;
+  }
+
+  async function sendToAudiobooks(book: BookSummary) {
+    if (sendingToAudiobooks) return;
+    sendingToAudiobooks = book.id;
+    try {
+      await sendBookToAudiobooks(book.id);
+      audiobookBookIds = new Set([...audiobookBookIds, book.id]);
+      notifySuccess(
+        translate("library.sentToAudiobook"),
+        translate("library.sentToAudiobookHelp"),
+      );
+      onNavigate?.("audiobooks");
+    } catch (cause) {
+      notifyError(cause);
+    } finally {
+      sendingToAudiobooks = null;
+    }
   }
 
   function openHit(hit: SemanticHit) {
@@ -1771,6 +1791,17 @@
             <Icon name="sparkles" size={17} /> {$t("library.createAudiobook")}
           </button>
         {/if}
+        <button
+          title={$t("library.sendToAudiobookHelp")}
+          disabled={sendingToAudiobooks !== null}
+          onclick={() => {
+            const target = menuBook;
+            closeMenu();
+            void sendToAudiobooks(target);
+          }}
+        >
+          <Icon name="headphones" size={17} /> {$t("library.sendToAudiobook")}
+        </button>
         {#if menuBook.format === "epub"}
           <button
             onclick={() => {

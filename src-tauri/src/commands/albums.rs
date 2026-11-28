@@ -6,7 +6,7 @@ use tauri::State;
 
 use crate::error::{KoraError, Result};
 use crate::state::AppState;
-use crate::storage::{AudiobookAlbum, AudiobookStatus, NewAudiobookAlbum};
+use crate::storage::{AudiobookAlbum, AudiobookDelivery, AudiobookStatus, NewAudiobookAlbum};
 
 const MAX_ALBUMS_PER_ACCOUNT: i64 = 500;
 const MAX_ITEMS_PER_ALBUM: usize = 500;
@@ -111,6 +111,11 @@ async fn validate_audiobooks(state: &AppState, ids: &[String]) -> Result<Vec<Str
         if audiobook.status != AudiobookStatus::Done {
             return Err(KoraError::Conflict(
                 "solo se pueden añadir audiolibros terminados a un álbum".into(),
+            ));
+        }
+        if audiobook.delivery == AudiobookDelivery::OnDemand {
+            return Err(KoraError::Conflict(
+                "los audiolibros bajo demanda no se pueden añadir a un álbum".into(),
             ));
         }
         let book = state

@@ -817,6 +817,10 @@ export const voiceClonePreview = (voiceId: string, text: string) =>
 export const listAudiobooks = () =>
   invoke<AudiobookInfo[]>("list_audiobooks");
 
+/** Crea (o reutiliza) una ficha de audiolibro sin generar audio. */
+export const sendBookToAudiobooks = (bookId: string) =>
+  invoke<AudiobookInfo>("send_book_to_audiobooks", { bookId });
+
 export const listAudiobookAlbums = () =>
   invoke<AudiobookAlbumInfo[]>("audiobook_album_list");
 

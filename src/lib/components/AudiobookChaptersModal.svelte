@@ -53,6 +53,7 @@
   let selected = $derived(
     audiobooks.find((item) => item.id === selectedId) ?? null,
   );
+  let onDemand = $derived(selected?.delivery === "on_demand");
   let sourceLabel = $derived(
     selected?.chapterSource
       ? $t(SOURCE_KEYS[selected.chapterSource])
@@ -101,8 +102,16 @@
         <div class="head-copy">
           <span class="head-icon"><Icon name="chapters" size={20} /></span>
           <div>
-            <h2 id="audiobook-chapters-title">{$t("audiobooks.chaptersPanel")}</h2>
-            <p>{$t("audiobooks.chaptersModalHelp")}</p>
+            <h2 id="audiobook-chapters-title">
+              {onDemand
+                ? $t("audiobooks.onDemandChaptersPanel")
+                : $t("audiobooks.chaptersPanel")}
+            </h2>
+            <p>
+              {onDemand
+                ? $t("audiobooks.onDemandChaptersHelp")
+                : $t("audiobooks.chaptersModalHelp")}
+            </p>
           </div>
         </div>
         <button
@@ -128,7 +137,9 @@
             >
               {#each audiobooks as item (item.id)}
                 <option value={item.id}>
-                  {item.bookTitle} · {formatDuration(item.durationMs)}
+                  {item.bookTitle} · {item.delivery === "on_demand"
+                    ? $t("audiobooks.onDemandBadge")
+                    : formatDuration(item.durationMs)}
                 </option>
               {/each}
             </select>
@@ -139,6 +150,13 @@
               <Icon name="chapters" size={13} />
               {$t("audiobooks.chapterSourceBadge", { method: sourceLabel })}
             </span>
+          {/if}
+
+          {#if onDemand}
+            <p class="on-demand-note">
+              <Icon name="wave" size={14} />
+              <span>{$t("audiobooks.onDemandHelp")}</span>
+            </p>
           {/if}
 
           {#if selected?.audioOnly}
@@ -224,11 +242,15 @@
                     <span class="chapter-copy">
                       <strong>{chapter.title}</strong>
                       <small>
-                        {formatDuration(chapter.startMs)} · {formatDuration(chapter.endMs)}
-                        {#if chapter.karaoke}
-                          · <span class="chapter-karaoke">
-                            {$t("audiobooks.chapterKaraoke")}
-                          </span>
+                        {#if onDemand}
+                          {$t("audiobooks.onDemandChapterMeta")}
+                        {:else}
+                          {formatDuration(chapter.startMs)} · {formatDuration(chapter.endMs)}
+                          {#if chapter.karaoke}
+                            · <span class="chapter-karaoke">
+                              {$t("audiobooks.chapterKaraoke")}
+                            </span>
+                          {/if}
                         {/if}
                       </small>
                     </span>
@@ -406,6 +428,26 @@
     color: var(--accent);
     font-size: 0.64rem;
     font-weight: 650;
+  }
+
+  .on-demand-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    padding: 9px 11px;
+    border: 1px dashed var(--accent-line);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 5%, transparent);
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.4;
+  }
+
+  .on-demand-note :global(svg) {
+    flex: 0 0 auto;
+    margin-top: 2px;
+    color: var(--accent);
   }
 
   .audio-only-panel {

@@ -251,6 +251,7 @@ pub fn run() {
             commands::voice::import_voice_profile,
             commands::voice::voice_clone_preview,
             commands::audiobooks::list_audiobooks,
+            commands::audiobooks::send_book_to_audiobooks,
             commands::audiobooks::audiobook_set_favorite,
             commands::audiobooks::generate_audiobook,
             commands::audiobooks::enqueue_audiobook,
